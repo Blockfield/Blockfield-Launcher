@@ -74,7 +74,7 @@ export function WindowChrome({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="size-full min-w-[1280px] min-h-[800px] flex items-center justify-center bg-black/60 p-6">
+    <div className="size-full min-w-[1280px] min-h-[720px] flex items-center justify-center bg-black/60 p-6">
       <div
         className="relative w-full h-full min-w-[1232px] min-h-[752px] overflow-hidden rounded-md border border-[#2A2116] bg-[#070604] text-neutral-200"
         style={{

@@ -15,8 +15,8 @@
         "title": "Blockfield Launcher",
         "width": 1280,
         "height": 720,
-        "minWidth": 1024,
-        "minHeight": 600,
+        "minWidth": 1280,
+        "minHeight": 720,
         "resizable": true,
         "decorations": false,
         "transparent": true

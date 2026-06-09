@@ -14,11 +14,11 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
       <GridBackdrop intensity={0.6} />
 
       {/* Side legend */}
-      <div className="absolute left-6 top-6 text-[10px] tracking-[0.3em] text-[#5E5040] flex flex-col gap-2">
+      <div className="absolute left-5 top-5 text-[10px] tracking-[0.3em] text-[#5E5040] flex flex-col gap-2">
         <span>SECTOR 07 — NORTH RIDGE</span>
         <span>LAT 47.3829° / LON 19.0402°</span>
       </div>
-      <div className="absolute right-6 top-6 text-[10px] tracking-[0.3em] text-[#5E5040] flex flex-col items-end gap-2">
+      <div className="absolute right-5 top-5 text-[10px] tracking-[0.3em] text-[#5E5040] flex flex-col items-end gap-2">
         <span>BUILD 0.4.2 — STABLE</span>
         <span className="flex items-center gap-2">
           <span className="size-1.5 rounded-full bg-[#82D66B] animate-pulse shadow-[0_0_6px_rgba(130,214,107,0.7)]" />
@@ -26,7 +26,7 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
         </span>
       </div>
 
-      <div className="absolute bottom-6 left-6 right-6 flex items-end justify-between text-[10px] tracking-[0.3em] text-[#5E5040]">
+      <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between text-[10px] tracking-[0.3em] text-[#5E5040]">
         <span>“DEPLOY. CAPTURE. DOMINATE.”</span>
         <span>© 2026 BLOCKFIELD COMMAND</span>
       </div>
@@ -36,7 +36,7 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
         <div className="relative w-[420px]">
           <CornerTicks />
           <div className="border border-[#2A2116] bg-[#11100D]/90 backdrop-blur-sm">
-            <div className="px-10 pt-10 pb-8">
+            <div className="px-9 pt-8 pb-7">
               <div className="flex flex-col items-center gap-5">
                 <Logo size={44} />
                 <div className="flex flex-col items-center gap-1.5">
@@ -53,7 +53,7 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
                 </p>
               </div>
 
-              <div className="mt-8 flex flex-col gap-4">
+              <div className="mt-6 flex flex-col gap-3.5">
                 <Field
                   icon={<User size={13} />}
                   label="CALLSIGN / EMAIL"

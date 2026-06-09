@@ -14,7 +14,7 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
       <TopoBackdrop />
       <GridBackdrop intensity={0.4} />
 
-      <div className="relative h-full p-8 flex flex-col">
+      <div className="relative h-full p-6 flex flex-col overflow-y-auto">
         <div className="flex items-center gap-3 mb-5">
           <span className="text-[10px] tracking-[0.4em] text-[#8E7A5E]">
             CONFIGURATION
@@ -34,7 +34,7 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
           </span>
         </div>
 
-        <div className="mt-8 relative">
+        <div className="mt-5 relative">
           <div className="absolute -inset-px border border-[#2A2116]/60 pointer-events-none" />
           <div className="relative border border-[#2A2116] bg-gradient-to-br from-[#11100D] to-[#0B0906]">
             <Group title="RUNTIME" code="ENV-001">
@@ -112,7 +112,7 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
             </Group>
 
             {/* Actions */}
-            <div className="px-7 py-5 flex items-center justify-between border-t border-[#18130D] bg-[#0B0906]">
+            <div className="px-6 py-4 flex items-center justify-between border-t border-[#18130D] bg-[#0B0906]">
               <button
                 onClick={onLogout}
                 className="h-10 px-5 flex items-center gap-3 border border-[#3a2828] bg-[#1a0e0e] text-[#c98b8b] hover:border-[#7a3838] hover:text-[#e0a3a3] transition-colors"
@@ -158,7 +158,7 @@ function Group({
 }) {
   return (
     <div className="border-b border-[#18130D] last:border-b-0">
-      <div className="px-7 pt-5 pb-3 flex items-center gap-3">
+      <div className="px-6 pt-4 pb-2 flex items-center gap-3">
         <span className="size-1.5 bg-[#F5A524]" />
         <span className="text-[10px] tracking-[0.32em] text-[#F3E7D0]">
           {title}
@@ -168,7 +168,7 @@ function Group({
           {code}
         </span>
       </div>
-      <div className="px-7 pb-2">{children}</div>
+      <div className="px-6 pb-1">{children}</div>
     </div>
   );
 }
@@ -185,7 +185,7 @@ function Setting({
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid grid-cols-[280px_1fr] gap-8 py-4 border-b border-dashed border-[#18130D] last:border-b-0">
+    <div className="grid grid-cols-[280px_1fr] gap-6 py-3 border-b border-dashed border-[#18130D] last:border-b-0">
       <div className="flex gap-3">
         <div className="mt-0.5 size-7 grid place-items-center border border-[#2A2116] bg-[#0B0906] text-[#F5A524]">
           {icon}

@@ -7,10 +7,10 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
       <TopoBackdrop />
       <GridBackdrop intensity={0.5} />
 
-      <div className="relative h-full grid grid-cols-[1fr_360px] gap-0">
+      <div className="relative h-full grid grid-cols-[1fr_340px] gap-0">
         {/* Hero / Command Panel */}
-        <section className="relative p-8 flex flex-col">
-          <div className="flex items-center gap-3 mb-5">
+        <section className="relative p-5 flex flex-col min-h-0">
+          <div className="flex items-center gap-3 mb-3">
             <span className="text-[10px] tracking-[0.4em] text-[#8E7A5E]">
               OPERATION
             </span>
@@ -23,15 +23,15 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
 
           <div className="flex items-start justify-between gap-6">
             <div className="max-w-[560px]">
-              <div className="flex items-baseline gap-3 mb-2">
-                <h1 className="tracking-[0.06em] text-[34px] leading-none text-neutral-50">
+              <div className="flex items-baseline gap-3 mb-1.5">
+                <h1 className="tracking-[0.06em] text-[26px] leading-none text-neutral-50">
                   IRON FRONT
                 </h1>
                 <span className="text-[10px] tracking-[0.32em] text-[#8E7A5E]">
                   / SEASON 01
                 </span>
               </div>
-              <p className="text-[13px] leading-relaxed text-[#C7AE86] max-w-[520px]">
+              <p className="text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">
                 Large-scale tactical PvP across contested terrain. Capture
                 strategic points, coordinate with your squad, and command
                 armored vehicles to break enemy lines.
@@ -42,14 +42,14 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           </div>
 
           {/* PLAY zone */}
-          <div className="mt-8 relative">
+          <div className="mt-4 relative">
             <div className="absolute -inset-px border border-[#F5A524]/20 pointer-events-none" />
-            <div className="relative border border-[#2A2116] bg-gradient-to-br from-[#11100D] via-[#11100D] to-[#0B0906] p-6">
+            <div className="relative border border-[#2A2116] bg-gradient-to-br from-[#11100D] via-[#11100D] to-[#0B0906] p-4">
               <div className="flex items-center justify-between gap-6">
                 <div className="flex items-center gap-5">
                   <button
                     onClick={onPlay}
-                    className="group relative h-[88px] w-[260px] overflow-hidden border border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-all"
+                    className="group relative h-[64px] w-[220px] overflow-hidden border border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-all"
                     style={{
                       boxShadow:
                         "inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)",
@@ -62,12 +62,12 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                     <span className="absolute bottom-0 right-0 w-3 h-3 border-r border-b border-[#F5A524]" />
                     <span className="absolute inset-0 bg-[#F5A524]/0 group-hover:bg-[#F5A524]/10 transition-colors" />
                     <span className="relative h-full flex items-center justify-center gap-4">
-                      <Play size={22} className="text-[#F3E7D0] fill-[#F3E7D0]" />
+                      <Play size={18} className="text-[#F3E7D0] fill-[#F3E7D0]" />
                       <span className="flex flex-col items-start leading-none">
-                        <span className="tracking-[0.4em] text-[20px] text-[#F3E7D0]">
+                        <span className="tracking-[0.4em] text-[17px] text-[#F3E7D0]">
                           DEPLOY
                         </span>
-                        <span className="tracking-[0.32em] text-[10px] text-[#C7AE86] mt-1.5">
+                        <span className="tracking-[0.32em] text-[9px] text-[#C7AE86] mt-1">
                           ENTER BATTLEFIELD
                         </span>
                       </span>
@@ -93,10 +93,10 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           </div>
 
           {/* Briefing + Modpack row */}
-          <div className="mt-6 grid grid-cols-[1.4fr_1fr] gap-px bg-[#18130D] border border-[#2A2116]">
-            <div className="bg-[#0B0906] p-6">
+          <div className="mt-4 grid grid-cols-[1.4fr_1fr] gap-px bg-[#18130D] border border-[#2A2116] flex-1 min-h-0">
+            <div className="bg-[#0B0906] p-4 min-h-0">
               <SectionHeader label="MISSION BRIEFING" code="BRF-001" />
-              <div className="grid grid-cols-2 gap-x-6 gap-y-4 mt-4">
+              <div className="grid grid-cols-2 gap-x-5 gap-y-3 mt-3">
                 <Feature icon={<Flag size={14} />} title="CAPTURE POINTS" desc="Dynamic objective control across multiple sectors." />
                 <Feature icon={<Swords size={14} />} title="6 CLASSES" desc="Assault, Recon, Engineer, Medic, Support, Pilot." />
                 <Feature icon={<Truck size={14} />} title="ARMORED VEHICLES" desc="Tanks, APCs, light recon and air transport." />
@@ -104,15 +104,15 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
               </div>
             </div>
 
-            <div className="bg-[#0B0906] p-6 flex flex-col">
+            <div className="bg-[#0B0906] p-4 flex flex-col min-h-0">
               <SectionHeader label="MODPACK STATUS" code="PKG-0142" />
-              <div className="mt-4 flex flex-col gap-3 flex-1">
+              <div className="mt-3 flex flex-col gap-2 flex-1">
                 <Row label="INSTALLED" value="0.1.42" />
                 <Row label="LATEST" value="0.1.42" highlight />
                 <Row label="SIZE" value="2.1 GB" />
                 <Row label="AUTO-UPDATE" value="ENABLED" highlight />
               </div>
-              <button className="mt-4 h-9 border border-[#2A2116] hover:border-[#8A571C] text-[10px] tracking-[0.3em] text-[#C7AE86] hover:text-[#F3E7D0] flex items-center justify-center gap-2 transition-colors">
+              <button className="mt-3 h-8 border border-[#2A2116] hover:border-[#8A571C] text-[10px] tracking-[0.3em] text-[#C7AE86] hover:text-[#F3E7D0] flex items-center justify-center gap-2 transition-colors">
                 <RefreshCw size={12} />
                 CHECK FOR UPDATES
               </button>
@@ -121,10 +121,10 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
         </section>
 
         {/* Side rail */}
-        <aside className="relative border-l border-[#18130D] bg-[#0B0906]/80 p-6 flex flex-col">
+        <aside className="relative border-l border-[#18130D] bg-[#0B0906]/80 p-4 flex flex-col min-h-0">
           <SectionHeader label="FIELD REPORT" code="OPS-LOG" />
 
-          <div className="mt-5 flex-1 flex flex-col gap-px bg-[#18130D] border border-[#2A2116]">
+          <div className="mt-3 flex-1 min-h-0 flex flex-col gap-px bg-[#18130D] border border-[#2A2116] overflow-hidden">
             <FeedItem
               tag="PATCH"
               tone="green"
@@ -148,7 +148,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
             />
           </div>
 
-          <button className="mt-4 h-9 text-[10px] tracking-[0.3em] text-[#8E7A5E] hover:text-[#F3E7D0] flex items-center justify-between border-t border-[#18130D] pt-4">
+          <button className="mt-3 h-8 text-[10px] tracking-[0.3em] text-[#8E7A5E] hover:text-[#F3E7D0] flex items-center justify-between border-t border-[#18130D] pt-3">
             <span>VIEW FULL OPERATIONS LOG</span>
             <ChevronRight size={12} />
           </button>
