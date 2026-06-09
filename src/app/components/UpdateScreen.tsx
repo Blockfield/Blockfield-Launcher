@@ -84,7 +84,7 @@ export function UpdateScreen() {
           </div>
         </div>
 
-        <GlowPanel className="mt-3 p-4">
+        <GlowPanel className="p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-4">
               <LockedButton lockedLabel={t("update.locked")} subLabel={t("update.inProgress")} />

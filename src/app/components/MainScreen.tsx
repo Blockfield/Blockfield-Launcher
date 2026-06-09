@@ -86,7 +86,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           </div>
 
           {/* PLAY zone */}
-          <GlowPanel className="mt-4 p-4">
+          <GlowPanel className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-5">
               <div className="flex min-w-0 items-center gap-4">
                 <DeployButton onPlay={onPlay} label={t("nav.deploy")} sub={t("main.enterBattlefield")} />

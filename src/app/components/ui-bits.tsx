@@ -72,7 +72,7 @@ export function GlowPanel({
   className?: string;
 }) {
   return (
-    <div className="relative">
+    <div className="relative mt-4">
       <div
         className={`absolute -inset-px pointer-events-none border ${
           glow ? "border-[#F5A524]/20" : "border-[#2A2116]/60"
