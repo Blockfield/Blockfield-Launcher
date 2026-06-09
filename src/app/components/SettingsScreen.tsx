@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { Folder, Cpu, Coffee, Globe, RefreshCw, LogOut, Save } from "lucide-react";
+import { Folder, Cpu, Coffee, Globe, RefreshCw, LogOut, Save, Minus, Plus } from "lucide-react";
 import { GridBackdrop, TopoBackdrop } from "./Backdrop";
 import { GlowPanel } from "./ui-bits";
 import { LANGUAGES, useI18n } from "../i18n";
@@ -214,24 +214,101 @@ function PathInput({
   );
 }
 
+const RAM_MIN = 2;
+const RAM_MAX = 32;
+const RAM_STEP = 1;
+const RAM_PRESETS = [4, 6, 8, 12, 16, 24];
+
+function clampRam(v: number) {
+  if (Number.isNaN(v)) return RAM_MIN;
+  return Math.min(RAM_MAX, Math.max(RAM_MIN, Math.round(v)));
+}
+
 function RamSlider({ ram, onChange }: { ram: number; onChange: (v: number) => void }) {
+  const pct = ((ram - RAM_MIN) / (RAM_MAX - RAM_MIN)) * 100;
+  const set = (v: number) => onChange(clampRam(v));
+
   return (
-    <div className="flex items-center gap-4">
-      <div className="relative flex-1 h-1.5 bg-[#0B0906] border border-[#2A2116]">
-        <div
-          className="absolute top-0 left-0 h-full bg-gradient-to-r from-[#8A571C] to-[#F5A524]"
-          style={{ width: `${(ram / 16) * 100}%` }}
-        />
-        <input
-          type="range"
-          min={2}
-          max={16}
-          value={ram}
-          onChange={(e) => onChange(parseInt(e.target.value))}
-          className="absolute inset-0 w-full opacity-0 cursor-pointer"
-        />
+    <div className="flex w-full min-w-0 flex-col gap-3">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => set(ram - RAM_STEP)}
+          className="size-9 shrink-0 grid place-items-center border border-[#2A2116] bg-[#0B0906] text-[#C7AE86] hover:border-[#8A571C] hover:text-[#F3E7D0] transition-colors"
+          aria-label="decrease"
+        >
+          <Minus size={12} />
+        </button>
+
+        <div className="relative flex-1 h-1.5 bg-[#0B0906] border border-[#2A2116]">
+          <div
+            className="absolute top-0 left-0 h-full bg-gradient-to-r from-[#8A571C] to-[#F5A524]"
+            style={{ width: `${pct}%` }}
+          />
+          <div
+            className="absolute top-1/2 -translate-y-1/2 size-3 bg-[#F5A524] border border-[#070604] pointer-events-none"
+            style={{
+              left: `calc(${pct}% - 6px)`,
+              boxShadow: "0 0 8px rgba(245,165,36,0.6)",
+            }}
+          />
+          <input
+            type="range"
+            min={RAM_MIN}
+            max={RAM_MAX}
+            step={RAM_STEP}
+            value={ram}
+            onChange={(e) => set(parseInt(e.target.value))}
+            className="absolute inset-0 w-full opacity-0 cursor-pointer"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={() => set(ram + RAM_STEP)}
+          className="size-9 shrink-0 grid place-items-center border border-[#2A2116] bg-[#0B0906] text-[#C7AE86] hover:border-[#8A571C] hover:text-[#F3E7D0] transition-colors"
+          aria-label="increase"
+        >
+          <Plus size={12} />
+        </button>
+
+        <div className="shrink-0 flex items-baseline gap-1 w-20 justify-end">
+          <input
+            type="number"
+            min={RAM_MIN}
+            max={RAM_MAX}
+            value={ram}
+            onChange={(e) => set(parseInt(e.target.value))}
+            className="w-12 h-9 border border-[#2A2116] bg-[#0B0906] px-2 text-[12px] font-mono text-[#F3E7D0] text-right outline-none focus:border-[#F5A524]/60 transition-colors"
+          />
+          <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">GB</span>
+        </div>
       </div>
-      <span className="text-[12px] tracking-[0.18em] text-[#F3E7D0] w-16 text-right">{ram} GB</span>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[9px] tracking-[0.22em] text-[#5E5040] mr-1">PRESET</span>
+        {RAM_PRESETS.map((p) => {
+          const active = ram === p;
+          return (
+            <button
+              type="button"
+              key={p}
+              onClick={() => set(p)}
+              aria-pressed={active}
+              className={`h-7 px-2.5 text-[10px] tracking-[0.14em] font-mono border transition-colors ${
+                active
+                  ? "border-[#F5A524] bg-[#2A2116] text-[#F3E7D0]"
+                  : "border-[#2A2116] bg-[#0B0906] text-[#C7AE86] hover:border-[#8A571C]"
+              }`}
+            >
+              {p}G
+            </button>
+          );
+        })}
+        <span className="ml-auto text-[9px] tracking-[0.22em] text-[#5E5040] font-mono">
+          {RAM_MIN}–{RAM_MAX} GB
+        </span>
+      </div>
     </div>
   );
 }
