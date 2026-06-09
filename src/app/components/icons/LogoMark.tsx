@@ -1,6 +1,9 @@
-import type { SVGProps } from "react";
+import type { SVGProps } from 'react'
 
-export function LogoMark({ size = 28, ...props }: { size?: number } & Omit<SVGProps<SVGSVGElement>, "width" | "height">) {
+export function LogoMark({
+  size = 28,
+  ...props
+}: { size?: number } & Omit<SVGProps<SVGSVGElement>, 'width' | 'height'>) {
   return (
     <svg
       width={size}
@@ -8,7 +11,7 @@ export function LogoMark({ size = 28, ...props }: { size?: number } & Omit<SVGPr
       viewBox="0 0 5225 5225"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      className={`shrink-0 ${props.className ?? ""}`}
+      className={`shrink-0 ${props.className ?? ''}`}
       {...props}
     >
       <g>
@@ -72,12 +75,15 @@ export function LogoMark({ size = 28, ...props }: { size?: number } & Omit<SVGPr
           d="M4748.443,1844.089c1.947,-2.506 -0.522,-6.907 1.425,-9.414c6.333,-8.152 16.303,-0.911 15.972,0.607c-0.333,1.524 -1.253,0.635 -17.397,8.807Z"
           fill="#efa12a"
         />
-        <path d="M2619.251,511.151c0.987,9.544 1.975,19.087 2.962,28.631c-0.987,-9.544 -1.975,-19.087 -2.962,-28.631Z" fill="#eeaa3e" />
+        <path
+          d="M2619.251,511.151c0.987,9.544 1.975,19.087 2.962,28.631c-0.987,-9.544 -1.975,-19.087 -2.962,-28.631Z"
+          fill="#eeaa3e"
+        />
         <path
           d="M3871.673,3169.055c-1.571,1.386 2.096,4.878 0.524,6.265c-3.067,2.706 -7.502,0.680 -8.091,0.410c-7.288,-3.330 2.014,-1.777 7.567,-6.675Z"
           fill="#d4912f"
         />
       </g>
     </svg>
-  );
+  )
 }

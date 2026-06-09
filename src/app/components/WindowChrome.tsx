@@ -1,39 +1,38 @@
-import { Minus, Square, X } from "lucide-react";
-import { useState, useEffect, type ReactNode } from "react";
+import { Minus, Square, X } from 'lucide-react'
+import { useState, useEffect, type ReactNode } from 'react'
+import type { Window as TauriWindow } from '@tauri-apps/api/window'
 
-const isTauri =
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 export function WindowChrome({ children }: { children: ReactNode }) {
-  const [appWindow, setAppWindow] = useState<any>(null);
+  const [appWindow, setAppWindow] = useState<TauriWindow | null>(null)
 
   useEffect(() => {
     if (isTauri) {
-      import("@tauri-apps/api/window").then((mod) => {
-        setAppWindow(mod.getCurrentWindow());
-      });
+      import('@tauri-apps/api/window').then((mod) => {
+        setAppWindow(mod.getCurrentWindow())
+      })
     }
-  }, []);
+  }, [])
 
   const handleMinimize = async () => {
-    if (appWindow) await appWindow.minimize();
-  };
+    if (appWindow) await appWindow.minimize()
+  }
 
   const handleMaximize = async () => {
-    if (appWindow) await appWindow.toggleMaximize();
-  };
+    if (appWindow) await appWindow.toggleMaximize()
+  }
 
   const handleClose = async () => {
-    if (appWindow) await appWindow.close();
-  };
+    if (appWindow) await appWindow.close()
+  }
 
   if (isTauri) {
     return (
       <div
         className="relative w-screen h-screen overflow-hidden rounded-md border border-[#2A2116] bg-[#070604] text-neutral-200 flex flex-col"
         style={{
-          boxShadow:
-            "0 30px 80px -20px rgba(0,0,0,0.82), 0 0 0 1px rgba(255,255,255,0.02) inset",
+          boxShadow: '0 30px 80px -20px rgba(0,0,0,0.82), 0 0 0 1px rgba(255,255,255,0.02) inset',
         }}
       >
         <div
@@ -70,7 +69,7 @@ export function WindowChrome({ children }: { children: ReactNode }) {
         </div>
         <div className="relative flex-1 min-h-0 overflow-hidden">{children}</div>
       </div>
-    );
+    )
   }
 
   return (
@@ -78,8 +77,7 @@ export function WindowChrome({ children }: { children: ReactNode }) {
       <div
         className="relative w-full h-full min-w-[1232px] min-h-[752px] overflow-hidden rounded-md border border-[#2A2116] bg-[#070604] text-neutral-200"
         style={{
-          boxShadow:
-            "0 30px 80px -20px rgba(0,0,0,0.82), 0 0 0 1px rgba(255,255,255,0.02) inset",
+          boxShadow: '0 30px 80px -20px rgba(0,0,0,0.82), 0 0 0 1px rgba(255,255,255,0.02) inset',
         }}
       >
         <div className="h-9 flex items-center justify-between border-b border-[#18130D] bg-[#0B0906] px-3 select-none">
@@ -102,5 +100,5 @@ export function WindowChrome({ children }: { children: ReactNode }) {
         <div className="relative h-[calc(100%-2.25rem)]">{children}</div>
       </div>
     </div>
-  );
+  )
 }

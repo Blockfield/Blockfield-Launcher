@@ -1,12 +1,12 @@
-import { LogoMark } from "./icons";
+import { LogoMark } from './icons'
 
 type LogoProps = {
-  size?: number;
-  withWordmark?: boolean;
-  className?: string;
-};
+  size?: number
+  withWordmark?: boolean
+  className?: string
+}
 
-export function Logo({ size = 28, withWordmark = false, className = "" }: LogoProps) {
+export function Logo({ size = 28, withWordmark = false, className = '' }: LogoProps) {
   return (
     <div className={`flex items-center gap-2.5 ${className}`}>
       <LogoMark size={size} />
@@ -21,5 +21,5 @@ export function Logo({ size = 28, withWordmark = false, className = "" }: LogoPr
         </div>
       )}
     </div>
-  );
+  )
 }

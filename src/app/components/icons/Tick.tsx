@@ -1,4 +1,4 @@
-export function Tick({ className = "" }: { className?: string }) {
+export function Tick({ className = '' }: { className?: string }) {
   return (
     <svg
       width="14"
@@ -11,5 +11,5 @@ export function Tick({ className = "" }: { className?: string }) {
       <path d="M0 0H6" stroke="#F5A524" strokeWidth="1" />
       <path d="M0 0V6" stroke="#F5A524" strokeWidth="1" />
     </svg>
-  );
+  )
 }

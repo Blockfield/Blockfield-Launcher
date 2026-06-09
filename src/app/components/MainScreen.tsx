@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode } from 'react'
 import {
   Play,
   Wifi,
@@ -11,53 +11,60 @@ import {
   Crosshair,
   ChevronRight,
   RefreshCw,
-} from "lucide-react";
-import { GridBackdrop, TopoBackdrop } from "./Backdrop";
-import { GlowPanel, OperationBar, SectionHeader, StatusDot } from "./ui-bits";
-import { useI18n, type TKey, type TFunction } from "../i18n";
-import { MODPACK_VERSION, OPERATION_NAME, SERVER_IP } from "../constants";
+} from 'lucide-react'
+import { GridBackdrop, TopoBackdrop } from './Backdrop'
+import { GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
+import { useI18n, type TKey, type TFunction } from '../i18n'
+import { MODPACK_VERSION, OPERATION_NAME, SERVER_IP } from '../constants'
 
-type Tone = "ok" | "muted" | "warn";
+type Tone = 'ok' | 'muted' | 'warn'
 
-type Feature = { icon: ReactNode; title: TKey; desc: TKey };
+type Feature = { icon: ReactNode; title: TKey; desc: TKey }
 
 const FEATURES: Feature[] = [
-  { icon: <Flag size={14} />, title: "main.feat.capture", desc: "main.feat.captureDesc" },
-  { icon: <Swords size={14} />, title: "main.feat.classes", desc: "main.feat.classesDesc" },
-  { icon: <Truck size={14} />, title: "main.feat.vehicles", desc: "main.feat.vehiclesDesc" },
-  { icon: <Crosshair size={14} />, title: "main.feat.battles", desc: "main.feat.battlesDesc" },
-];
+  { icon: <Flag size={14} />, title: 'main.feat.capture', desc: 'main.feat.captureDesc' },
+  { icon: <Swords size={14} />, title: 'main.feat.classes', desc: 'main.feat.classesDesc' },
+  { icon: <Truck size={14} />, title: 'main.feat.vehicles', desc: 'main.feat.vehiclesDesc' },
+  { icon: <Crosshair size={14} />, title: 'main.feat.battles', desc: 'main.feat.battlesDesc' },
+]
 
-type FeedTone = "amber" | "green" | "sand";
-type FeedEntry = { tagKey: TKey; tone: FeedTone; date: string; titleKey: TKey; bodyKey: TKey; vars?: Record<string, string> };
+type FeedTone = 'amber' | 'green' | 'sand'
+type FeedEntry = {
+  tagKey: TKey
+  tone: FeedTone
+  date: string
+  titleKey: TKey
+  bodyKey: TKey
+  vars?: Record<string, string>
+}
 
 const FEED: FeedEntry[] = [
   {
-    tagKey: "main.tag.patch",
-    tone: "amber",
-    date: "06.07",
-    titleKey: "main.feed.patch.title",
-    bodyKey: "main.feed.patch.body",
+    tagKey: 'main.tag.patch',
+    tone: 'amber',
+    date: '06.07',
+    titleKey: 'main.feed.patch.title',
+    bodyKey: 'main.feed.patch.body',
     vars: { v: MODPACK_VERSION },
   },
   {
-    tagKey: "main.tag.event",
-    tone: "green",
-    date: "06.05",
-    titleKey: "main.feed.event.title",
-    bodyKey: "main.feed.event.body",
+    tagKey: 'main.tag.event',
+    tone: 'green',
+    date: '06.05',
+    titleKey: 'main.feed.event.title',
+    bodyKey: 'main.feed.event.body',
   },
   {
-    tagKey: "main.tag.ops",
-    tone: "sand",
-    date: "06.02",
-    titleKey: "main.feed.ops.title",
-    bodyKey: "main.feed.ops.body",
+    tagKey: 'main.tag.ops',
+    tone: 'sand',
+    date: '06.02',
+    titleKey: 'main.feed.ops.title',
+    bodyKey: 'main.feed.ops.body',
   },
-];
+]
 
 export function MainScreen({ onPlay }: { onPlay: () => void }) {
-  const { t } = useI18n();
+  const { t } = useI18n()
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#070604]">
       <TopoBackdrop />
@@ -65,7 +72,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
 
       <div className="relative h-full grid grid-cols-[minmax(0,1fr)_340px] gap-0">
         <section className="relative p-5 flex flex-col min-h-0">
-          <OperationBar label={t("main.operation")} status={t("main.active")} />
+          <OperationBar label={t('main.operation')} status={t('main.active')} />
 
           <div className="flex min-w-0 items-start justify-between gap-6">
             <div className="max-w-[560px]">
@@ -74,11 +81,11 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                   {OPERATION_NAME}
                 </h1>
                 <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">
-                  {t("main.season")}
+                  {t('main.season')}
                 </span>
               </div>
               <p className="text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">
-                {t("main.description")}
+                {t('main.description')}
               </p>
             </div>
 
@@ -89,20 +96,29 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           <GlowPanel className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-5">
               <div className="flex min-w-0 items-center gap-4">
-                <DeployButton onPlay={onPlay} label={t("nav.deploy")} sub={t("main.enterBattlefield")} />
+                <DeployButton
+                  onPlay={onPlay}
+                  label={t('nav.deploy')}
+                  sub={t('main.enterBattlefield')}
+                />
                 <div className="flex flex-col gap-2 pl-2">
-                  <Stat label={t("main.modpack")} value={t("main.upToDate")} tone="ok" />
-                  <Stat label={t("main.auth")} value={t("main.verified")} tone="ok" />
-                  <Stat label={t("main.queue")} value={t("main.none")} tone="muted" />
+                  <Stat label={t('main.modpack')} value={t('main.upToDate')} tone="ok" />
+                  <Stat label={t('main.auth')} value={t('main.verified')} tone="ok" />
+                  <Stat label={t('main.queue')} value={t('main.none')} tone="muted" />
                 </div>
               </div>
 
               <div className="flex shrink-0 items-center gap-4 text-right">
-                <Metric icon={<Users size={14} />} label={t("main.operators")} value="142" sub="/ 200" />
+                <Metric
+                  icon={<Users size={14} />}
+                  label={t('main.operators')}
+                  value="142"
+                  sub="/ 200"
+                />
                 <span className="h-10 w-px bg-[#18130D]" />
-                <Metric icon={<Activity size={14} />} label={t("main.ping")} value="28" sub="MS" />
+                <Metric icon={<Activity size={14} />} label={t('main.ping')} value="28" sub="MS" />
                 <span className="h-10 w-px bg-[#18130D]" />
-                <Metric icon={<Wifi size={14} />} label={t("main.region")} value="EU-W" sub="FRA" />
+                <Metric icon={<Wifi size={14} />} label={t('main.region')} value="EU-W" sub="FRA" />
               </div>
             </div>
           </GlowPanel>
@@ -110,7 +126,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           {/* Briefing + Modpack */}
           <div className="mt-4 grid grid-cols-[minmax(0,1.35fr)_minmax(270px,1fr)] gap-px bg-[#18130D] border border-[#2A2116] flex-1 min-h-0">
             <div className="bg-[#0B0906] p-4 min-h-0">
-              <SectionHeader label={t("main.briefing")} code="BRF-001" />
+              <SectionHeader label={t('main.briefing')} code="BRF-001" />
               <div className="grid grid-cols-2 gap-x-5 gap-y-3 mt-3">
                 {FEATURES.map((f) => (
                   <FeatureItem key={f.title} icon={f.icon} title={t(f.title)} desc={t(f.desc)} />
@@ -119,16 +135,16 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
             </div>
 
             <div className="bg-[#0B0906] p-4 flex flex-col min-h-0">
-              <SectionHeader label={t("main.modpackStatus")} code="PKG-0142" />
+              <SectionHeader label={t('main.modpackStatus')} code="PKG-0142" />
               <div className="mt-3 flex flex-col gap-2 flex-1">
-                <Row label={t("main.installed")} value={MODPACK_VERSION} />
-                <Row label={t("main.latest")} value={MODPACK_VERSION} highlight />
-                <Row label={t("main.size")} value="2.1 GB" />
-                <Row label={t("main.autoUpdate")} value={t("main.enabled")} highlight />
+                <Row label={t('main.installed')} value={MODPACK_VERSION} />
+                <Row label={t('main.latest')} value={MODPACK_VERSION} highlight />
+                <Row label={t('main.size')} value="2.1 GB" />
+                <Row label={t('main.autoUpdate')} value={t('main.enabled')} highlight />
               </div>
               <button className="mt-3 h-8 border border-[#2A2116] hover:border-[#8A571C] text-[10px] tracking-[0.16em] text-[#C7AE86] hover:text-[#F3E7D0] flex items-center justify-center gap-2 transition-colors">
                 <RefreshCw size={12} />
-                {t("nav.updates")}
+                {t('nav.updates')}
               </button>
             </div>
           </div>
@@ -136,7 +152,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
 
         {/* Side rail */}
         <aside className="relative border-l border-[#18130D] bg-[#0B0906]/80 p-4 flex flex-col min-h-0">
-          <SectionHeader label={t("main.fieldReport")} code="OPS-LOG" />
+          <SectionHeader label={t('main.fieldReport')} code="OPS-LOG" />
 
           <div className="mt-3 flex-1 min-h-0 flex flex-col gap-px bg-[#18130D] border border-[#2A2116] overflow-hidden">
             {FEED.map((entry) => (
@@ -145,13 +161,13 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           </div>
 
           <button className="mt-3 min-h-8 text-left text-[10px] tracking-[0.16em] text-[#8E7A5E] hover:text-[#F3E7D0] flex items-center justify-between gap-2 border-t border-[#18130D] pt-3">
-            <span>{t("main.viewLog")}</span>
+            <span>{t('main.viewLog')}</span>
             <ChevronRight size={12} />
           </button>
         </aside>
       </div>
     </div>
-  );
+  )
 }
 
 function DeployButton({ onPlay, label, sub }: { onPlay: () => void; label: string; sub: string }) {
@@ -160,8 +176,7 @@ function DeployButton({ onPlay, label, sub }: { onPlay: () => void; label: strin
       onClick={onPlay}
       className="group relative h-[64px] w-[230px] shrink-0 overflow-hidden border border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-all"
       style={{
-        boxShadow:
-          "inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)",
+        boxShadow: 'inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)',
       }}
     >
       <span className="absolute top-0 left-0 w-3 h-3 border-l border-t border-[#F5A524]" />
@@ -177,36 +192,36 @@ function DeployButton({ onPlay, label, sub }: { onPlay: () => void; label: strin
         </span>
       </span>
     </button>
-  );
+  )
 }
 
 function ServerStatus() {
-  const { t } = useI18n();
+  const { t } = useI18n()
   return (
     <div className="shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-[240px]">
       <div className="flex items-start justify-between gap-2">
-        <span className="text-[10px] tracking-[0.14em] text-[#8E7A5E]">{t("main.server")}</span>
+        <span className="text-[10px] tracking-[0.14em] text-[#8E7A5E]">{t('main.server')}</span>
         <span className="flex items-center gap-1.5 text-[10px] tracking-[0.16em] text-[#82D66B]">
           <StatusDot />
-          {t("main.online")}
+          {t('main.online')}
         </span>
       </div>
       <div className="mt-2 flex items-center gap-2">
         <ShieldCheck size={14} className="text-[#F5A524]" />
         <span className="tracking-[0.18em] text-[13px] text-neutral-100">
-          {t("main.serverName")}
+          {t('main.serverName')}
         </span>
       </div>
       <div className="mt-2 text-[10px] tracking-[0.22em] text-[#8E7A5E]">{SERVER_IP}</div>
     </div>
-  );
+  )
 }
 
 const TONE_COLOR: Record<Tone, string> = {
-  ok: "text-[#82D66B]",
-  warn: "text-[#F5A524]",
-  muted: "text-[#C7AE86]",
-};
+  ok: 'text-[#82D66B]',
+  warn: 'text-[#F5A524]',
+  muted: 'text-[#C7AE86]',
+}
 
 function Stat({ label, value, tone }: { label: string; value: string; tone: Tone }) {
   return (
@@ -214,7 +229,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: Tone
       <span className="text-[9px] tracking-[0.16em] text-[#8E7A5E] w-20 shrink-0">{label}</span>
       <span className={`text-[10px] tracking-[0.16em] ${TONE_COLOR[tone]}`}>▸ {value}</span>
     </div>
-  );
+  )
 }
 
 function Metric({
@@ -223,10 +238,10 @@ function Metric({
   value,
   sub,
 }: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  sub: string;
+  icon: ReactNode
+  label: string
+  value: string
+  sub: string
 }) {
   return (
     <div className="flex flex-col items-end gap-1 min-w-[58px]">
@@ -238,7 +253,7 @@ function Metric({
         <span className="text-[10px] tracking-[0.16em] text-[#8E7A5E] ml-1">{sub}</span>
       </span>
     </div>
-  );
+  )
 }
 
 function FeatureItem({ icon, title, desc }: { icon: ReactNode; title: string; desc: string }) {
@@ -252,39 +267,35 @@ function FeatureItem({ icon, title, desc }: { icon: ReactNode; title: string; de
         <span className="text-[11px] leading-snug text-[#8E7A5E]">{desc}</span>
       </div>
     </div>
-  );
+  )
 }
 
-function Row({
-  label,
-  value,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  highlight?: boolean;
-}) {
+function Row({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
     <div className="flex items-center justify-between border-b border-dashed border-[#18130D] pb-2 last:border-0">
       <span className="text-[10px] tracking-[0.14em] text-[#8E7A5E]">{label}</span>
-      <span className={`text-right text-[11px] tracking-[0.12em] ${highlight ? "text-[#F5A524]" : "text-neutral-100"}`}>
+      <span
+        className={`text-right text-[11px] tracking-[0.12em] ${highlight ? 'text-[#F5A524]' : 'text-neutral-100'}`}
+      >
         {value}
       </span>
     </div>
-  );
+  )
 }
 
 const FEED_TAG_CLASS: Record<FeedTone, string> = {
-  amber: "text-[#F5A524] border-[#8A571C]",
-  green: "text-[#82D66B] border-[#3a5a30]",
-  sand: "text-[#C7AE86] border-[#3A2C1D]",
-};
+  amber: 'text-[#F5A524] border-[#8A571C]',
+  green: 'text-[#82D66B] border-[#3a5a30]',
+  sand: 'text-[#C7AE86] border-[#3A2C1D]',
+}
 
 function FeedItem({ entry, t }: { entry: FeedEntry; t: TFunction }) {
   return (
     <div className="bg-[#0B0906] p-4 flex flex-col gap-2 hover:bg-[#11100D] transition-colors cursor-pointer">
       <div className="flex items-start justify-between gap-2">
-        <span className={`shrink-0 text-[9px] tracking-[0.16em] border px-1.5 py-0.5 ${FEED_TAG_CLASS[entry.tone]}`}>
+        <span
+          className={`shrink-0 text-[9px] tracking-[0.16em] border px-1.5 py-0.5 ${FEED_TAG_CLASS[entry.tone]}`}
+        >
           {t(entry.tagKey)}
         </span>
         <span className="text-[10px] tracking-[0.24em] text-[#5E5040]">{entry.date}</span>
@@ -294,5 +305,5 @@ function FeedItem({ entry, t }: { entry: FeedEntry; t: TFunction }) {
       </span>
       <span className="text-[11px] leading-snug text-[#8E7A5E]">{t(entry.bodyKey)}</span>
     </div>
-  );
+  )
 }

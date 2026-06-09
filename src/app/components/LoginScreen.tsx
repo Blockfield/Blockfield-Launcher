@@ -1,22 +1,16 @@
-import { useState } from "react";
-import { ArrowRight, Lock, User } from "lucide-react";
-import { Logo } from "./Logo";
-import { GridBackdrop, TopoBackdrop, CornerTicks } from "./Backdrop";
-import { StatusDot } from "./ui-bits";
-import { useI18n } from "../i18n";
-import {
-  BRAND,
-  COORDINATES,
-  COPYRIGHT,
-  LAUNCHER_VERSION,
-  SERVER_REGION,
-} from "../constants";
+import { useState } from 'react'
+import { ArrowRight, Lock, User } from 'lucide-react'
+import { Logo } from './Logo'
+import { GridBackdrop, TopoBackdrop, CornerTicks } from './Backdrop'
+import { StatusDot } from './ui-bits'
+import { useI18n } from '../i18n'
+import { BRAND, COORDINATES, COPYRIGHT, LAUNCHER_VERSION, SERVER_REGION } from '../constants'
 
 export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
-  const { t } = useI18n();
-  const [remember, setRemember] = useState(true);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const { t } = useI18n()
+  const [remember, setRemember] = useState(true)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
 
   return (
     <div className="relative h-full w-full bg-[#070604] overflow-hidden">
@@ -24,19 +18,19 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
       <GridBackdrop intensity={0.6} />
 
       <div className="absolute left-5 top-5 text-[10px] tracking-[0.16em] text-[#5E5040] flex flex-col gap-2">
-        <span>{t("login.sector")}</span>
+        <span>{t('login.sector')}</span>
         <span>{COORDINATES}</span>
       </div>
       <div className="absolute right-5 top-5 text-[10px] tracking-[0.16em] text-[#5E5040] flex flex-col items-end gap-2">
-        <span>{t("login.build", { v: LAUNCHER_VERSION })}</span>
+        <span>{t('login.build', { v: LAUNCHER_VERSION })}</span>
         <span className="flex items-center gap-2">
           <StatusDot pulse />
-          {t("login.authOnline")}
+          {t('login.authOnline')}
         </span>
       </div>
 
       <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between text-[10px] tracking-[0.16em] text-[#5E5040]">
-        <span>{t("login.slogan")}</span>
+        <span>{t('login.slogan')}</span>
         <span>{COPYRIGHT}</span>
       </div>
 
@@ -48,30 +42,26 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
               <div className="flex flex-col items-center gap-5">
                 <Logo size={44} />
                 <div className="flex flex-col items-center gap-1.5">
-                  <div className="tracking-[0.24em] text-[11px] text-[#C7AE86]">
-                    {BRAND}
-                  </div>
-                  <h2 className="tracking-[0.18em] text-neutral-50">
-                    {t("login.launcher")}
-                  </h2>
+                  <div className="tracking-[0.24em] text-[11px] text-[#C7AE86]">{BRAND}</div>
+                  <h2 className="tracking-[0.18em] text-neutral-50">{t('login.launcher')}</h2>
                 </div>
                 <div className="h-px w-16 bg-gradient-to-r from-transparent via-[#8A571C] to-transparent" />
                 <p className="text-[11px] tracking-[0.18em] text-[#8E7A5E]">
-                  {t("login.authRequired")}
+                  {t('login.authRequired')}
                 </p>
               </div>
 
               <div className="mt-6 flex flex-col gap-3.5">
                 <Field
                   icon={<User size={13} />}
-                  label={t("login.callsign")}
+                  label={t('login.callsign')}
                   value={username}
                   onChange={setUsername}
                   placeholder="operator@blockfield.gg"
                 />
                 <Field
                   icon={<Lock size={13} />}
-                  label={t("login.accessKey")}
+                  label={t('login.accessKey')}
                   value={password}
                   onChange={setPassword}
                   placeholder="••••••••••••"
@@ -84,18 +74,18 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
                       onClick={() => setRemember(!remember)}
                       className={`size-3.5 border flex items-center justify-center transition-colors ${
                         remember
-                          ? "border-[#F5A524] bg-[#F5A524]/15"
-                          : "border-[#3A2C1D] bg-transparent"
+                          ? 'border-[#F5A524] bg-[#F5A524]/15'
+                          : 'border-[#3A2C1D] bg-transparent'
                       }`}
                     >
                       {remember && <span className="size-1.5 bg-[#F5A524]" />}
                     </span>
                     <span className="text-[10px] tracking-[0.22em] text-[#C7AE86] group-hover:text-neutral-200">
-                      {t("login.remember")}
+                      {t('login.remember')}
                     </span>
                   </label>
                   <button className="text-[10px] tracking-[0.22em] text-[#8E7A5E] hover:text-[#F5A524]">
-                    {t("login.forgot")}
+                    {t('login.forgot')}
                   </button>
                 </div>
 
@@ -104,12 +94,12 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
                   className="relative mt-3 h-11 group overflow-hidden border border-[#F5A524]/40 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-all"
                   style={{
                     boxShadow:
-                      "inset 0 0 0 1px rgba(245,165,36,0.08), 0 0 24px -8px rgba(245,165,36,0.4)",
+                      'inset 0 0 0 1px rgba(245,165,36,0.08), 0 0 24px -8px rgba(245,165,36,0.4)',
                   }}
                 >
                   <span className="absolute inset-0 bg-[#F5A524]/0 group-hover:bg-[#F5A524]/10 transition-colors" />
                   <span className="relative flex items-center justify-center gap-3 text-[12px] tracking-[0.24em] text-[#F3E7D0]">
-                    {t("login.signIn")}
+                    {t('login.signIn')}
                     <ArrowRight size={14} />
                   </span>
                 </button>
@@ -120,18 +110,16 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
               <div className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-[#F5A524]" />
                 <span className="text-[10px] tracking-[0.22em] text-[#8E7A5E]">
-                  {t("login.ready")} · v{LAUNCHER_VERSION}
+                  {t('login.ready')} · v{LAUNCHER_VERSION}
                 </span>
               </div>
-              <span className="text-[10px] tracking-[0.22em] text-[#5E5040]">
-                {SERVER_REGION}
-              </span>
+              <span className="text-[10px] tracking-[0.22em] text-[#5E5040]">{SERVER_REGION}</span>
             </div>
           </div>
         </div>
       </div>
     </div>
-  );
+  )
 }
 
 function Field({
@@ -139,15 +127,15 @@ function Field({
   value,
   onChange,
   placeholder,
-  type = "text",
+  type = 'text',
   icon,
 }: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  type?: string;
-  icon?: React.ReactNode;
+  label: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  type?: string
+  icon?: React.ReactNode
 }) {
   return (
     <label className="flex flex-col gap-1.5">
@@ -164,5 +152,5 @@ function Field({
         />
       </div>
     </label>
-  );
+  )
 }

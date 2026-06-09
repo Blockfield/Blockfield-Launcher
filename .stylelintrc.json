@@ -1,0 +1,32 @@
+{
+  "extends": "stylelint-config-standard",
+  "rules": {
+    "at-rule-no-unknown": [
+      true,
+      {
+        "ignoreAtRules": [
+          "tailwind",
+          "apply",
+          "variants",
+          "responsive",
+          "screen",
+          "source",
+          "custom-variant",
+          "theme"
+        ]
+      }
+    ],
+    "no-descending-specificity": null,
+    "selector-class-pattern": null,
+    "import-notation": null,
+    "custom-property-pattern": null,
+    "function-allowed-list": null,
+    "no-invalid-position-at-import-rule": null,
+    "font-family-name-quotes": "always-where-recommended",
+    "color-function-notation": "modern",
+    "alpha-value-notation": "number",
+    "declaration-empty-line-before": null,
+    "at-rule-empty-line-before": null
+  },
+  "ignoreFiles": ["dist/**", "src-tauri/**", "node_modules/**"]
+}

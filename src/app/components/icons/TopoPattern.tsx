@@ -1,9 +1,9 @@
-const RING_COUNT = 18;
-const RING_BASE = 60;
-const RING_STEP = 28;
-const LINE_COUNT = 12;
-const LINE_OFFSET = 80;
-const LINE_STEP = 110;
+const RING_COUNT = 18
+const RING_BASE = 60
+const RING_STEP = 28
+const LINE_COUNT = 12
+const LINE_OFFSET = 80
+const LINE_STEP = 110
 
 export function TopoPattern() {
   return (
@@ -42,5 +42,5 @@ export function TopoPattern() {
       </defs>
       <rect width="1280" height="760" fill="url(#topo)" />
     </svg>
-  );
+  )
 }
