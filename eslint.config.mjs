@@ -25,5 +25,11 @@ export default tseslint.config(
       'react/prop-types': 'off',
     },
   },
+  {
+    files: ['src/app/components/ui/**/*.{ts,tsx}'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
   prettier,
 )
