@@ -35,7 +35,7 @@ export function Logo({ size = 28, withWordmark = false, className = "" }: LogoPr
           <span className="tracking-[0.22em] text-[13px] text-neutral-100">
             BLOCKFIELD
           </span>
-          <span className="tracking-[0.32em] text-[9px] text-[#C7AE86] mt-1">
+          <span className="tracking-[0.18em] text-[9px] text-[#C7AE86] mt-1">
             TACTICAL OPS
           </span>
         </div>
