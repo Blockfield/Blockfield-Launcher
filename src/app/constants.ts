@@ -8,3 +8,6 @@ export const OPERATOR_HANDLE = 'KILO_7'
 export const OPERATOR_INITIALS = 'K7'
 export const COORDINATES = 'LAT 47.3829° / LON 19.0402°'
 export const COPYRIGHT = '© 2026 BLOCKFIELD COMMAND'
+
+/** Base URL for the launcher API on the Blockfield server. */
+export const API_BASE_URL = 'https://play.blockfield.gg/api/launcher/v1'

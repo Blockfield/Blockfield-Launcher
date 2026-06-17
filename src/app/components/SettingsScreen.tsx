@@ -1,17 +1,116 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Folder, Cpu, Coffee, Globe, RefreshCw, LogOut, Save, Minus, Plus } from 'lucide-react'
+import { Folder, Cpu, Coffee, Globe, RefreshCw, LogOut, Save, Minus, Plus, LoaderCircle } from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { GlowPanel } from './ui-bits'
-import { LANGUAGES, useI18n } from '../i18n'
+import { LANGUAGES, useI18n, type Lang } from '../i18n'
 import { OPERATOR_HANDLE } from '../constants'
+import type { LauncherConfig } from '../../lib/api'
+
+/** Detect whether we're running inside Tauri. */
+const isTauri = () => '__TAURI_INTERNALS__' in window
 
 export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
   const { lang, setLang, t } = useI18n()
-  const [dir, setDir] = useState('C:/Users/Operator/AppData/BlockField')
-  const [java, setJava] = useState('C:/Program Files/Java/jdk-21/bin/java.exe')
+  const [dir, setDir] = useState('')
+  const [java, setJava] = useState('')
   const [ram, setRam] = useState(8)
   const [autoUpdate, setAutoUpdate] = useState(true)
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saveMessage, setSaveMessage] = useState<string | null>(null)
+
+  // Load settings on mount
+  useEffect(() => {
+    if (!isTauri()) {
+      queueMicrotask(() => setLoading(false))
+      return
+    }
+
+    invoke<LauncherConfig>('load_settings')
+      .then((cfg) => {
+        setDir(cfg.gameDir)
+        setJava(cfg.javaPath)
+        setRam(Math.max(2, Math.round(cfg.ramMb / 1024)))
+        setAutoUpdate(cfg.autoUpdate)
+        if (cfg.lang !== lang && (cfg.lang === 'en' || cfg.lang === 'ru' || cfg.lang === 'uk')) {
+          setLang(cfg.lang as Lang)
+        }
+      })
+      .catch((e) => console.error('Failed to load settings:', e))
+      .finally(() => setLoading(false))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const markDirty = useCallback(() => setDirty(true), [])
+
+  const handleSave = useCallback(async () => {
+    if (!isTauri()) return
+    setSaving(true)
+    setSaveMessage(null)
+    try {
+      await invoke('save_settings', {
+        config: {
+          gameDir: dir,
+          javaPath: java,
+          ramMb: ram * 1024,
+          autoUpdate,
+          lang,
+        } satisfies LauncherConfig,
+      })
+      setDirty(false)
+      setSaveMessage(t('settings.saved'))
+      setTimeout(() => setSaveMessage(null), 3000)
+    } catch (e) {
+      console.error('Failed to save settings:', e)
+      setSaveMessage(String(e))
+    } finally {
+      setSaving(false)
+    }
+  }, [dir, java, ram, autoUpdate, lang, t])
+
+  const handleReset = useCallback(() => {
+    invoke<LauncherConfig>('load_settings')
+      .then((cfg) => {
+        setDir(cfg.gameDir)
+        setJava(cfg.javaPath)
+        setRam(Math.max(2, Math.round(cfg.ramMb / 1024)))
+        setAutoUpdate(cfg.autoUpdate)
+      })
+      .catch(console.error)
+    setDirty(false)
+  }, [])
+
+  const handleBrowse = useCallback(
+    async (field: 'dir' | 'java') => {
+      if (!isTauri()) return
+      try {
+        const { open } = await import('@tauri-apps/plugin-dialog')
+        const selected = await open({
+          directory: field === 'dir',
+          title: field === 'dir' ? 'Select Game Directory' : 'Select Java Executable',
+        })
+        if (selected) {
+          const path = selected as string
+          if (field === 'dir') setDir(path)
+          else setJava(path)
+          markDirty()
+        }
+      } catch (e) {
+        console.error('Browse failed:', e)
+      }
+    },
+    [markDirty],
+  )
+
+  if (loading) {
+    return (
+      <div className="relative h-full w-full overflow-hidden bg-[#070604] flex items-center justify-center">
+        <LoaderCircle size={24} className="animate-spin text-[#8E7A5E]" />
+      </div>
+    )
+  }
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#070604]">
@@ -45,21 +144,43 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
               label={t('settings.gameDir')}
               hint={t('settings.gameDirHint')}
             >
-              <PathInput value={dir} onChange={setDir} browseLabel={t('settings.browse')} />
+              <PathInput
+                value={dir}
+                onChange={(v) => {
+                  setDir(v)
+                  markDirty()
+                }}
+                browseLabel={t('settings.browse')}
+                onBrowse={() => handleBrowse('dir')}
+              />
             </Setting>
             <Setting
               icon={<Coffee size={14} />}
               label={t('settings.java')}
               hint={t('settings.javaHint')}
             >
-              <PathInput value={java} onChange={setJava} browseLabel={t('settings.browse')} />
+              <PathInput
+                value={java}
+                onChange={(v) => {
+                  setJava(v)
+                  markDirty()
+                }}
+                browseLabel={t('settings.browse')}
+                onBrowse={() => handleBrowse('java')}
+              />
             </Setting>
             <Setting
               icon={<Cpu size={14} />}
               label={t('settings.ram')}
               hint={t('settings.ramHint', { gb: ram })}
             >
-              <RamSlider ram={ram} onChange={setRam} />
+              <RamSlider
+                ram={ram}
+                onChange={(v) => {
+                  setRam(v)
+                  markDirty()
+                }}
+              />
             </Setting>
           </Group>
 
@@ -75,7 +196,10 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
                     type="button"
                     key={l.code}
                     aria-pressed={lang === l.code}
-                    onClick={() => setLang(l.code)}
+                    onClick={() => {
+                      setLang(l.code)
+                      markDirty()
+                    }}
                     className={`h-9 px-3 text-[10px] tracking-[0.14em] border transition-colors ${
                       lang === l.code
                         ? 'border-[#F5A524] bg-[#2A2116] text-[#F3E7D0]'
@@ -95,7 +219,10 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
             >
               <Toggle
                 on={autoUpdate}
-                onChange={setAutoUpdate}
+                onChange={(v) => {
+                  setAutoUpdate(v)
+                  markDirty()
+                }}
                 onLabel={t('settings.enabled')}
                 offLabel={t('settings.disabled')}
               />
@@ -114,23 +241,51 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
             <div className="flex items-center gap-3">
               <button
                 type="button"
+                onClick={handleReset}
                 className="h-10 px-5 border border-[#2A2116] text-[#C7AE86] hover:text-neutral-200 hover:border-[#3A2C1D] transition-colors text-[11px] tracking-[0.18em]"
               >
                 {t('settings.reset')}
               </button>
-              <button
-                type="button"
-                className="h-10 px-6 flex items-center gap-3 border border-[#F5A524]/40 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-colors"
-                style={{
-                  boxShadow:
-                    '0 0 24px -8px rgba(245,165,36,0.4), inset 0 0 0 1px rgba(245,165,36,0.08)',
-                }}
-              >
-                <Save size={13} className="text-[#F3E7D0]" />
-                <span className="text-[11px] tracking-[0.18em] text-[#F3E7D0]">
-                  {t('settings.save')}
-                </span>
-              </button>
+              <div className="flex items-center gap-2">
+                {saveMessage && (
+                  <span
+                    className={`text-[9px] tracking-[0.16em] ${
+                      saveMessage === t('settings.saved')
+                        ? 'text-[#8E7A5E]'
+                        : 'text-[#c98b8b]'
+                    }`}
+                  >
+                    {saveMessage}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={!dirty || saving}
+                  className={`h-10 px-6 flex items-center gap-3 border transition-colors ${
+                    dirty
+                      ? 'border-[#F5A524]/40 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524]'
+                      : 'border-[#2A2116] bg-[#0B0906] opacity-50 cursor-not-allowed'
+                  }`}
+                  style={
+                    dirty
+                      ? {
+                          boxShadow:
+                            '0 0 24px -8px rgba(245,165,36,0.4), inset 0 0 0 1px rgba(245,165,36,0.08)',
+                        }
+                      : undefined
+                  }
+                >
+                  {saving ? (
+                    <LoaderCircle size={13} className="animate-spin text-[#F3E7D0]" />
+                  ) : (
+                    <Save size={13} className="text-[#F3E7D0]" />
+                  )}
+                  <span className="text-[11px] tracking-[0.18em] text-[#F3E7D0]">
+                    {saving ? t('settings.saving') : t('settings.save')}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </GlowPanel>
@@ -184,10 +339,12 @@ function PathInput({
   value,
   onChange,
   browseLabel,
+  onBrowse,
 }: {
   value: string
   onChange: (v: string) => void
   browseLabel: string
+  onBrowse: () => void
 }) {
   return (
     <div className="flex w-full">
@@ -198,6 +355,7 @@ function PathInput({
       />
       <button
         type="button"
+        onClick={onBrowse}
         className="h-10 shrink-0 px-3 border border-l-0 border-[#2A2116] bg-[#11100D] text-[10px] tracking-[0.14em] text-[#C7AE86] hover:text-[#F3E7D0] hover:border-[#8A571C] transition-colors"
       >
         {browseLabel}

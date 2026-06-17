@@ -141,6 +141,20 @@ const en = {
   'settings.browse': 'BROWSE',
   'settings.enabled': 'ENABLED',
   'settings.disabled': 'DISABLED',
+  'settings.saved': 'CONFIGURATION SAVED',
+  'settings.saving': 'SAVING...',
+  'settings.saveError': 'SAVE FAILED',
+
+  // Update screen — dynamic states
+  'update.retry': 'RETRY',
+  'update.playNow': 'PLAY NOW',
+  'update.uptodate': 'UP TO DATE',
+  'update.checking': 'CHECKING FOR UPDATES...',
+  'update.downloading': 'DOWNLOADING MODPACK',
+
+  // Main screen — dynamic states
+  'main.checking': 'CHECKING...',
+  'main.updateAvailable': 'UPDATE AVAILABLE',
 } as const
 
 export type TKey = keyof typeof en
@@ -272,6 +286,18 @@ const ru: Record<TKey, string> = {
   'settings.browse': 'ОБЗОР',
   'settings.enabled': 'ВКЛ',
   'settings.disabled': 'ВЫКЛ',
+  'settings.saved': 'КОНФИГУРАЦИЯ СОХРАНЕНА',
+  'settings.saving': 'СОХРАНЕНИЕ...',
+  'settings.saveError': 'ОШИБКА СОХРАНЕНИЯ',
+
+  'update.retry': 'ПОВТОРИТЬ',
+  'update.playNow': 'ИГРАТЬ',
+  'update.uptodate': 'АКТУАЛЬНО',
+  'update.checking': 'ПРОВЕРКА ОБНОВЛЕНИЙ...',
+  'update.downloading': 'ЗАГРУЗКА МОДПАКА',
+
+  'main.checking': 'ПРОВЕРКА...',
+  'main.updateAvailable': 'ДОСТУПНО ОБНОВЛЕНИЕ',
 }
 
 const uk: Record<TKey, string> = {
@@ -401,6 +427,18 @@ const uk: Record<TKey, string> = {
   'settings.browse': 'ОГЛЯД',
   'settings.enabled': 'УВІМК',
   'settings.disabled': 'ВИМК',
+  'settings.saved': 'КОНФІГУРАЦІЯ ЗБЕРЕЖЕНА',
+  'settings.saving': 'ЗБЕРЕЖЕННЯ...',
+  'settings.saveError': 'ПОМИЛКА ЗБЕРЕЖЕННЯ',
+
+  'update.retry': 'ПОВТОРИТИ',
+  'update.playNow': 'ГРАТИ',
+  'update.uptodate': 'АКТУАЛЬНО',
+  'update.checking': 'ПЕРЕВІРКА ОНОВЛЕНЬ...',
+  'update.downloading': 'ЗАВАНТАЖЕННЯ МОДПАКА',
+
+  'main.checking': 'ПЕРЕВІРКА...',
+  'main.updateAvailable': 'ДОСТУПНЕ ОНОВЛЕННЯ',
 }
 
 const DICTS: Record<Lang, Record<TKey, string>> = { en, ru, uk }

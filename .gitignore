@@ -4,7 +4,11 @@ pnpm-lock.yaml
 
 # Build output
 dist/
-src-tauri/target/
+target/
+
+# Server — modpack files (large binaries, not in VCS)
+server/files/
+server/extracted/
 
 # IDE
 .vscode/

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   Play,
   Wifi,
@@ -11,11 +11,14 @@ import {
   Crosshair,
   ChevronRight,
   RefreshCw,
+  LoaderCircle,
 } from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
 import { useI18n, type TKey, type TFunction } from '../i18n'
 import { MODPACK_VERSION, OPERATION_NAME, SERVER_IP } from '../constants'
+import type { VersionCheckResult } from '../../lib/api'
 
 type Tone = 'ok' | 'muted' | 'warn'
 
@@ -63,8 +66,65 @@ const FEED: FeedEntry[] = [
   },
 ]
 
+/** Whether we're running inside Tauri (vs browser dev). */
+const isTauri = () => '__TAURI_INTERNALS__' in window
+
 export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const { t } = useI18n()
+  const [versionInfo, setVersionInfo] = useState<VersionCheckResult | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [checkError, setCheckError] = useState<string | null>(null)
+  const [launching, setLaunching] = useState(false)
+
+  const handleDeploy = useCallback(async () => {
+    // If we already know an update is needed, go to update screen
+    if (versionInfo?.needsUpdate) {
+      onPlay()
+      return
+    }
+    // If up to date (or still checking), try launching directly
+    if (isTauri()) {
+      setLaunching(true)
+      try {
+        await invoke('launch_game')
+      } catch (e) {
+        console.error('Launch failed:', e)
+      } finally {
+        setLaunching(false)
+      }
+    }
+  }, [versionInfo, onPlay])
+
+  const checkVersion = useCallback(async () => {
+    if (!isTauri()) return
+    setChecking(true)
+    setCheckError(null)
+    try {
+      const result = await invoke<VersionCheckResult>('check_modpack_version')
+      setVersionInfo(result)
+    } catch (e) {
+      console.error('Failed to check modpack version:', e)
+      setCheckError(String(e))
+    } finally {
+      setChecking(false)
+    }
+  }, [])
+
+  // Check version on mount (if running in Tauri)
+  useEffect(() => {
+    if (!isTauri()) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync: this is an external system subscription (Tauri IPC)
+    checkVersion()
+  }, [checkVersion])
+
+  const installedVersion = versionInfo?.installedVersion ?? MODPACK_VERSION
+  const latestVersion = versionInfo?.remoteVersion ?? MODPACK_VERSION
+  const needsUpdate = versionInfo?.needsUpdate ?? false
+  const upToDate = versionInfo && !needsUpdate
+  const totalSize = versionInfo?.totalSize
+    ? `${(versionInfo.totalSize / 1e9).toFixed(1)} GB`
+    : '2.1 GB'
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#070604]">
       <TopoBackdrop />
@@ -97,12 +157,22 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
             <div className="flex flex-wrap items-center justify-between gap-5">
               <div className="flex min-w-0 items-center gap-4">
                 <DeployButton
-                  onPlay={onPlay}
-                  label={t('nav.deploy')}
-                  sub={t('main.enterBattlefield')}
+                  onPlay={handleDeploy}
+                  label={launching ? 'LAUNCHING' : t('nav.deploy')}
+                  sub={launching ? '...' : t('main.enterBattlefield')}
                 />
                 <div className="flex flex-col gap-2 pl-2">
-                  <Stat label={t('main.modpack')} value={t('main.upToDate')} tone="ok" />
+                  <Stat
+                    label={t('main.modpack')}
+                    value={
+                      upToDate
+                        ? t('main.upToDate')
+                        : needsUpdate
+                          ? t('main.updateAvailable')
+                          : t('main.upToDate')
+                    }
+                    tone={upToDate ? 'ok' : needsUpdate ? 'warn' : 'muted'}
+                  />
                   <Stat label={t('main.auth')} value={t('main.verified')} tone="ok" />
                   <Stat label={t('main.queue')} value={t('main.none')} tone="muted" />
                 </div>
@@ -137,14 +207,31 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
             <div className="bg-[#0B0906] p-4 flex flex-col min-h-0">
               <SectionHeader label={t('main.modpackStatus')} code="PKG-0142" />
               <div className="mt-3 flex flex-col gap-2 flex-1">
-                <Row label={t('main.installed')} value={MODPACK_VERSION} />
-                <Row label={t('main.latest')} value={MODPACK_VERSION} highlight />
-                <Row label={t('main.size')} value="2.1 GB" />
-                <Row label={t('main.autoUpdate')} value={t('main.enabled')} highlight />
+                <Row label={t('main.installed')} value={installedVersion} />
+                <Row label={t('main.latest')} value={latestVersion} highlight={needsUpdate} />
+                <Row label={t('main.size')} value={totalSize} />
+                <Row
+                  label={t('main.autoUpdate')}
+                  value={needsUpdate ? t('main.updateAvailable') : t('main.upToDate')}
+                  highlight={needsUpdate}
+                />
+                {checkError && (
+                  <div className="text-[10px] tracking-[0.12em] text-[#c98b8b] mt-1">
+                    {checkError.slice(0, 120)}
+                  </div>
+                )}
               </div>
-              <button className="mt-3 h-8 border border-[#2A2116] hover:border-[#8A571C] text-[10px] tracking-[0.16em] text-[#C7AE86] hover:text-[#F3E7D0] flex items-center justify-center gap-2 transition-colors">
-                <RefreshCw size={12} />
-                {t('nav.updates')}
+              <button
+                onClick={checkVersion}
+                disabled={checking}
+                className="mt-3 h-8 border border-[#2A2116] hover:border-[#8A571C] text-[10px] tracking-[0.16em] text-[#C7AE86] hover:text-[#F3E7D0] flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+              >
+                {checking ? (
+                  <LoaderCircle size={12} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={12} />
+                )}
+                {checking ? t('main.checking') : t('nav.updates')}
               </button>
             </div>
           </div>

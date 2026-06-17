@@ -1,0 +1,14 @@
+services:
+  blockfield-api:
+    build: ..
+    dockerfile: server/Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./files:/data/files          # Drop new ZIPs here, POST /api/launcher/v1/reload
+      - ./extracted:/data/extracted  # Auto-populated from ZIP on startup/reload
+    environment:
+      - BASE_URL=https://play.blockfield.gg
+      - MODPACK_VERSION=0.1.43
+      - MINECRAFT_VERSION=1.20.1
+    restart: unless-stopped
