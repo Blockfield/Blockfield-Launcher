@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 /// Launcher configuration persisted in Tauri's app data directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LauncherConfig {
     /// Absolute path to the game directory where modpack files are installed
     pub game_dir: String,
