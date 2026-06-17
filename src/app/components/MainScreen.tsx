@@ -77,12 +77,14 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const [launching, setLaunching] = useState(false)
 
   const handleDeploy = useCallback(async () => {
-    // If we already know an update is needed, go to update screen
-    if (versionInfo?.needsUpdate) {
+    // Don't allow deploy until version check completes
+    if (!versionInfo) return
+    // Update needed → go to update screen
+    if (versionInfo.needsUpdate) {
       onPlay()
       return
     }
-    // If up to date (or still checking), try launching directly
+    // Confirmed up to date → launch
     if (isTauri()) {
       setLaunching(true)
       try {
@@ -117,13 +119,26 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
     checkVersion()
   }, [checkVersion])
 
-  const installedVersion = versionInfo?.installedVersion ?? MODPACK_VERSION
-  const latestVersion = versionInfo?.remoteVersion ?? MODPACK_VERSION
+  // Derive display values from version check result
+  const isChecked = versionInfo !== null
   const needsUpdate = versionInfo?.needsUpdate ?? false
-  const upToDate = versionInfo && !needsUpdate
+  const upToDate = isChecked && !needsUpdate
+  const installedVersion = versionInfo?.installedVersion ?? '...'
+  const latestVersion = versionInfo?.remoteVersion ?? '...'
   const totalSize = versionInfo?.totalSize
     ? `${(versionInfo.totalSize / 1e9).toFixed(1)} GB`
-    : '2.1 GB'
+    : '—'
+
+  // Modpack status line
+  const modpackStatus: { value: string; tone: Tone } = checking
+    ? { value: t('main.checking'), tone: 'muted' }
+    : checkError
+      ? { value: 'OFFLINE', tone: 'warn' }
+      : upToDate
+        ? { value: t('main.upToDate'), tone: 'ok' }
+        : needsUpdate
+          ? { value: t('main.updateAvailable'), tone: 'warn' }
+          : { value: t('main.upToDate'), tone: 'muted' }
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#070604]">
@@ -158,20 +173,31 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
               <div className="flex min-w-0 items-center gap-4">
                 <DeployButton
                   onPlay={handleDeploy}
-                  label={launching ? 'LAUNCHING' : t('nav.deploy')}
-                  sub={launching ? '...' : t('main.enterBattlefield')}
+                  disabled={!isChecked || launching}
+                  label={
+                    launching
+                      ? 'LAUNCHING'
+                      : !isChecked
+                        ? '...'
+                        : needsUpdate
+                          ? t('nav.updates')
+                          : t('nav.deploy')
+                  }
+                  sub={
+                    launching
+                      ? '...'
+                      : !isChecked
+                        ? t('main.checking')
+                        : needsUpdate
+                          ? t('main.updateAvailable')
+                          : t('main.enterBattlefield')
+                  }
                 />
                 <div className="flex flex-col gap-2 pl-2">
                   <Stat
                     label={t('main.modpack')}
-                    value={
-                      upToDate
-                        ? t('main.upToDate')
-                        : needsUpdate
-                          ? t('main.updateAvailable')
-                          : t('main.upToDate')
-                    }
-                    tone={upToDate ? 'ok' : needsUpdate ? 'warn' : 'muted'}
+                    value={modpackStatus.value}
+                    tone={modpackStatus.tone}
                   />
                   <Stat label={t('main.auth')} value={t('main.verified')} tone="ok" />
                   <Stat label={t('main.queue')} value={t('main.none')} tone="muted" />
@@ -257,22 +283,31 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   )
 }
 
-function DeployButton({ onPlay, label, sub }: { onPlay: () => void; label: string; sub: string }) {
+function DeployButton({ onPlay, label, sub, disabled }: { onPlay: () => void; label: string; sub: string; disabled?: boolean }) {
   return (
     <button
       onClick={onPlay}
-      className="group relative h-[64px] w-[230px] shrink-0 overflow-hidden border border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-all"
-      style={{
-        boxShadow: 'inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)',
-      }}
+      disabled={disabled}
+      className={`group relative h-[64px] w-[230px] shrink-0 overflow-hidden border transition-all ${
+        disabled
+          ? 'border-[#2A2116] bg-[#0B0906] opacity-50 cursor-not-allowed'
+          : 'border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524]'
+      }`}
+      style={
+        disabled
+          ? undefined
+          : {
+              boxShadow: 'inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)',
+            }
+      }
     >
-      <span className="absolute top-0 left-0 w-3 h-3 border-l border-t border-[#F5A524]" />
-      <span className="absolute top-0 right-0 w-3 h-3 border-r border-t border-[#F5A524]" />
-      <span className="absolute bottom-0 left-0 w-3 h-3 border-l border-b border-[#F5A524]" />
-      <span className="absolute bottom-0 right-0 w-3 h-3 border-r border-b border-[#F5A524]" />
+      <span className={`absolute top-0 left-0 w-3 h-3 border-l border-t ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`} />
+      <span className={`absolute top-0 right-0 w-3 h-3 border-r border-t ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`} />
+      <span className={`absolute bottom-0 left-0 w-3 h-3 border-l border-b ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`} />
+      <span className={`absolute bottom-0 right-0 w-3 h-3 border-r border-b ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`} />
       <span className="absolute inset-0 bg-[#F5A524]/0 group-hover:bg-[#F5A524]/10 transition-colors" />
       <span className="relative h-full flex items-center justify-center gap-4">
-        <Play size={18} className="text-[#F3E7D0] fill-[#F3E7D0]" />
+        <Play size={18} className={disabled ? 'text-[#5E5040] fill-[#5E5040]' : 'text-[#F3E7D0] fill-[#F3E7D0]'} />
         <span className="flex flex-col items-start leading-none">
           <span className="tracking-[0.26em] text-[17px] text-[#F3E7D0]">{label}</span>
           <span className="tracking-[0.16em] text-[9px] text-[#C7AE86] mt-1 text-left">{sub}</span>
