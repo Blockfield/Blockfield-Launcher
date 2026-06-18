@@ -156,19 +156,22 @@ pub async fn check_modpack_version(
 
     // Check Forge installation
     let forge_ok = if let Some(ref forge) = manifest.forge {
+        // Forge installer creates version ID like "1.20.1-forge-47.4.10"
+        // "1.20.1-47.4.10" -> "1.20.1-forge-47.4.10" (installer naming)
+        let forge_version_id = forge.version.replacen('-', "-forge-", 1);
         let forge_jar = PathBuf::from(&config.game_dir)
             .join("versions")
-            .join(&forge.version)
-            .join(format!("forge-{}.jar", forge.version));
+            .join(&forge_version_id)
+            .join(format!("{}.jar", forge_version_id));
         let ok = forge_jar.exists();
         if ok {
-            log::info!("[check_modpack_version] Forge OK: {}", forge.version);
+            log::info!("[check_modpack_version] Forge OK: {forge_version_id}");
         } else {
-            log::info!("[check_modpack_version] Forge not installed: {}", forge.version);
+            log::info!("[check_modpack_version] Forge not installed at {}", forge_jar.display());
         }
         ok
     } else {
-        true // No Forge requirement
+        true
     };
 
     let result = VersionCheckResult {
@@ -421,10 +424,11 @@ pub async fn launch_game(
     let main_jar = {
         let cached = state.manifest.read().await;
         if let Some(ref forge) = cached.as_ref().and_then(|m| m.forge.as_ref()) {
+            let forge_version_id = forge.version.replacen('-', "-forge-", 1);
             let forge_jar = PathBuf::from(&game_dir)
                 .join("versions")
-                .join(&forge.version)
-                .join(format!("forge-{}.jar", forge.version));
+                .join(&forge_version_id)
+                .join(format!("{}.jar", forge_version_id));
             if forge_jar.exists() {
                 forge_jar.to_string_lossy().to_string()
             } else {
