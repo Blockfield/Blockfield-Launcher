@@ -160,7 +160,13 @@ pub async fn check_modpack_version(
             .join("versions")
             .join(&forge.version)
             .join(format!("forge-{}.jar", forge.version));
-        forge_jar.exists()
+        let ok = forge_jar.exists();
+        if ok {
+            log::info!("[check_modpack_version] Forge OK: {}", forge.version);
+        } else {
+            log::info!("[check_modpack_version] Forge not installed: {}", forge.version);
+        }
+        ok
     } else {
         true // No Forge requirement
     };
