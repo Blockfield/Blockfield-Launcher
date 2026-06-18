@@ -95,21 +95,34 @@ pub async fn check_modpack_version(
 
     let mut needs_update = installed.version != manifest.version;
 
-    // Even if version matches, spot-check a few files for integrity
+    // Even if version matches, check for missing files (quick existence + spot SHA256)
     if !needs_update && !manifest.files.is_empty() {
         let game_dir = PathBuf::from(&config.game_dir);
-        let check_count = 10usize.min(manifest.files.len());
-        for entry in manifest.files.iter().take(check_count) {
-            let path = game_dir.join(&entry.path);
-            match Downloader::sha256_file(&path) {
-                Ok(hash) if hash == entry.sha256 => { /* ok */ }
-                _ => {
-                    log::info!(
-                        "[check_modpack_version] File changed/missing: {} — forcing update",
-                        entry.path
-                    );
-                    needs_update = true;
-                    break;
+        // First pass: quick existence check for all files
+        for entry in &manifest.files {
+            if !game_dir.join(&entry.path).exists() {
+                log::info!(
+                    "[check_modpack_version] Missing file: {} — forcing update",
+                    entry.path
+                );
+                needs_update = true;
+                break;
+            }
+        }
+        // Second pass: SHA256 spot-check on 10 random files
+        if !needs_update {
+            for entry in manifest.files.iter().take(10) {
+                let path = game_dir.join(&entry.path);
+                match Downloader::sha256_file(&path) {
+                    Ok(hash) if hash == entry.sha256 => { /* ok */ }
+                    _ => {
+                        log::info!(
+                            "[check_modpack_version] File changed: {} — forcing update",
+                            entry.path
+                        );
+                        needs_update = true;
+                        break;
+                    }
                 }
             }
         }
