@@ -285,10 +285,19 @@ pub async fn launch_game(
 ) -> Result<(), String> {
     let config = state.config.read().await;
 
-    let java = if config.java_path.is_empty() {
-        "java".to_string()
-    } else {
+    // Resolve Java path: configured > auto-detected in game_dir > system "java"
+    let java_exe_name = if cfg!(windows) { "java.exe" } else { "java" };
+    let bundled_java = PathBuf::from(&config.game_dir)
+        .join("java")
+        .join("bin")
+        .join(java_exe_name);
+
+    let java = if !config.java_path.is_empty() {
         config.java_path.clone()
+    } else if bundled_java.exists() {
+        bundled_java.to_string_lossy().to_string()
+    } else {
+        "java".to_string()
     };
 
     let ram_mb = config.ram_mb;
