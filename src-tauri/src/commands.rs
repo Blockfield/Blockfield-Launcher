@@ -3,7 +3,7 @@ use crate::download::Downloader;
 use crate::manifest::{InstalledManifest, ModpackManifest, VersionCheckResult};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use tokio::sync::RwLock;
 
 /// Shared application state managed by Tauri.
@@ -343,8 +343,6 @@ pub async fn launch_game(
         "Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}"
     );
 
-    // Use tauri-plugin-shell to spawn the process
-    // The sidecar/spawn approach requires shell permissions
     let args = vec![
         format!("-Xmx{ram_mb}M"),
         format!("-Xms{ram_mb}M"),
@@ -353,19 +351,25 @@ pub async fn launch_game(
         "minecraft.jar".to_string(),
     ];
 
-    // Log the command for debugging; actual spawn requires shell plugin setup
-    log::info!("Would execute: {java} {}", args.join(" "));
+    log::info!("Spawning: {java} {}", args.join(" "));
 
-    // TODO: When tauri-plugin-shell is fully configured, use:
-    // use tauri_plugin_shell::ShellExt;
-    // let shell = app_handle.shell();
-    // let cmd = shell.command(&java).args(&args).current_dir(&game_dir);
-    // let output = cmd.output().await.map_err(|e| e.to_string())?;
+    use tauri_plugin_shell::ShellExt;
+    let shell = app_handle.shell();
+    let cmd = shell
+        .command(&java)
+        .args(&args)
+        .current_dir(&game_dir);
 
-    // For now, emit a message that launching is a stub
-    app_handle
-        .emit("launch://status", "Launch stub: command prepared but not executed")
-        .map_err(|e| e.to_string())?;
+    match cmd.spawn() {
+        Ok(_child) => {
+            log::info!("Game process spawned successfully");
+        }
+        Err(e) => {
+            let msg = format!("Failed to spawn game: {e}");
+            log::error!("{msg}");
+            return Err(msg);
+        }
+    }
 
     Ok(())
 }
