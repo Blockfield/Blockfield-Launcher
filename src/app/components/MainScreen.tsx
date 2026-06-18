@@ -79,12 +79,12 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const handleDeploy = useCallback(async () => {
     // Don't allow deploy until version check completes
     if (!versionInfo) return
-    // Update needed → go to update screen
-    if (versionInfo.needsUpdate) {
+    // Update needed OR Java not ready → go to update screen
+    if (versionInfo.needsUpdate || !versionInfo.javaOk) {
       onPlay()
       return
     }
-    // Confirmed up to date → launch
+    // Confirmed up to date AND Java OK → launch
     if (isTauri()) {
       setLaunching(true)
       try {

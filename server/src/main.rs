@@ -25,6 +25,16 @@ struct AppConfig {
     modpack_version: String,
     /// Minecraft version override
     minecraft_version: String,
+    /// Java version required by the modpack
+    java_version: Option<String>,
+    /// Java platform (e.g. "windows-x86_64")
+    java_platform: Option<String>,
+    /// URL to download the Java archive
+    java_url: Option<String>,
+    /// SHA-256 of the Java archive
+    java_sha256: Option<String>,
+    /// Size of the Java archive in bytes
+    java_size: Option<u64>,
 }
 
 impl AppConfig {
@@ -42,6 +52,13 @@ impl AppConfig {
                 .unwrap_or_else(|_| "0.1.43".into()),
             minecraft_version: std::env::var("MINECRAFT_VERSION")
                 .unwrap_or_else(|_| "1.20.1".into()),
+            java_version: std::env::var("JAVA_VERSION").ok(),
+            java_platform: std::env::var("JAVA_PLATFORM").ok(),
+            java_url: std::env::var("JAVA_URL").ok(),
+            java_sha256: std::env::var("JAVA_SHA256").ok(),
+            java_size: std::env::var("JAVA_SIZE")
+                .ok()
+                .and_then(|s| s.parse().ok()),
         }
     }
 }
@@ -171,6 +188,25 @@ fn build_manifest(config: &AppConfig) -> Result<ModpackManifest, String> {
 
     println!("Manifest built: {} files, {} bytes total", files.len(), total_size);
 
+    let java = if let (Some(version), Some(platform), Some(url), Some(sha256), Some(size)) = (
+        config.java_version.as_ref(),
+        config.java_platform.as_ref(),
+        config.java_url.as_ref(),
+        config.java_sha256.as_ref(),
+        config.java_size,
+    ) {
+        println!("Java info: {version} for {platform}");
+        Some(blockfield_shared::JavaInfo {
+            version: version.clone(),
+            platform: platform.clone(),
+            url: url.clone(),
+            sha256: sha256.clone(),
+            size,
+        })
+    } else {
+        None
+    };
+
     Ok(ModpackManifest {
         version: config.modpack_version.clone(),
         minecraft_version: config.minecraft_version.clone(),
@@ -178,6 +214,7 @@ fn build_manifest(config: &AppConfig) -> Result<ModpackManifest, String> {
         total_size,
         release_date: chrono_like_now(),
         prune: None,
+        java,
     })
 }
 

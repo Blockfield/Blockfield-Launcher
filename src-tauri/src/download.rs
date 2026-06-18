@@ -173,7 +173,7 @@ impl Downloader {
     }
 
     /// Download a single file with streaming, emitting progress events.
-    async fn download_one(
+    pub async fn download_one(
         &self,
         url: &str,
         dest: &Path,

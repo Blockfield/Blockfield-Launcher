@@ -13,6 +13,21 @@ pub struct ManifestFileEntry {
     pub url: String,
 }
 
+/// Info about required Java runtime.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JavaInfo {
+    /// Java version, e.g. "21.0.5"
+    pub version: String,
+    /// Target platform, e.g. "windows-x86_64"
+    pub platform: String,
+    /// Download URL for the Java archive
+    pub url: String,
+    /// SHA-256 checksum of the archive
+    pub sha256: String,
+    /// Archive size in bytes
+    pub size: u64,
+}
+
 /// The remote modpack manifest served by the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModpackManifest {
@@ -31,6 +46,8 @@ pub struct ModpackManifest {
     pub release_date: String,
     /// Optional: glob-like paths to delete for this version
     pub prune: Option<Vec<String>>,
+    /// Required Java runtime info (auto-downloaded if not installed)
+    pub java: Option<JavaInfo>,
 }
 
 /// Result returned to the frontend after checking for modpack updates.
@@ -42,4 +59,8 @@ pub struct VersionCheckResult {
     pub installed_version: String,
     pub file_count: usize,
     pub total_size: u64,
+    /// Required Java info from the manifest
+    pub java: Option<JavaInfo>,
+    /// Whether the installed Java matches the required version
+    pub java_ok: bool,
 }

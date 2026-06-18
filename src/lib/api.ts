@@ -1,4 +1,4 @@
-// ── Manifest types (mirrors src-tauri/src/manifest.rs) ──────────────
+// ── Manifest types (mirrors server manifest + shared crate) ─────────
 
 /** A single file entry in the modpack manifest. */
 export interface ManifestFileEntry {
@@ -12,6 +12,15 @@ export interface ManifestFileEntry {
   url: string
 }
 
+/** Required Java runtime info. */
+export interface JavaInfo {
+  version: string
+  platform: string
+  url: string
+  sha256: string
+  size: number
+}
+
 /** The remote modpack manifest. */
 export interface ModpackManifest {
   version: string
@@ -20,6 +29,7 @@ export interface ModpackManifest {
   totalSize: number
   releaseDate: string
   prune?: string[]
+  java?: JavaInfo
 }
 
 /** Result of checking for modpack updates. */
@@ -29,6 +39,8 @@ export interface VersionCheckResult {
   installedVersion: string
   fileCount: number
   totalSize: number
+  java?: JavaInfo
+  javaOk: boolean
 }
 
 // ── Download progress ────────────────────────────────────────────

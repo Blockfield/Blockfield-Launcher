@@ -84,12 +84,38 @@ pub async fn check_modpack_version(
     let needs_update = installed.version != manifest.version;
     log::info!("[check_modpack_version] needs_update = {needs_update}");
 
+    // Check Java version if required
+    let java_info = manifest.java.clone();
+    let java_ok = if let Some(ref java) = java_info {
+        let java_ver_path = std::path::PathBuf::from(&config.game_dir)
+            .join("java")
+            .join(".version");
+        match std::fs::read_to_string(&java_ver_path) {
+            Ok(v) if v.trim() == java.version => {
+                log::info!("[check_modpack_version] Java OK: {}", v.trim());
+                true
+            }
+            Ok(v) => {
+                log::info!("[check_modpack_version] Java mismatch: have {}, need {}", v.trim(), java.version);
+                false
+            }
+            Err(_) => {
+                log::info!("[check_modpack_version] Java not installed");
+                false
+            }
+        }
+    } else {
+        true // No Java requirement
+    };
+
     let result = VersionCheckResult {
         needs_update,
         remote_version: manifest.version.clone(),
         installed_version: installed.version.clone(),
         file_count: manifest.files.len(),
         total_size: manifest.total_size,
+        java: java_info,
+        java_ok,
     };
 
     // Cache the manifest for later use
@@ -115,6 +141,64 @@ pub async fn download_modpack(
 
     let downloader = state.downloader.lock().await;
     downloader.reset_cancel().await;
+
+    // Download Java runtime if needed
+    if let Some(ref java) = manifest.java {
+        let java_dir = PathBuf::from(&config.game_dir).join("java");
+        let java_ver_path = java_dir.join(".version");
+        let need_java = match std::fs::read_to_string(&java_ver_path) {
+            Ok(v) if v.trim() == java.version => false,
+            _ => true,
+        };
+
+        if need_java {
+            log::info!("Downloading Java {} for {}", java.version, java.platform);
+            let archive_path = java_dir.join("java-archive");
+            std::fs::create_dir_all(&java_dir)
+                .map_err(|e| format!("Failed to create java dir: {e}"))?;
+
+            downloader
+                .download_one(
+                    &java.url,
+                    &archive_path,
+                    "java-runtime",
+                    java.size,
+                    1,
+                    1,
+                    &mut 0,
+                    java.size,
+                )
+                .await
+                .map_err(|e| format!("Java download failed: {e}"))?;
+
+            // Verify SHA256
+            let actual = Downloader::sha256_file(&archive_path)
+                .map_err(|e| format!("Java checksum error: {e}"))?;
+            if actual != java.sha256 {
+                let _ = std::fs::remove_file(&archive_path);
+                return Err(format!(
+                    "Java SHA256 mismatch: expected {}, got {}",
+                    java.sha256, actual
+                ));
+            }
+
+            // Extract the archive (supports .zip and .tar.gz)
+            extract_archive(&archive_path, &java_dir)?;
+            let _ = std::fs::remove_file(&archive_path);
+
+            // Write version marker
+            std::fs::write(&java_ver_path, &java.version)
+                .map_err(|e| format!("Failed to write java version: {e}"))?;
+
+            // Auto-update in-memory config to point to the downloaded Java
+            let java_exe = java_dir.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" });
+            if java_exe.exists() {
+                let mut cfg = state.config.write().await;
+                cfg.java_path = java_exe.to_string_lossy().to_string();
+                log::info!("Java installed, path set to: {}", java_exe.display());
+            }
+        }
+    }
 
     // If the version changed entirely, start fresh (prune old files)
     let installed_sha256 = if installed.version != manifest.version {
@@ -244,4 +328,48 @@ pub async fn launch_game(
 fn api_base_url() -> String {
     std::env::var("BLOCKFIELD_API_URL")
         .unwrap_or_else(|_| "http://localhost:3000/api/launcher/v1".to_string())
+}
+
+/// Extract a ZIP archive to a target directory.
+fn extract_archive(archive_path: &PathBuf, dest_dir: &PathBuf) -> Result<(), String> {
+    let file = std::fs::File::open(archive_path)
+        .map_err(|e| format!("Failed to open archive: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Failed to read archive: {e}"))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("Archive entry {i} error: {e}"))?;
+
+        let name = entry.name().to_string();
+        if entry.is_dir() {
+            continue;
+        }
+
+        // Strip top-level directory (e.g. "jdk-21.0.5+11/" → "")
+        let relative = if let Some(pos) = name.find('/') {
+            &name[pos + 1..]
+        } else {
+            &name
+        };
+
+        if relative.is_empty() {
+            continue;
+        }
+
+        let dest = dest_dir.join(relative);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create dir {}: {e}", parent.display()))?;
+        }
+
+        let mut out = std::fs::File::create(&dest)
+            .map_err(|e| format!("Failed to create {}: {e}", dest.display()))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|e| format!("Failed to extract {}: {e}", name))?;
+    }
+
+    log::info!("Extracted {} entries to {}", archive.len(), dest_dir.display());
+    Ok(())
 }
