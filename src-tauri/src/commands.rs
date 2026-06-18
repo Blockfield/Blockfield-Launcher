@@ -276,6 +276,19 @@ pub async fn download_modpack(
 
             // Run Forge installer
             log::info!("Running Forge installer...");
+
+            // Create minimal Minecraft launcher profile so Forge installer works
+            let launcher_profiles = PathBuf::from(&config.game_dir).join("launcher_profiles.json");
+            if !launcher_profiles.exists() {
+                let minimal_profile = serde_json::json!({
+                    "profiles": {},
+                    "settings": {},
+                    "version": 3
+                });
+                std::fs::write(&launcher_profiles, serde_json::to_string(&minimal_profile).unwrap_or_default())
+                    .map_err(|e| format!("Failed to create launcher profile: {e}"))?;
+            }
+
             let java_bin = if cfg!(windows) { "java.exe" } else { "java" };
             let java = PathBuf::from(&config.game_dir).join("java").join("bin").join(java_bin);
             let java = if java.exists() { java.to_string_lossy().to_string() } else { "java".to_string() };
@@ -292,9 +305,11 @@ pub async fn download_modpack(
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                log::error!("Forge installer failed: {stderr}");
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                log::error!("Forge installer stderr: {stderr}");
+                log::error!("Forge installer stdout: {stdout}");
                 let _ = std::fs::remove_file(&installer_path);
-                return Err(format!("Forge installer failed: {stderr}"));
+                return Err(format!("Forge installer failed: {stderr} {stdout}"));
             }
 
             log::info!("Forge installed successfully");
