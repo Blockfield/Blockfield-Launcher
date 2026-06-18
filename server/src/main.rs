@@ -143,19 +143,20 @@ fn extract_zips(files_dir: &PathBuf, extracted_dir: &PathBuf) -> Result<Vec<Path
 
 /// Percent-encode characters that are unsafe in URL paths.
 fn percent_encode_path(path: &str) -> String {
-    path.bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || b == b'/' || b == b'-' || b == b'_' || b == b'.' {
-                b as char
-            } else {
-                b as char // keep as-is; the HTTP client will encode
-            }
-        })
-        .collect::<String>()
-        .replace(' ', "%20")
-        .replace('[', "%5B")
-        .replace(']', "%5D")
-        .replace('+', "%2B")
+    // Encode % first to avoid double-encoding already-encoded filenames
+    let mut out = String::with_capacity(path.len() * 3 / 2);
+    for b in path.bytes() {
+        match b {
+            b'/' | b'-' | b'_' | b'.' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => out.push(b as char),
+            b' ' => out.push_str("%20"),
+            b'%' => out.push_str("%25"),
+            b'[' => out.push_str("%5B"),
+            b']' => out.push_str("%5D"),
+            b'+' => out.push_str("%2B"),
+            _ => out.push(b as char),
+        }
+    }
+    out
 }
 
 /// Build a manifest by walking the extracted directory and computing SHA256.
