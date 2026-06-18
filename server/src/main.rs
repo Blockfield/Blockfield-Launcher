@@ -355,12 +355,17 @@ async fn handle_reload(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 
 /// GET /api/launcher/v1/update.json
 async fn serve_update() -> impl IntoResponse {
+    // Return current launcher version so updater knows no update is available.
+    // Tauri updater only downloads if remote version > current version.
     let update_info = serde_json::json!({
-        "version": "0.0.0",
+        "version": "0.1.0",
         "notes": "No launcher update available.",
         "pub_date": "2026-06-18T00:00:00Z",
         "platforms": {
-            "windows-x86_64": { "url": "", "signature": "" }
+            "windows-x86_64": {
+                "url": "https://play.blockfield.gg/downloads/blockfield-launcher_0.1.0_x64-setup.exe",
+                "signature": ""
+            }
         }
     });
     (

@@ -72,7 +72,7 @@ const isTauri = () => '__TAURI_INTERNALS__' in window
 export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const { t } = useI18n()
   const [versionInfo, setVersionInfo] = useState<VersionCheckResult | null>(null)
-  const [checking, setChecking] = useState(false)
+  const [checking, setChecking] = useState(true)
   const [checkError, setCheckError] = useState<string | null>(null)
   const [launching, setLaunching] = useState(false)
 
