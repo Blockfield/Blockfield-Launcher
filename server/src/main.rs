@@ -126,6 +126,14 @@ fn extract_zips(files_dir: &PathBuf, extracted_dir: &PathBuf) -> Result<Vec<Path
 
                 extracted.push(PathBuf::from(&name));
             }
+        } else if path.is_file() {
+            // Copy individual files directly (e.g. Forge JAR)
+            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let dest = extracted_dir.join(&name);
+            std::fs::copy(&path, &dest)
+                .map_err(|e| format!("Failed to copy {}: {e}", path.display()))?;
+            println!("Copied: {}", name);
+            extracted.push(PathBuf::from(&name));
         }
     }
 
