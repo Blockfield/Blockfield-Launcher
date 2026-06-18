@@ -159,15 +159,16 @@ pub async fn check_modpack_version(
         // Forge installer creates version ID like "1.20.1-forge-47.4.10"
         // "1.20.1-47.4.10" -> "1.20.1-forge-47.4.10" (installer naming)
         let forge_version_id = forge.version.replacen('-', "-forge-", 1);
-        let forge_jar = PathBuf::from(&config.game_dir)
+        // Check for version JSON (Forge 1.20.1+ uses BootstrapLauncher, no JAR)
+        let forge_json = PathBuf::from(&config.game_dir)
             .join("versions")
             .join(&forge_version_id)
-            .join(format!("{}.jar", forge_version_id));
-        let ok = forge_jar.exists();
+            .join(format!("{}.json", forge_version_id));
+        let ok = forge_json.exists();
         if ok {
             log::info!("[check_modpack_version] Forge OK: {forge_version_id}");
         } else {
-            log::info!("[check_modpack_version] Forge not installed at {}", forge_jar.display());
+            log::info!("[check_modpack_version] Forge not installed at {}", forge_json.display());
         }
         ok
     } else {
@@ -420,45 +421,85 @@ pub async fn launch_game(
     let ram_mb = config.ram_mb;
     let game_dir = config.game_dir.clone();
 
-    // Resolve main JAR from installed Forge, fall back to minecraft.jar
-    let main_jar = {
+    log::info!("Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}");
+
+    // Check for installed Forge and use BootstrapLauncher if present
+    let forge_launch = {
         let cached = state.manifest.read().await;
-        if let Some(ref forge) = cached.as_ref().and_then(|m| m.forge.as_ref()) {
-            let forge_version_id = forge.version.replacen('-', "-forge-", 1);
-            let forge_jar = PathBuf::from(&game_dir)
+        cached.as_ref().and_then(|m| m.forge.as_ref()).map(|f| {
+            let forge_version_id = f.version.replacen('-', "-forge-", 1);
+            let version_json_path = PathBuf::from(&game_dir)
                 .join("versions")
                 .join(&forge_version_id)
-                .join(format!("{}.jar", forge_version_id));
-            if forge_jar.exists() {
-                forge_jar.to_string_lossy().to_string()
-            } else {
-                "minecraft.jar".to_string()
-            }
-        } else {
-            "minecraft.jar".to_string()
-        }
+                .join(format!("{}.json", forge_version_id));
+            (forge_version_id, version_json_path.exists())
+        })
     };
 
-    log::info!(
-        "Launching game: java={java}, jar={main_jar}, ram={ram_mb}MB, dir={game_dir}"
-    );
+    let args: Vec<String> = if let Some((forge_version_id, true)) = forge_launch {
+        // Use Forge BootstrapLauncher
+        let libraries_dir = PathBuf::from(&game_dir).join("libraries");
+        let sep = if cfg!(windows) { ";" } else { ":" };
 
-    let args = vec![
-        format!("-Xmx{ram_mb}M"),
-        format!("-Xms{ram_mb}M"),
-        "-Djava.library.path=natives".to_string(),
-        "-jar".to_string(),
-        main_jar,
-    ];
+        // Build module path from the version JSON's JVM arguments
+        // Read the version JSON to get the -p argument
+        let version_json_path = PathBuf::from(&game_dir)
+            .join("versions")
+            .join(&forge_version_id)
+            .join(format!("{}.json", forge_version_id));
+        let json_str = std::fs::read_to_string(&version_json_path).unwrap_or_default();
+        let version_json: serde_json::Value = serde_json::from_str(&json_str).unwrap_or_default();
+
+        let lib_dir_str = libraries_dir.to_string_lossy().to_string();
+        let main_class = version_json["mainClass"].as_str().unwrap_or("cpw.mods.bootstraplauncher.BootstrapLauncher");
+
+        // Collect game args
+        let mut game_args: Vec<String> = version_json["arguments"]["game"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
+        // Collect JVM args, expanding ${library_directory} and ${classpath_separator}
+        let mut jvm_args: Vec<String> = version_json["arguments"]["jvm"]
+            .as_array()
+            .map(|a| a.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.replace("${library_directory}", &lib_dir_str).replace("${classpath_separator}", sep))
+                .collect())
+            .unwrap_or_default();
+
+        let mut all_args = vec![
+            format!("-Xmx{ram_mb}M"),
+            format!("-Xms{ram_mb}M"),
+            "-Djava.library.path=natives".to_string(),
+        ];
+        all_args.extend(jvm_args);
+        all_args.push(main_class.to_string());
+        all_args.extend(game_args);
+        all_args
+    } else {
+        // Fallback: try common JAR names
+        let jar_candidates = vec![
+            PathBuf::from(&game_dir).join("minecraft.jar"),
+            PathBuf::from(&game_dir).join("forge-1.20.1-47.4.10-universal.jar"),
+        ];
+        let main_jar = jar_candidates.iter().find(|p| p.exists())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "minecraft.jar".to_string());
+        vec![
+            format!("-Xmx{ram_mb}M"),
+            format!("-Xms{ram_mb}M"),
+            "-Djava.library.path=natives".to_string(),
+            "-jar".to_string(),
+            main_jar,
+        ]
+    };
 
     log::info!("Spawning: {java} {}", args.join(" "));
 
     use tauri_plugin_shell::ShellExt;
     let shell = app_handle.shell();
-    let cmd = shell
-        .command(&java)
-        .args(&args)
-        .current_dir(&game_dir);
+    let cmd = shell.command(&java).args(&args).current_dir(&game_dir);
 
     let (_rx, child) = cmd.spawn().map_err(|e| format!("Failed to spawn: {e}"))?;
     log::info!("Game process spawned (pid {})", child.pid());
