@@ -11,13 +11,25 @@ pub struct LauncherAppState {
     pub downloader: Arc<tokio::sync::Mutex<Downloader>>,
     pub manifest: RwLock<Option<ModpackManifest>>,
     pub config: RwLock<LauncherConfig>,
+    pub app_data_dir: PathBuf,
 }
 
 // ── Settings commands ──────────────────────────────────────────
 
 #[tauri::command]
 pub fn load_settings(state: State<'_, LauncherAppState>) -> Result<LauncherConfig, String> {
-    let config = state.config.blocking_read().clone();
+    let mut config = state.config.blocking_read().clone();
+    // Auto-detect bundled Java if path is empty
+    if config.java_path.is_empty() {
+        let java_exe = if cfg!(windows) { "java.exe" } else { "java" };
+        let bundled = PathBuf::from(&config.game_dir)
+            .join("java")
+            .join("bin")
+            .join(java_exe);
+        if bundled.exists() {
+            config.java_path = bundled.to_string_lossy().to_string();
+        }
+    }
     Ok(config)
 }
 
@@ -81,7 +93,28 @@ pub async fn check_modpack_version(
         installed.files.len(),
     );
 
-    let needs_update = installed.version != manifest.version;
+    let mut needs_update = installed.version != manifest.version;
+
+    // Even if version matches, spot-check a few files for integrity
+    if !needs_update && !manifest.files.is_empty() {
+        let game_dir = PathBuf::from(&config.game_dir);
+        let check_count = 10usize.min(manifest.files.len());
+        for entry in manifest.files.iter().take(check_count) {
+            let path = game_dir.join(&entry.path);
+            match Downloader::sha256_file(&path) {
+                Ok(hash) if hash == entry.sha256 => { /* ok */ }
+                _ => {
+                    log::info!(
+                        "[check_modpack_version] File changed/missing: {} — forcing update",
+                        entry.path
+                    );
+                    needs_update = true;
+                    break;
+                }
+            }
+        }
+    }
+
     log::info!("[check_modpack_version] needs_update = {needs_update}");
 
     // Check Java version if required
@@ -193,12 +226,15 @@ pub async fn download_modpack(
             std::fs::write(&java_ver_path, &java.version)
                 .map_err(|e| format!("Failed to write java version: {e}"))?;
 
-            // Auto-update in-memory config to point to the downloaded Java
+            // Auto-update config to point to the downloaded Java (in-memory + disk)
             let java_exe = java_dir.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" });
             if java_exe.exists() {
+                let java_path_str = java_exe.to_string_lossy().to_string();
                 let mut cfg = state.config.write().await;
-                cfg.java_path = java_exe.to_string_lossy().to_string();
-                log::info!("Java installed, path set to: {}", java_exe.display());
+                cfg.java_path = java_path_str.clone();
+                // Persist to disk so it survives restart
+                let _ = crate::config::save_config(&state.app_data_dir, &cfg);
+                log::info!("Java installed, path saved: {java_path_str}");
             }
         }
     }

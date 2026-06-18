@@ -45,6 +45,7 @@ pub fn run() {
                 downloader: Arc::new(tokio::sync::Mutex::new(downloader)),
                 manifest: tokio::sync::RwLock::new(None),
                 config: tokio::sync::RwLock::new(loaded_config),
+                app_data_dir,
             });
 
             Ok(())
