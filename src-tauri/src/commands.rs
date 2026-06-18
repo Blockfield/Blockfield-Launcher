@@ -75,7 +75,7 @@ pub async fn check_modpack_version(
             format!("Failed to fetch manifest: {e}")
         })?;
 
-    let config = state.config.read().await;
+    let config = state.config.read().await.clone();
     let manifest_path =
         std::path::PathBuf::from(&config.game_dir).join(".blockfield-manifest.json");
     let manifest_exists = manifest_path.exists();
@@ -142,7 +142,11 @@ pub async fn check_modpack_version(
                 true
             }
             Ok(v) => {
-                log::info!("[check_modpack_version] Java mismatch: have {}, need {}", v.trim(), java.version);
+                log::info!(
+                    "[check_modpack_version] Java mismatch: have {}, need {}",
+                    v.trim(),
+                    java.version
+                );
                 false
             }
             Err(_) => {
@@ -155,24 +159,33 @@ pub async fn check_modpack_version(
     };
 
     // Check Forge installation
+    let game_dir = PathBuf::from(&config.game_dir);
     let forge_ok = if let Some(ref forge) = manifest.forge {
-        // Forge installer creates version ID like "1.20.1-forge-47.4.10"
-        // "1.20.1-47.4.10" -> "1.20.1-forge-47.4.10" (installer naming)
-        let forge_version_id = forge.version.replacen('-', "-forge-", 1);
-        // Check for version JSON (Forge 1.20.1+ uses BootstrapLauncher, no JAR)
-        let forge_json = PathBuf::from(&config.game_dir)
+        let forge_version_id = crate::minecraft::forge_version_id(&forge.version);
+        let forge_json = game_dir
             .join("versions")
             .join(&forge_version_id)
             .join(format!("{}.json", forge_version_id));
-        let ok = forge_json.exists();
+        let forge_json_ok = forge_json.exists();
+        let runtime_ok = crate::minecraft::has_launch_dependencies(
+            &game_dir,
+            &manifest.minecraft_version,
+            Some(&forge_version_id),
+        );
+        let ok = forge_json_ok && runtime_ok;
         if ok {
-            log::info!("[check_modpack_version] Forge OK: {forge_version_id}");
+            log::info!("[check_modpack_version] Forge/runtime OK: {forge_version_id}");
+        } else if !forge_json_ok {
+            log::info!(
+                "[check_modpack_version] Forge not installed at {}",
+                forge_json.display()
+            );
         } else {
-            log::info!("[check_modpack_version] Forge not installed at {}", forge_json.display());
+            log::info!("[check_modpack_version] Minecraft runtime files missing");
         }
         ok
     } else {
-        true
+        crate::minecraft::has_launch_dependencies(&game_dir, &manifest.minecraft_version, None)
     };
 
     let result = VersionCheckResult {
@@ -205,7 +218,7 @@ pub async fn download_modpack(
             .ok_or_else(|| "No manifest cached – call check_modpack_version first".to_string())?
     };
 
-    let config = state.config.read().await;
+    let mut config = state.config.read().await.clone();
     let installed = InstalledManifest::load(&config.game_dir);
 
     let downloader = state.downloader.lock().await;
@@ -226,8 +239,18 @@ pub async fn download_modpack(
             std::fs::create_dir_all(&java_dir)
                 .map_err(|e| format!("Failed to create java dir: {e}"))?;
 
+            let mut java_downloaded = 0;
             downloader
-                .download_one(&java.url, &archive_path, "java-runtime", java.size, 1, 1, &mut 0, java.size)
+                .download_one(
+                    &java.url,
+                    &archive_path,
+                    "java-runtime",
+                    java.size,
+                    1,
+                    1,
+                    &mut java_downloaded,
+                    java.size,
+                )
                 .await
                 .map_err(|e| format!("Java download failed: {e}"))?;
 
@@ -236,7 +259,10 @@ pub async fn download_modpack(
                     .map_err(|e| format!("Java checksum error: {e}"))?;
                 if actual != java.sha256 {
                     let _ = std::fs::remove_file(&archive_path);
-                    return Err(format!("Java SHA256 mismatch: expected {}, got {}", java.sha256, actual));
+                    return Err(format!(
+                        "Java SHA256 mismatch: expected {}, got {}",
+                        java.sha256, actual
+                    ));
                 }
                 log::info!("Java SHA256 verified");
             }
@@ -246,11 +272,15 @@ pub async fn download_modpack(
             std::fs::write(&java_ver_path, &java.version)
                 .map_err(|e| format!("Failed to write java version: {e}"))?;
 
-            let java_exe = java_dir.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" });
+            let java_exe =
+                java_dir
+                    .join("bin")
+                    .join(if cfg!(windows) { "java.exe" } else { "java" });
             if java_exe.exists() {
                 let java_path_str = java_exe.to_string_lossy().to_string();
                 let mut cfg = state.config.write().await;
                 cfg.java_path = java_path_str.clone();
+                config.java_path = java_path_str.clone();
                 let _ = crate::config::save_config(&state.app_data_dir, &cfg);
                 log::info!("Java installed, path saved: {java_path_str}");
             }
@@ -259,13 +289,26 @@ pub async fn download_modpack(
 
     // Download & install Forge if needed
     if let Some(ref forge) = manifest.forge {
-        let forge_dir = PathBuf::from(&config.game_dir).join("versions").join(&forge.version);
-        let forge_jar = forge_dir.join(format!("forge-{}.jar", forge.version));
-        if !forge_jar.exists() {
+        let forge_version_id = crate::minecraft::forge_version_id(&forge.version);
+        let forge_json = PathBuf::from(&config.game_dir)
+            .join("versions")
+            .join(&forge_version_id)
+            .join(format!("{}.json", forge_version_id));
+        if !forge_json.exists() {
             log::info!("Downloading Forge installer {}", forge.version);
             let installer_path = PathBuf::from(&config.game_dir).join("forge-installer.jar");
+            let mut forge_downloaded = 0;
             downloader
-                .download_one(&forge.url, &installer_path, "forge-installer", forge.size, 1, 1, &mut 0, forge.size)
+                .download_one(
+                    &forge.url,
+                    &installer_path,
+                    "forge-installer",
+                    forge.size,
+                    1,
+                    1,
+                    &mut forge_downloaded,
+                    forge.size,
+                )
                 .await
                 .map_err(|e| format!("Forge download failed: {e}"))?;
 
@@ -274,7 +317,10 @@ pub async fn download_modpack(
                     .map_err(|e| format!("Forge checksum error: {e}"))?;
                 if actual != forge.sha256 {
                     let _ = std::fs::remove_file(&installer_path);
-                    return Err(format!("Forge SHA256 mismatch: expected {}, got {}", forge.sha256, actual));
+                    return Err(format!(
+                        "Forge SHA256 mismatch: expected {}, got {}",
+                        forge.sha256, actual
+                    ));
                 }
             }
 
@@ -289,19 +335,34 @@ pub async fn download_modpack(
                     "settings": {},
                     "version": 3
                 });
-                std::fs::write(&launcher_profiles, serde_json::to_string(&minimal_profile).unwrap_or_default())
-                    .map_err(|e| format!("Failed to create launcher profile: {e}"))?;
+                std::fs::write(
+                    &launcher_profiles,
+                    serde_json::to_string(&minimal_profile).unwrap_or_default(),
+                )
+                .map_err(|e| format!("Failed to create launcher profile: {e}"))?;
             }
 
             let java_bin = if cfg!(windows) { "java.exe" } else { "java" };
-            let java = PathBuf::from(&config.game_dir).join("java").join("bin").join(java_bin);
-            let java = if java.exists() { java.to_string_lossy().to_string() } else { "java".to_string() };
+            let java = PathBuf::from(&config.game_dir)
+                .join("java")
+                .join("bin")
+                .join(java_bin);
+            let java = if java.exists() {
+                java.to_string_lossy().to_string()
+            } else {
+                "java".to_string()
+            };
 
             use tauri_plugin_shell::ShellExt;
             let output = app_handle
                 .shell()
                 .command(&java)
-                .args(["-jar", "forge-installer.jar", "--installClient", &config.game_dir])
+                .args([
+                    "-jar",
+                    "forge-installer.jar",
+                    "--installClient",
+                    &config.game_dir,
+                ])
                 .current_dir(&config.game_dir)
                 .output()
                 .await
@@ -318,6 +379,13 @@ pub async fn download_modpack(
 
             log::info!("Forge installed successfully");
             let _ = std::fs::remove_file(&installer_path);
+
+            if !forge_json.exists() {
+                return Err(format!(
+                    "Forge installer completed but version JSON is missing: {}",
+                    forge_json.display()
+                ));
+            }
         }
     }
 
@@ -354,13 +422,23 @@ pub async fn download_modpack(
         .map_err(|e| {
             log::error!("Download failed: {e}");
             e.to_string()
-        })
+        })?;
+
+    let forge_version_id = manifest
+        .forge
+        .as_ref()
+        .map(|forge| crate::minecraft::forge_version_id(&forge.version));
+    crate::minecraft::ensure_launch_dependencies(
+        &downloader,
+        &PathBuf::from(&config.game_dir),
+        &manifest.minecraft_version,
+        forge_version_id.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]
-pub async fn verify_files(
-    state: State<'_, LauncherAppState>,
-) -> Result<Vec<String>, String> {
+pub async fn verify_files(state: State<'_, LauncherAppState>) -> Result<Vec<String>, String> {
     let manifest = {
         let cached = state.manifest.read().await;
         cached
@@ -398,10 +476,11 @@ pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), S
 
 #[tauri::command]
 pub async fn launch_game(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
 ) -> Result<(), String> {
-    let config = state.config.read().await;
+    let config = state.config.read().await.clone();
+    let manifest = state.manifest.read().await.clone();
 
     // Resolve Java path: configured > auto-detected in game_dir > system "java"
     let java_exe_name = if cfg!(windows) { "java.exe" } else { "java" };
@@ -420,89 +499,59 @@ pub async fn launch_game(
 
     let ram_mb = config.ram_mb;
     let game_dir = config.game_dir.clone();
+    let game_dir_path = PathBuf::from(&game_dir);
+
+    let forge_version_id = manifest
+        .as_ref()
+        .and_then(|m| {
+            m.forge
+                .as_ref()
+                .map(|forge| crate::minecraft::forge_version_id(&forge.version))
+        })
+        .or_else(|| crate::minecraft::find_forge_version_id(&game_dir_path));
+
+    let minecraft_version = manifest
+        .as_ref()
+        .map(|m| m.minecraft_version.clone())
+        .or_else(|| {
+            forge_version_id
+                .as_ref()
+                .and_then(|id| id.split_once("-forge-").map(|(mc, _)| mc.to_string()))
+        })
+        .unwrap_or_else(|| "1.20.1".to_string());
 
     log::info!("Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}");
 
-    // Check for installed Forge and use BootstrapLauncher if present
-    let forge_launch = {
-        let cached = state.manifest.read().await;
-        cached.as_ref().and_then(|m| m.forge.as_ref()).map(|f| {
-            let forge_version_id = f.version.replacen('-', "-forge-", 1);
-            let version_json_path = PathBuf::from(&game_dir)
-                .join("versions")
-                .join(&forge_version_id)
-                .join(format!("{}.json", forge_version_id));
-            (forge_version_id, version_json_path.exists())
-        })
-    };
+    {
+        let downloader = state.downloader.lock().await;
+        downloader.reset_cancel().await;
+        crate::minecraft::ensure_launch_dependencies(
+            &downloader,
+            &game_dir_path,
+            &minecraft_version,
+            forge_version_id.as_deref(),
+        )
+        .await?;
+    }
 
-    let args: Vec<String> = if let Some((forge_version_id, true)) = forge_launch {
-        // Use Forge BootstrapLauncher
-        let libraries_dir = PathBuf::from(&game_dir).join("libraries");
-        let sep = if cfg!(windows) { ";" } else { ":" };
-
-        // Build module path from the version JSON's JVM arguments
-        // Read the version JSON to get the -p argument
-        let version_json_path = PathBuf::from(&game_dir)
-            .join("versions")
-            .join(&forge_version_id)
-            .join(format!("{}.json", forge_version_id));
-        let json_str = std::fs::read_to_string(&version_json_path).unwrap_or_default();
-        let version_json: serde_json::Value = serde_json::from_str(&json_str).unwrap_or_default();
-
-        let lib_dir_str = libraries_dir.to_string_lossy().to_string();
-        let main_class = version_json["mainClass"].as_str().unwrap_or("cpw.mods.bootstraplauncher.BootstrapLauncher");
-
-        // Collect game args
-        let mut game_args: Vec<String> = version_json["arguments"]["game"]
-            .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-            .unwrap_or_default();
-
-        // Collect JVM args, expanding ${library_directory} and ${classpath_separator}
-        let mut jvm_args: Vec<String> = version_json["arguments"]["jvm"]
-            .as_array()
-            .map(|a| a.iter()
-                .filter_map(|v| v.as_str())
-                .map(|s| s.replace("${library_directory}", &lib_dir_str).replace("${classpath_separator}", sep))
-                .collect())
-            .unwrap_or_default();
-
-        let mut all_args = vec![
-            format!("-Xmx{ram_mb}M"),
-            format!("-Xms{ram_mb}M"),
-            "-Djava.library.path=natives".to_string(),
-        ];
-        all_args.extend(jvm_args);
-        all_args.push(main_class.to_string());
-        all_args.extend(game_args);
-        all_args
-    } else {
-        // Fallback: try common JAR names
-        let jar_candidates = vec![
-            PathBuf::from(&game_dir).join("minecraft.jar"),
-            PathBuf::from(&game_dir).join("forge-1.20.1-47.4.10-universal.jar"),
-        ];
-        let main_jar = jar_candidates.iter().find(|p| p.exists())
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "minecraft.jar".to_string());
-        vec![
-            format!("-Xmx{ram_mb}M"),
-            format!("-Xms{ram_mb}M"),
-            "-Djava.library.path=natives".to_string(),
-            "-jar".to_string(),
-            main_jar,
-        ]
-    };
+    let args = crate::minecraft::build_launch_args(
+        &game_dir_path,
+        ram_mb,
+        &minecraft_version,
+        forge_version_id.as_deref(),
+    )?;
 
     log::info!("Spawning: {java} {}", args.join(" "));
 
-    use tauri_plugin_shell::ShellExt;
-    let shell = app_handle.shell();
-    let cmd = shell.command(&java).args(&args).current_dir(&game_dir);
-
-    let (_rx, child) = cmd.spawn().map_err(|e| format!("Failed to spawn: {e}"))?;
-    log::info!("Game process spawned (pid {})", child.pid());
+    let child = std::process::Command::new(&java)
+        .args(&args)
+        .current_dir(&game_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn game process: {e}"))?;
+    log::info!("Game process spawned (pid {})", child.id());
 
     Ok(())
 }
@@ -517,10 +566,10 @@ fn api_base_url() -> String {
 
 /// Extract a ZIP archive to a target directory.
 fn extract_archive(archive_path: &PathBuf, dest_dir: &PathBuf) -> Result<(), String> {
-    let file = std::fs::File::open(archive_path)
-        .map_err(|e| format!("Failed to open archive: {e}"))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read archive: {e}"))?;
+    let file =
+        std::fs::File::open(archive_path).map_err(|e| format!("Failed to open archive: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("Failed to read archive: {e}"))?;
 
     for i in 0..archive.len() {
         let mut entry = archive
@@ -555,6 +604,10 @@ fn extract_archive(archive_path: &PathBuf, dest_dir: &PathBuf) -> Result<(), Str
             .map_err(|e| format!("Failed to extract {}: {e}", name))?;
     }
 
-    log::info!("Extracted {} entries to {}", archive.len(), dest_dir.display());
+    log::info!(
+        "Extracted {} entries to {}",
+        archive.len(),
+        dest_dir.display()
+    );
     Ok(())
 }

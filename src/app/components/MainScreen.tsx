@@ -122,7 +122,8 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   // Derive display values from version check result
   const isChecked = versionInfo !== null
   const needsUpdate = versionInfo?.needsUpdate ?? false
-  const upToDate = isChecked && !needsUpdate
+  const needsSetup = isChecked && (needsUpdate || !versionInfo.javaOk || !versionInfo.forgeOk)
+  const upToDate = isChecked && !needsSetup
   const installedVersion = versionInfo?.installedVersion ?? '...'
   const latestVersion = versionInfo?.remoteVersion ?? '...'
   const totalSize = versionInfo?.totalSize
@@ -136,7 +137,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
       ? { value: 'OFFLINE', tone: 'warn' }
       : upToDate
         ? { value: t('main.upToDate'), tone: 'ok' }
-        : needsUpdate
+        : needsSetup
           ? { value: t('main.updateAvailable'), tone: 'warn' }
           : { value: t('main.upToDate'), tone: 'muted' }
 
@@ -179,7 +180,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                       ? 'LAUNCHING'
                       : !isChecked
                         ? '...'
-                        : needsUpdate
+                        : needsSetup
                           ? t('nav.updates')
                           : t('nav.deploy')
                   }
@@ -188,7 +189,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                       ? '...'
                       : !isChecked
                         ? t('main.checking')
-                        : needsUpdate
+                        : needsSetup
                           ? t('main.updateAvailable')
                           : t('main.enterBattlefield')
                   }
@@ -238,8 +239,8 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                 <Row label={t('main.size')} value={totalSize} />
                 <Row
                   label={t('main.autoUpdate')}
-                  value={needsUpdate ? t('main.updateAvailable') : t('main.upToDate')}
-                  highlight={needsUpdate}
+                  value={needsSetup ? t('main.updateAvailable') : t('main.upToDate')}
+                  highlight={needsSetup}
                 />
                 {checkError && (
                   <div className="text-[10px] tracking-[0.12em] text-[#c98b8b] mt-1">

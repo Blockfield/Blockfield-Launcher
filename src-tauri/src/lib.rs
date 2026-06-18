@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod download;
 mod manifest;
+mod minecraft;
 
 use commands::LauncherAppState;
 use std::sync::Arc;

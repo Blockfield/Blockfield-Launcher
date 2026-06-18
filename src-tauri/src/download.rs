@@ -73,7 +73,7 @@ impl Downloader {
     /// Fetch the remote modpack manifest.
     pub async fn fetch_manifest(&self, url: &str) -> Result<ModpackManifest, DownloadError> {
         log::info!("Fetching manifest from {url}");
-        let response = self.client.get(url).send().await?;
+        let response = self.client.get(url).send().await?.error_for_status()?;
         let manifest: ModpackManifest = response.json().await?;
         log::info!(
             "Manifest fetched: version={}, {} files, {} bytes total",
@@ -112,36 +112,58 @@ impl Downloader {
             // Skip files that already match the expected hash (unchanged)
             if let Some(existing_hash) = installed_sha256.get(&entry.path) {
                 if existing_hash == &entry.sha256 && dest.exists() {
-                    log::info!("Skipping unchanged file: {}", entry.path);
-                    total_downloaded += entry.size;
-                    self.emit_progress(
-                        &entry.path,
-                        i + 1,
-                        file_count,
-                        entry.size,
-                        entry.size,
-                        total_downloaded,
-                        total_bytes_all,
-                        0,
-                    );
-                    continue;
+                    match Self::sha256_file(&dest) {
+                        Ok(actual_hash) if actual_hash == entry.sha256 => {
+                            log::info!("Skipping unchanged file: {}", entry.path);
+                            total_downloaded += entry.size;
+                            self.emit_progress(
+                                &entry.path,
+                                i + 1,
+                                file_count,
+                                entry.size,
+                                entry.size,
+                                total_downloaded,
+                                total_bytes_all,
+                                0,
+                            );
+                            continue;
+                        }
+                        Ok(actual_hash) => {
+                            log::info!(
+                                "Redownloading changed file: {} (expected {}, got {})",
+                                entry.path,
+                                entry.sha256,
+                                actual_hash
+                            );
+                        }
+                        Err(e) => {
+                            log::info!("Redownloading unreadable file: {} ({e})", entry.path);
+                        }
+                    }
                 }
             }
 
             // Download the file
-            self.download_one(&entry.url, &dest, &entry.path, entry.size, i + 1, file_count, &mut total_downloaded, total_bytes_all)
-                .await?;
+            self.download_one(
+                &entry.url,
+                &dest,
+                &entry.path,
+                entry.size,
+                i + 1,
+                file_count,
+                &mut total_downloaded,
+                total_bytes_all,
+            )
+            .await?;
 
             // Verify SHA256 after download
             let actual_hash = Self::sha256_file(&dest)?;
             if actual_hash != entry.sha256 {
-                log::warn!(
-                    "SHA256 mismatch for {}: expected {}, got {} — deleting, will retry next update",
-                    entry.path, entry.sha256, actual_hash
-                );
                 let _ = std::fs::remove_file(&dest);
-                // Don't abort — continue with remaining files
-                continue;
+                return Err(DownloadError::Other(format!(
+                    "SHA256 mismatch for {}: expected {}, got {}",
+                    entry.path, entry.sha256, actual_hash
+                )));
             }
 
             new_installed.insert(entry.path.clone(), entry.sha256.clone());
@@ -156,7 +178,11 @@ impl Downloader {
             .save(&game_dir.to_string_lossy())
             .map_err(|e| DownloadError::Other(e))?;
 
-        log::info!("Download complete: {} files, {} bytes", file_count, total_downloaded);
+        log::info!(
+            "Download complete: {} files, {} bytes",
+            file_count,
+            total_downloaded
+        );
 
         // Emit a final event with speed=0 to signal completion
         self.emit_progress(
@@ -192,7 +218,7 @@ impl Downloader {
             std::fs::create_dir_all(parent)?;
         }
 
-        let response = self.client.get(url).send().await?;
+        let response = self.client.get(url).send().await?.error_for_status()?;
         let mut stream = response.bytes_stream();
 
         let mut file = std::fs::File::create(dest)?;

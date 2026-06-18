@@ -53,6 +53,7 @@ export function UpdateScreen() {
   const [error, setError] = useState<string | null>(null)
   const [verifyFailed, setVerifyFailed] = useState<string[]>([])
   const [manifestVersion, setManifestVersion] = useState('')
+  const [launching, setLaunching] = useState(false)
   const [steps, setSteps] = useState<Array<{ label: TKey; status: StepStatus }>>([
     { label: 'update.step.verify', status: 'pending' },
     { label: 'update.step.prune', status: 'pending' },
@@ -120,7 +121,7 @@ export function UpdateScreen() {
       const needAnyDownload = needModpack || needJava || needForge
 
       if (needForge) {
-        addLog(`Forge ${versionResult.java?.version ?? ''} required — will install`, 'info')
+        addLog('Forge runtime required — will install', 'info')
       }
       if (needJava) {
         addLog(`Java ${versionResult.java!.version} required — will install`, 'info')
@@ -162,6 +163,7 @@ export function UpdateScreen() {
         if (p.totalBytesAll > 0) {
           const pct = (p.totalBytesDownloaded / p.totalBytesAll) * 100
           setProgress(Math.min(100, pct))
+          setTotalBytes(p.totalBytesAll)
         }
         setFileIdx(p.fileIndex)
         if (p.filePath) setCurrentFile(p.filePath)
@@ -260,6 +262,22 @@ export function UpdateScreen() {
     }
   }, [])
 
+  const handleLaunch = useCallback(async () => {
+    if (!isTauri() || launching) return
+    setLaunching(true)
+    addLog('Launching game...', 'info')
+    try {
+      await invoke('launch_game')
+      addLog('Game process started.', 'ok')
+    } catch (e) {
+      addLog(`ERROR: Launch failed — ${String(e)}`, 'warn')
+      setPhase('error')
+      setError(String(e))
+    } finally {
+      setLaunching(false)
+    }
+  }, [addLog, launching])
+
   const statusText = () => {
     switch (phase) {
       case 'checking':
@@ -333,7 +351,12 @@ export function UpdateScreen() {
                   </span>
                 </button>
               ) : phase === 'complete' || phase === 'uptodate' ? (
-                <DeployButton label="PLAY" sub={t('main.enterBattlefield')} />
+                <DeployButton
+                  label={launching ? 'LAUNCHING' : 'PLAY'}
+                  sub={launching ? '...' : t('main.enterBattlefield')}
+                  onClick={handleLaunch}
+                  disabled={launching}
+                />
               ) : phase === 'error' ? (
                 <RetryButton onClick={handleRetry} label={t('update.retry')} />
               ) : (
@@ -459,9 +482,22 @@ export function UpdateScreen() {
   )
 }
 
-function DeployButton({ label, sub }: { label: string; sub: string }) {
+function DeployButton({
+  label,
+  sub,
+  onClick,
+  disabled,
+}: {
+  label: string
+  sub: string
+  onClick: () => void
+  disabled?: boolean
+}) {
   return (
-    <button className="group relative h-[64px] w-[230px] shrink-0 overflow-hidden border border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-all"
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="group relative h-[64px] w-[230px] shrink-0 overflow-hidden border border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-all disabled:opacity-60 disabled:cursor-wait"
       style={{
         boxShadow: 'inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)',
       }}
