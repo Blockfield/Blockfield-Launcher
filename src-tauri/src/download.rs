@@ -135,12 +135,13 @@ impl Downloader {
             // Verify SHA256 after download
             let actual_hash = Self::sha256_file(&dest)?;
             if actual_hash != entry.sha256 {
-                // Delete the corrupted file
-                let _ = std::fs::remove_file(&dest);
-                return Err(DownloadError::Other(format!(
-                    "SHA256 mismatch for {}: expected {}, got {}",
+                log::warn!(
+                    "SHA256 mismatch for {}: expected {}, got {} — deleting, will retry next update",
                     entry.path, entry.sha256, actual_hash
-                )));
+                );
+                let _ = std::fs::remove_file(&dest);
+                // Don't abort — continue with remaining files
+                continue;
             }
 
             new_installed.insert(entry.path.clone(), entry.sha256.clone());
