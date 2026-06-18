@@ -173,6 +173,7 @@ pub async fn check_modpack_version(
 
 #[tauri::command]
 pub async fn download_modpack(
+    app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
 ) -> Result<(), String> {
     let manifest = {
@@ -204,51 +205,82 @@ pub async fn download_modpack(
                 .map_err(|e| format!("Failed to create java dir: {e}"))?;
 
             downloader
-                .download_one(
-                    &java.url,
-                    &archive_path,
-                    "java-runtime",
-                    java.size,
-                    1,
-                    1,
-                    &mut 0,
-                    java.size,
-                )
+                .download_one(&java.url, &archive_path, "java-runtime", java.size, 1, 1, &mut 0, java.size)
                 .await
                 .map_err(|e| format!("Java download failed: {e}"))?;
 
-            // Verify SHA256 (skip if not provided — e.g. Adoptium redirect URLs)
             if !java.sha256.is_empty() {
                 let actual = Downloader::sha256_file(&archive_path)
                     .map_err(|e| format!("Java checksum error: {e}"))?;
                 if actual != java.sha256 {
                     let _ = std::fs::remove_file(&archive_path);
-                    return Err(format!(
-                        "Java SHA256 mismatch: expected {}, got {}",
-                        java.sha256, actual
-                    ));
+                    return Err(format!("Java SHA256 mismatch: expected {}, got {}", java.sha256, actual));
                 }
                 log::info!("Java SHA256 verified");
             }
 
-            // Extract the archive (supports .zip and .tar.gz)
             extract_archive(&archive_path, &java_dir)?;
             let _ = std::fs::remove_file(&archive_path);
-
-            // Write version marker
             std::fs::write(&java_ver_path, &java.version)
                 .map_err(|e| format!("Failed to write java version: {e}"))?;
 
-            // Auto-update config to point to the downloaded Java (in-memory + disk)
             let java_exe = java_dir.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" });
             if java_exe.exists() {
                 let java_path_str = java_exe.to_string_lossy().to_string();
                 let mut cfg = state.config.write().await;
                 cfg.java_path = java_path_str.clone();
-                // Persist to disk so it survives restart
                 let _ = crate::config::save_config(&state.app_data_dir, &cfg);
                 log::info!("Java installed, path saved: {java_path_str}");
             }
+        }
+    }
+
+    // Download & install Forge if needed
+    if let Some(ref forge) = manifest.forge {
+        let forge_dir = PathBuf::from(&config.game_dir).join("versions").join(&forge.version);
+        let forge_jar = forge_dir.join(format!("forge-{}.jar", forge.version));
+        if !forge_jar.exists() {
+            log::info!("Downloading Forge installer {}", forge.version);
+            let installer_path = PathBuf::from(&config.game_dir).join("forge-installer.jar");
+            downloader
+                .download_one(&forge.url, &installer_path, "forge-installer", forge.size, 1, 1, &mut 0, forge.size)
+                .await
+                .map_err(|e| format!("Forge download failed: {e}"))?;
+
+            if !forge.sha256.is_empty() {
+                let actual = Downloader::sha256_file(&installer_path)
+                    .map_err(|e| format!("Forge checksum error: {e}"))?;
+                if actual != forge.sha256 {
+                    let _ = std::fs::remove_file(&installer_path);
+                    return Err(format!("Forge SHA256 mismatch: expected {}, got {}", forge.sha256, actual));
+                }
+            }
+
+            // Run Forge installer
+            log::info!("Running Forge installer...");
+            let java_bin = if cfg!(windows) { "java.exe" } else { "java" };
+            let java = PathBuf::from(&config.game_dir).join("java").join("bin").join(java_bin);
+            let java = if java.exists() { java.to_string_lossy().to_string() } else { "java".to_string() };
+
+            use tauri_plugin_shell::ShellExt;
+            let output = app_handle
+                .shell()
+                .command(&java)
+                .args(["-jar", "forge-installer.jar", "--installClient", &config.game_dir])
+                .current_dir(&config.game_dir)
+                .output()
+                .await
+                .map_err(|e| format!("Forge installer failed to start: {e}"))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                log::error!("Forge installer failed: {stderr}");
+                let _ = std::fs::remove_file(&installer_path);
+                return Err(format!("Forge installer failed: {stderr}"));
+            }
+
+            log::info!("Forge installed successfully");
+            let _ = std::fs::remove_file(&installer_path);
         }
     }
 
@@ -352,13 +384,22 @@ pub async fn launch_game(
     let ram_mb = config.ram_mb;
     let game_dir = config.game_dir.clone();
 
-    // Resolve main JAR from cached manifest, fall back to minecraft.jar
+    // Resolve main JAR from installed Forge, fall back to minecraft.jar
     let main_jar = {
         let cached = state.manifest.read().await;
-        cached
-            .as_ref()
-            .and_then(|m| m.main_jar.clone())
-            .unwrap_or_else(|| "minecraft.jar".to_string())
+        if let Some(ref forge) = cached.as_ref().and_then(|m| m.forge.as_ref()) {
+            let forge_jar = PathBuf::from(&game_dir)
+                .join("versions")
+                .join(&forge.version)
+                .join(format!("forge-{}.jar", forge.version));
+            if forge_jar.exists() {
+                forge_jar.to_string_lossy().to_string()
+            } else {
+                "minecraft.jar".to_string()
+            }
+        } else {
+            "minecraft.jar".to_string()
+        }
     };
 
     log::info!(
@@ -382,16 +423,8 @@ pub async fn launch_game(
         .args(&args)
         .current_dir(&game_dir);
 
-    match cmd.spawn() {
-        Ok(_child) => {
-            log::info!("Game process spawned successfully");
-        }
-        Err(e) => {
-            let msg = format!("Failed to spawn game: {e}");
-            log::error!("{msg}");
-            return Err(msg);
-        }
-    }
+    let (_rx, child) = cmd.spawn().map_err(|e| format!("Failed to spawn: {e}"))?;
+    log::info!("Game process spawned (pid {})", child.pid());
 
     Ok(())
 }

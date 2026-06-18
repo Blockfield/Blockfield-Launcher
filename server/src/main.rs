@@ -35,8 +35,14 @@ struct AppConfig {
     java_sha256: Option<String>,
     /// Size of the Java archive in bytes
     java_size: Option<u64>,
-    /// Main JAR filename to launch
-    main_jar: Option<String>,
+    /// Forge installer URL
+    forge_url: Option<String>,
+    /// Forge version
+    forge_version: Option<String>,
+    /// Forge installer SHA-256
+    forge_sha256: Option<String>,
+    /// Forge installer size in bytes
+    forge_size: Option<u64>,
 }
 
 impl AppConfig {
@@ -61,7 +67,12 @@ impl AppConfig {
             java_size: std::env::var("JAVA_SIZE")
                 .ok()
                 .and_then(|s| s.parse().ok()),
-            main_jar: std::env::var("MAIN_JAR").ok(),
+            forge_url: std::env::var("FORGE_URL").ok(),
+            forge_version: std::env::var("FORGE_VERSION").ok(),
+            forge_sha256: std::env::var("FORGE_SHA256").ok(),
+            forge_size: std::env::var("FORGE_SIZE")
+                .ok()
+                .and_then(|s| s.parse().ok()),
         }
     }
 }
@@ -219,6 +230,23 @@ fn build_manifest(config: &AppConfig) -> Result<ModpackManifest, String> {
         None
     };
 
+    let forge = if let (Some(version), Some(url), Some(sha256), Some(size)) = (
+        config.forge_version.as_ref(),
+        config.forge_url.as_ref(),
+        config.forge_sha256.as_ref(),
+        config.forge_size,
+    ) {
+        println!("Forge info: {version}");
+        Some(blockfield_shared::ForgeInfo {
+            version: version.clone(),
+            url: url.clone(),
+            sha256: sha256.clone(),
+            size,
+        })
+    } else {
+        None
+    };
+
     Ok(ModpackManifest {
         version: config.modpack_version.clone(),
         minecraft_version: config.minecraft_version.clone(),
@@ -227,7 +255,7 @@ fn build_manifest(config: &AppConfig) -> Result<ModpackManifest, String> {
         release_date: chrono_like_now(),
         prune: None,
         java,
-        main_jar: config.main_jar.clone(),
+        forge,
     })
 }
 

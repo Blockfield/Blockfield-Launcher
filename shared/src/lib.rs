@@ -28,6 +28,19 @@ pub struct JavaInfo {
     pub size: u64,
 }
 
+/// Info about required Forge installer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForgeInfo {
+    /// Forge version, e.g. "1.20.1-47.4.10"
+    pub version: String,
+    /// Download URL for the installer JAR
+    pub url: String,
+    /// SHA-256 checksum of the installer JAR
+    pub sha256: String,
+    /// File size in bytes
+    pub size: u64,
+}
+
 /// The remote modpack manifest served by the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModpackManifest {
@@ -48,9 +61,8 @@ pub struct ModpackManifest {
     pub prune: Option<Vec<String>>,
     /// Required Java runtime info (auto-downloaded if not installed)
     pub java: Option<JavaInfo>,
-    /// Main JAR to launch (e.g. "forge-1.20.1-47.2.0-universal.jar")
-    #[serde(rename = "mainJar")]
-    pub main_jar: Option<String>,
+    /// Forge installer info (auto-downloaded + run if not installed)
+    pub forge: Option<ForgeInfo>,
 }
 
 /// Result returned to the frontend after checking for modpack updates.
