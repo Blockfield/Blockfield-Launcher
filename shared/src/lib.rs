@@ -48,6 +48,9 @@ pub struct ModpackManifest {
     pub prune: Option<Vec<String>>,
     /// Required Java runtime info (auto-downloaded if not installed)
     pub java: Option<JavaInfo>,
+    /// Main JAR to launch (e.g. "forge-1.20.1-47.2.0-universal.jar")
+    #[serde(rename = "mainJar")]
+    pub main_jar: Option<String>,
 }
 
 /// Result returned to the frontend after checking for modpack updates.

@@ -35,6 +35,8 @@ struct AppConfig {
     java_sha256: Option<String>,
     /// Size of the Java archive in bytes
     java_size: Option<u64>,
+    /// Main JAR filename to launch
+    main_jar: Option<String>,
 }
 
 impl AppConfig {
@@ -59,6 +61,7 @@ impl AppConfig {
             java_size: std::env::var("JAVA_SIZE")
                 .ok()
                 .and_then(|s| s.parse().ok()),
+            main_jar: std::env::var("MAIN_JAR").ok(),
         }
     }
 }
@@ -215,6 +218,7 @@ fn build_manifest(config: &AppConfig) -> Result<ModpackManifest, String> {
         release_date: chrono_like_now(),
         prune: None,
         java,
+        main_jar: config.main_jar.clone(),
     })
 }
 

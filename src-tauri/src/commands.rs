@@ -339,8 +339,17 @@ pub async fn launch_game(
     let ram_mb = config.ram_mb;
     let game_dir = config.game_dir.clone();
 
+    // Resolve main JAR from cached manifest, fall back to minecraft.jar
+    let main_jar = {
+        let cached = state.manifest.read().await;
+        cached
+            .as_ref()
+            .and_then(|m| m.main_jar.clone())
+            .unwrap_or_else(|| "minecraft.jar".to_string())
+    };
+
     log::info!(
-        "Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}"
+        "Launching game: java={java}, jar={main_jar}, ram={ram_mb}MB, dir={game_dir}"
     );
 
     let args = vec![
@@ -348,7 +357,7 @@ pub async fn launch_game(
         format!("-Xms{ram_mb}M"),
         "-Djava.library.path=natives".to_string(),
         "-jar".to_string(),
-        "minecraft.jar".to_string(),
+        main_jar,
     ];
 
     log::info!("Spawning: {java} {}", args.join(" "));
