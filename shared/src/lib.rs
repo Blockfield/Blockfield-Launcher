@@ -78,4 +78,6 @@ pub struct VersionCheckResult {
     pub java: Option<JavaInfo>,
     /// Whether the installed Java matches the required version
     pub java_ok: bool,
+    /// Whether Forge is installed (true if not required)
+    pub forge_ok: bool,
 }

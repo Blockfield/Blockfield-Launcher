@@ -41,6 +41,7 @@ export interface VersionCheckResult {
   totalSize: number
   java?: JavaInfo
   javaOk: boolean
+  forgeOk: boolean
 }
 
 // ── Download progress ────────────────────────────────────────────

@@ -154,6 +154,17 @@ pub async fn check_modpack_version(
         true // No Java requirement
     };
 
+    // Check Forge installation
+    let forge_ok = if let Some(ref forge) = manifest.forge {
+        let forge_jar = PathBuf::from(&config.game_dir)
+            .join("versions")
+            .join(&forge.version)
+            .join(format!("forge-{}.jar", forge.version));
+        forge_jar.exists()
+    } else {
+        true // No Forge requirement
+    };
+
     let result = VersionCheckResult {
         needs_update,
         remote_version: manifest.version.clone(),
@@ -162,6 +173,7 @@ pub async fn check_modpack_version(
         total_size: manifest.total_size,
         java: java_info,
         java_ok,
+        forge_ok,
     };
 
     // Cache the manifest for later use
