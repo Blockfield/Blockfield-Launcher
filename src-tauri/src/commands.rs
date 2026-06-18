@@ -50,21 +50,39 @@ pub fn get_default_game_dir() -> String {
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
 ) -> Result<VersionCheckResult, String> {
-    let manifest_url = format!(
-        "{}/manifest.json",
-        crate::commands::api_base_url()
-    );
+    let api_base = crate::commands::api_base_url();
+    let manifest_url = format!("{api_base}/manifest.json");
+    log::info!("[check_modpack_version] Fetching: {manifest_url}");
 
     let downloader = state.downloader.lock().await;
     let manifest = downloader
         .fetch_manifest(&manifest_url)
         .await
-        .map_err(|e| format!("Failed to fetch manifest: {e}"))?;
+        .map_err(|e| {
+            log::error!("[check_modpack_version] Fetch failed: {e}");
+            format!("Failed to fetch manifest: {e}")
+        })?;
 
     let config = state.config.read().await;
+    let manifest_path =
+        std::path::PathBuf::from(&config.game_dir).join(".blockfield-manifest.json");
+    let manifest_exists = manifest_path.exists();
     let installed = InstalledManifest::load(&config.game_dir);
 
+    log::info!(
+        "[check_modpack_version] game_dir={}, manifest_path={}, manifest_exists={manifest_exists}",
+        config.game_dir,
+        manifest_path.display(),
+    );
+    log::info!(
+        "[check_modpack_version] remote_version={}, installed_version={}, installed_files_count={}",
+        manifest.version,
+        installed.version,
+        installed.files.len(),
+    );
+
     let needs_update = installed.version != manifest.version;
+    log::info!("[check_modpack_version] needs_update = {needs_update}");
 
     let result = VersionCheckResult {
         needs_update,

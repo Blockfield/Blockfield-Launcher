@@ -35,6 +35,7 @@ pub struct ModpackManifest {
 
 /// Result returned to the frontend after checking for modpack updates.
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VersionCheckResult {
     pub needs_update: bool,
     pub remote_version: String,
