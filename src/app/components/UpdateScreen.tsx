@@ -63,6 +63,7 @@ export function UpdateScreen() {
 
   const unlistenRef = useRef<UnlistenFn | null>(null)
   const cancelledRef = useRef(false)
+  const startedRef = useRef(false)
 
   const addLog = useCallback((msg: string, tone: LogEntry['tone'] = 'info') => {
     setLogLines((prev) => [...prev.slice(-49), { ts: timestamp(), tone, msg }])
@@ -78,7 +79,6 @@ export function UpdateScreen() {
   // Start the update flow on mount
   useEffect(() => {
     if (!isTauri()) {
-      // Running in browser — show a message (deferred to avoid sync setState in effect)
       queueMicrotask(() => {
         setPhase('error')
         setError('Update flow requires the Tauri desktop environment.')
@@ -86,6 +86,10 @@ export function UpdateScreen() {
       })
       return
     }
+
+    // Guard against React StrictMode double-mount in dev
+    if (startedRef.current) return
+    startedRef.current = true
 
     const run = async () => {
       cancelledRef.current = false
@@ -229,6 +233,7 @@ export function UpdateScreen() {
 
   const handleRetry = useCallback(() => {
     cancelledRef.current = false
+    startedRef.current = false
     setError(null)
     setVerifyFailed([])
     setLogLines([])

@@ -171,15 +171,18 @@ pub async fn download_modpack(
                 .await
                 .map_err(|e| format!("Java download failed: {e}"))?;
 
-            // Verify SHA256
-            let actual = Downloader::sha256_file(&archive_path)
-                .map_err(|e| format!("Java checksum error: {e}"))?;
-            if actual != java.sha256 {
-                let _ = std::fs::remove_file(&archive_path);
-                return Err(format!(
-                    "Java SHA256 mismatch: expected {}, got {}",
-                    java.sha256, actual
-                ));
+            // Verify SHA256 (skip if not provided — e.g. Adoptium redirect URLs)
+            if !java.sha256.is_empty() {
+                let actual = Downloader::sha256_file(&archive_path)
+                    .map_err(|e| format!("Java checksum error: {e}"))?;
+                if actual != java.sha256 {
+                    let _ = std::fs::remove_file(&archive_path);
+                    return Err(format!(
+                        "Java SHA256 mismatch: expected {}, got {}",
+                        java.sha256, actual
+                    ));
+                }
+                log::info!("Java SHA256 verified");
             }
 
             // Extract the archive (supports .zip and .tar.gz)
