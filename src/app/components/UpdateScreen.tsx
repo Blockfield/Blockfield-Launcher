@@ -115,19 +115,18 @@ export function UpdateScreen() {
       setStep(0, 'done')
 
       const needJava = versionResult.java && !versionResult.javaOk
+      const needForge = !versionResult.forgeOk
       const needModpack = versionResult.needsUpdate
+      const needAnyDownload = needModpack || needJava || needForge
 
-      // If Java is needed, insert a step before download
+      if (needForge) {
+        addLog(`Forge ${versionResult.java?.version ?? ''} required — will install`, 'info')
+      }
       if (needJava) {
-        setSteps((prev) => {
-          const s = [...prev]
-          s.splice(2, 0, { label: 'update.step.java' as TKey, status: 'pending' })
-          return s
-        })
         addLog(`Java ${versionResult.java!.version} required — will install`, 'info')
       }
 
-      if (!needModpack && !needJava) {
+      if (!needAnyDownload) {
         addLog('Modpack is up to date — no download needed.', 'ok')
         setManifestVersion(versionResult.remoteVersion)
         setProgress(100)
