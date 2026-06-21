@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 
 /// Serializable progress payload emitted to the frontend via `download://progress`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DownloadProgressPayload {
     pub file_path: String,
     pub file_index: usize,
@@ -295,5 +296,28 @@ impl Downloader {
         let mut hasher = sha2::Sha256::new();
         hasher.update(&bytes);
         Ok(format!("{:x}", hasher.finalize()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DownloadProgressPayload;
+
+    #[test]
+    fn progress_payload_matches_frontend_keys() {
+        let value = serde_json::to_value(DownloadProgressPayload {
+            file_path: "mods/a.jar".into(),
+            file_index: 1,
+            file_count: 2,
+            bytes_downloaded: 3,
+            file_bytes_total: 4,
+            total_bytes_downloaded: 5,
+            total_bytes_all: 6,
+            speed_bytes_per_sec: 7,
+        })
+        .unwrap();
+
+        assert!(value.get("totalBytesAll").is_some());
+        assert!(value.get("total_bytes_all").is_none());
     }
 }

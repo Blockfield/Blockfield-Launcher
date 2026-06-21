@@ -1,9 +1,10 @@
 use crate::config::LauncherConfig;
 use crate::download::Downloader;
 use crate::manifest::{InstalledManifest, ModpackManifest, VersionCheckResult};
+use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 
 /// Shared application state managed by Tauri.
@@ -12,6 +13,30 @@ pub struct LauncherAppState {
     pub manifest: RwLock<Option<ModpackManifest>>,
     pub config: RwLock<LauncherConfig>,
     pub app_data_dir: PathBuf,
+}
+
+#[derive(Clone, Serialize)]
+struct LauncherStatusPayload {
+    phase: &'static str,
+    message: String,
+    cancelable: bool,
+}
+
+fn emit_status(
+    app_handle: &AppHandle,
+    phase: &'static str,
+    message: impl Into<String>,
+    cancelable: bool,
+) {
+    let payload = LauncherStatusPayload {
+        phase,
+        message: message.into(),
+        cancelable,
+    };
+
+    if let Err(e) = app_handle.emit("launcher://status", payload) {
+        log::error!("Failed to emit launcher status: {e}");
+    }
 }
 
 // ── Settings commands ──────────────────────────────────────────
@@ -187,6 +212,7 @@ pub async fn check_modpack_version(
         needs_update,
         remote_version: manifest.version.clone(),
         installed_version: installed.version.clone(),
+        mirror: api_base,
         file_count: manifest.files.len(),
         total_size: manifest.total_size,
         java: java_info,
@@ -218,6 +244,7 @@ pub async fn download_modpack(
 
     let downloader = state.downloader.lock().await;
     downloader.reset_cancel().await;
+    emit_status(&app_handle, "setup", "Preparing install tasks", false);
 
     // Download Java runtime if needed
     if let Some(ref java) = manifest.java {
@@ -230,6 +257,12 @@ pub async fn download_modpack(
 
         if need_java {
             log::info!("Downloading Java {} for {}", java.version, java.platform);
+            emit_status(
+                &app_handle,
+                "java",
+                format!("Downloading Java {}", java.version),
+                true,
+            );
             let archive_path = java_dir.join("java-archive");
             std::fs::create_dir_all(&java_dir)
                 .map_err(|e| format!("Failed to create java dir: {e}"))?;
@@ -262,6 +295,7 @@ pub async fn download_modpack(
                 log::info!("Java SHA256 verified");
             }
 
+            emit_status(&app_handle, "java", "Extracting Java runtime", false);
             extract_archive(&archive_path, &java_dir)?;
             let _ = std::fs::remove_file(&archive_path);
             std::fs::write(&java_ver_path, &java.version)
@@ -279,6 +313,9 @@ pub async fn download_modpack(
                 let _ = crate::config::save_config(&state.app_data_dir, &cfg);
                 log::info!("Java installed, path saved: {java_path_str}");
             }
+            emit_status(&app_handle, "java", "Java runtime ready", false);
+        } else {
+            emit_status(&app_handle, "java", "Java runtime ready", false);
         }
     }
 
@@ -291,6 +328,12 @@ pub async fn download_modpack(
             .join(format!("{}.json", forge_version_id));
         if !forge_json.exists() {
             log::info!("Downloading Forge installer {}", forge.version);
+            emit_status(
+                &app_handle,
+                "forge",
+                format!("Downloading Forge {}", forge.version),
+                true,
+            );
             let installer_path = PathBuf::from(&config.game_dir).join("forge-installer.jar");
             let mut forge_downloaded = 0;
             downloader
@@ -321,6 +364,7 @@ pub async fn download_modpack(
 
             // Run Forge installer
             log::info!("Running Forge installer...");
+            emit_status(&app_handle, "forge", "Installing Forge client", false);
 
             // Create minimal Minecraft launcher profile so Forge installer works
             let launcher_profiles = PathBuf::from(&config.game_dir).join("launcher_profiles.json");
@@ -382,10 +426,12 @@ pub async fn download_modpack(
                 ));
             }
         }
+        emit_status(&app_handle, "forge", "Forge client ready", false);
     }
 
     // If the version changed entirely, start fresh (prune old files)
     let installed_sha256 = if installed.version != manifest.version {
+        emit_status(&app_handle, "prune", "Pruning stale modpack files", false);
         // Delete files listed in the prune array
         if let Some(ref prune_patterns) = manifest.prune {
             for pattern in prune_patterns {
@@ -406,11 +452,13 @@ pub async fn download_modpack(
                 }
             }
         }
+        emit_status(&app_handle, "prune", "Stale modpack files pruned", false);
         std::collections::HashMap::new()
     } else {
         installed.files
     };
 
+    emit_status(&app_handle, "modpack", "Syncing modpack files", true);
     downloader
         .download_files(&manifest, &config.game_dir, &installed_sha256)
         .await
@@ -418,18 +466,24 @@ pub async fn download_modpack(
             log::error!("Download failed: {e}");
             e.to_string()
         })?;
+    emit_status(&app_handle, "modpack", "Modpack files ready", false);
 
     let forge_version_id = manifest
         .forge
         .as_ref()
         .map(|forge| crate::minecraft::forge_version_id(&forge.version));
-    crate::minecraft::ensure_launch_dependencies(
+    emit_status(&app_handle, "runtime", "Preparing Minecraft runtime", true);
+    let result = crate::minecraft::ensure_launch_dependencies(
         &downloader,
         &PathBuf::from(&config.game_dir),
         &manifest.minecraft_version,
         forge_version_id.as_deref(),
     )
-    .await
+    .await;
+    if result.is_ok() {
+        emit_status(&app_handle, "ready", "Minecraft runtime ready", false);
+    }
+    result
 }
 
 #[tauri::command]
@@ -471,7 +525,7 @@ pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), S
 
 #[tauri::command]
 pub async fn launch_game(
-    _app_handle: AppHandle,
+    app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
 ) -> Result<(), String> {
     let config = state.config.read().await.clone();
@@ -520,6 +574,12 @@ pub async fn launch_game(
     {
         let downloader = state.downloader.lock().await;
         downloader.reset_cancel().await;
+        emit_status(
+            &app_handle,
+            "launch",
+            "Preparing launch dependencies",
+            false,
+        );
         crate::minecraft::ensure_launch_dependencies(
             &downloader,
             &game_dir_path,
@@ -529,6 +589,7 @@ pub async fn launch_game(
         .await?;
     }
 
+    emit_status(&app_handle, "launch", "Building launch command", false);
     let args = crate::minecraft::build_launch_args(
         &game_dir_path,
         ram_mb,
@@ -537,6 +598,7 @@ pub async fn launch_game(
     )?;
 
     log::info!("Spawning: {java} {}", args.join(" "));
+    emit_status(&app_handle, "launch", "Starting game process", false);
 
     let child = std::process::Command::new(&java)
         .args(&args)
@@ -547,6 +609,12 @@ pub async fn launch_game(
         .spawn()
         .map_err(|e| format!("Failed to spawn game process: {e}"))?;
     log::info!("Game process spawned (pid {})", child.id());
+    emit_status(
+        &app_handle,
+        "launch",
+        format!("Game process started (pid {})", child.id()),
+        false,
+    );
 
     Ok(())
 }

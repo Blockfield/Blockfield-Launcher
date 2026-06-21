@@ -14,11 +14,13 @@ import {
   LoaderCircle,
 } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
 import { useI18n, type TKey, type TFunction } from '../i18n'
 import { MODPACK_VERSION, OPERATION_NAME, SERVER_IP } from '../constants'
-import type { VersionCheckResult } from '../../lib/api'
+import { listenDownloadProgress, listenLauncherStatus } from '../../lib/events'
+import type { DownloadProgress, VersionCheckResult } from '../../lib/api'
 
 type Tone = 'ok' | 'muted' | 'warn'
 
@@ -75,6 +77,9 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const [checking, setChecking] = useState(true)
   const [checkError, setCheckError] = useState<string | null>(null)
   const [launching, setLaunching] = useState(false)
+  const [launchStatus, setLaunchStatus] = useState('')
+  const [launchError, setLaunchError] = useState<string | null>(null)
+  const [launchProgress, setLaunchProgress] = useState<number | null>(null)
 
   const handleDeploy = useCallback(async () => {
     // Don't allow deploy until version check completes
@@ -87,20 +92,40 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
     // Confirmed up to date AND Java OK AND Forge installed → launch
     if (isTauri()) {
       setLaunching(true)
+      setLaunchError(null)
+      setLaunchStatus(t('main.launching'))
+      setLaunchProgress(null)
+      let unlistenStatus: UnlistenFn | null = null
+      let unlistenProgress: UnlistenFn | null = null
       try {
+        unlistenStatus = await listenLauncherStatus((status) => {
+          setLaunchStatus(status.message)
+        })
+        unlistenProgress = await listenDownloadProgress((p: DownloadProgress) => {
+          if (p.totalBytesAll > 0) {
+            setLaunchProgress(Math.min(100, (p.totalBytesDownloaded / p.totalBytesAll) * 100))
+          }
+          if (p.filePath) setLaunchStatus(p.filePath)
+        })
         await invoke('launch_game')
+        setLaunchStatus(t('main.gameStarted'))
       } catch (e) {
         console.error('Launch failed:', e)
+        setLaunchError(String(e))
+        setLaunchStatus('')
       } finally {
+        unlistenStatus?.()
+        unlistenProgress?.()
         setLaunching(false)
       }
     }
-  }, [versionInfo, onPlay])
+  }, [versionInfo, onPlay, t])
 
   const checkVersion = useCallback(async () => {
     if (!isTauri()) return
     setChecking(true)
     setCheckError(null)
+    setLaunchError(null)
     try {
       const result = await invoke<VersionCheckResult>('check_modpack_version')
       setVersionInfo(result)
@@ -126,9 +151,26 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const upToDate = isChecked && !needsSetup
   const installedVersion = versionInfo?.installedVersion ?? '...'
   const latestVersion = versionInfo?.remoteVersion ?? '...'
-  const totalSize = versionInfo?.totalSize
-    ? `${(versionInfo.totalSize / 1e9).toFixed(1)} GB`
-    : '—'
+  const totalSize = versionInfo?.totalSize ? `${(versionInfo.totalSize / 1e9).toFixed(1)} GB` : '—'
+  const launchProgressText = launchProgress === null ? '' : ` · ${launchProgress.toFixed(0)}%`
+  const launchSub = launching
+    ? `${launchStatus || t('main.launching')}${launchProgressText}`.slice(0, 64)
+    : launchError
+      ? launchError.slice(0, 64)
+      : !isChecked
+        ? t('main.checking')
+        : needsSetup
+          ? t('main.updateAvailable')
+          : t('main.enterBattlefield')
+  const launchLabel = launching
+    ? t('main.launching')
+    : launchError
+      ? t('main.launchFailed')
+      : !isChecked
+        ? '...'
+        : needsSetup
+          ? t('nav.updates')
+          : t('nav.deploy')
 
   // Modpack status line
   const modpackStatus: { value: string; tone: Tone } = checking
@@ -175,24 +217,9 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                 <DeployButton
                   onPlay={handleDeploy}
                   disabled={!isChecked || launching}
-                  label={
-                    launching
-                      ? 'LAUNCHING'
-                      : !isChecked
-                        ? '...'
-                        : needsSetup
-                          ? t('nav.updates')
-                          : t('nav.deploy')
-                  }
-                  sub={
-                    launching
-                      ? '...'
-                      : !isChecked
-                        ? t('main.checking')
-                        : needsSetup
-                          ? t('main.updateAvailable')
-                          : t('main.enterBattlefield')
-                  }
+                  label={launchLabel}
+                  sub={launchSub}
+                  busy={launching}
                 />
                 <div className="flex flex-col gap-2 pl-2">
                   <Stat
@@ -284,7 +311,19 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   )
 }
 
-function DeployButton({ onPlay, label, sub, disabled }: { onPlay: () => void; label: string; sub: string; disabled?: boolean }) {
+function DeployButton({
+  onPlay,
+  label,
+  sub,
+  disabled,
+  busy,
+}: {
+  onPlay: () => void
+  label: string
+  sub: string
+  disabled?: boolean
+  busy?: boolean
+}) {
   return (
     <button
       onClick={onPlay}
@@ -298,17 +337,33 @@ function DeployButton({ onPlay, label, sub, disabled }: { onPlay: () => void; la
         disabled
           ? undefined
           : {
-              boxShadow: 'inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)',
+              boxShadow:
+                'inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)',
             }
       }
     >
-      <span className={`absolute top-0 left-0 w-3 h-3 border-l border-t ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`} />
-      <span className={`absolute top-0 right-0 w-3 h-3 border-r border-t ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`} />
-      <span className={`absolute bottom-0 left-0 w-3 h-3 border-l border-b ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`} />
-      <span className={`absolute bottom-0 right-0 w-3 h-3 border-r border-b ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`} />
+      <span
+        className={`absolute top-0 left-0 w-3 h-3 border-l border-t ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`}
+      />
+      <span
+        className={`absolute top-0 right-0 w-3 h-3 border-r border-t ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`}
+      />
+      <span
+        className={`absolute bottom-0 left-0 w-3 h-3 border-l border-b ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`}
+      />
+      <span
+        className={`absolute bottom-0 right-0 w-3 h-3 border-r border-b ${disabled ? 'border-[#3A2C1D]' : 'border-[#F5A524]'}`}
+      />
       <span className="absolute inset-0 bg-[#F5A524]/0 group-hover:bg-[#F5A524]/10 transition-colors" />
       <span className="relative h-full flex items-center justify-center gap-4">
-        <Play size={18} className={disabled ? 'text-[#5E5040] fill-[#5E5040]' : 'text-[#F3E7D0] fill-[#F3E7D0]'} />
+        {busy ? (
+          <LoaderCircle size={18} className="animate-spin text-[#F3E7D0]" />
+        ) : (
+          <Play
+            size={18}
+            className={disabled ? 'text-[#5E5040] fill-[#5E5040]' : 'text-[#F3E7D0] fill-[#F3E7D0]'}
+          />
+        )}
         <span className="flex flex-col items-start leading-none">
           <span className="tracking-[0.26em] text-[17px] text-[#F3E7D0]">{label}</span>
           <span className="tracking-[0.16em] text-[9px] text-[#C7AE86] mt-1 text-left">{sub}</span>

@@ -69,6 +69,7 @@ pub struct VersionCheckResult {
     pub needs_update: bool,
     pub remote_version: String,
     pub installed_version: String,
+    pub mirror: String,
     pub file_count: usize,
     pub total_size: u64,
     /// Required Java info from the manifest

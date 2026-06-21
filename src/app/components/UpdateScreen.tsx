@@ -15,20 +15,35 @@ import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
 import { useI18n, type TKey, type TFunction } from '../i18n'
 import { OPERATION_NAME } from '../constants'
-import { listenDownloadProgress } from '../../lib/events'
-import type { DownloadProgress, VersionCheckResult } from '../../lib/api'
+import { listenDownloadProgress, listenLauncherStatus } from '../../lib/events'
+import type { DownloadProgress, LauncherStatus, VersionCheckResult } from '../../lib/api'
 
 type StepStatus = 'done' | 'active' | 'pending'
-type Phase = 'checking' | 'downloading' | 'verifying' | 'complete' | 'error' | 'uptodate'
+type Phase =
+  | 'checking'
+  | 'downloading'
+  | 'verifying'
+  | 'launching'
+  | 'complete'
+  | 'error'
+  | 'uptodate'
 
 /** Whether we're running inside Tauri (vs browser dev). */
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
 /** Format bytes per second into a human-readable string. */
 function formatSpeed(bytesPerSec: number): string {
-  if (bytesPerSec < 1024) return `${bytesPerSec} B/s`
+  if (bytesPerSec < 1024) return `${Math.round(bytesPerSec)} B/s`
   if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`
   return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
+}
+
+function formatMirror(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url || '—'
+  }
 }
 
 /** Format bytes into human-readable string. */
@@ -47,10 +62,23 @@ function timestamp(): string {
 }
 
 type LogEntry = { ts: string; tone: 'ok' | 'info' | 'dim' | 'warn'; msg: string }
+type SpeedSample = { key: string; bytes: number; time: number }
+
+const INITIAL_STEPS: Array<{ label: TKey; status: StepStatus }> = [
+  { label: 'update.step.verify', status: 'pending' },
+  { label: 'update.step.setup', status: 'pending' },
+  { label: 'update.step.download', status: 'pending' },
+  { label: 'update.step.runtime', status: 'pending' },
+  { label: 'update.step.integrity', status: 'pending' },
+]
+
+const freshSteps = () => INITIAL_STEPS.map((step) => ({ ...step }))
 
 export function UpdateScreen() {
   const { t } = useI18n()
   const [phase, setPhase] = useState<Phase>('checking')
+  const [statusMessage, setStatusMessage] = useState('')
+  const [canCancel, setCanCancel] = useState(false)
   const [progress, setProgress] = useState(0)
   const [currentFile, setCurrentFile] = useState('')
   const [fileIdx, setFileIdx] = useState(0)
@@ -58,20 +86,17 @@ export function UpdateScreen() {
   const [downloadedBytes, setDownloadedBytes] = useState(0)
   const [totalBytes, setTotalBytes] = useState(0)
   const [speed, setSpeed] = useState('—')
+  const [mirror, setMirror] = useState('—')
   const [logLines, setLogLines] = useState<LogEntry[]>([])
   const [error, setError] = useState<string | null>(null)
   const [verifyFailed, setVerifyFailed] = useState<string[]>([])
   const [manifestVersion, setManifestVersion] = useState('')
   const [launching, setLaunching] = useState(false)
-  const [steps, setSteps] = useState<Array<{ label: TKey; status: StepStatus }>>([
-    { label: 'update.step.verify', status: 'pending' },
-    { label: 'update.step.prune', status: 'pending' },
-    { label: 'update.step.download', status: 'pending' },
-    { label: 'update.step.integrity', status: 'pending' },
-    { label: 'update.step.finalize', status: 'pending' },
-  ])
+  const [steps, setSteps] = useState<Array<{ label: TKey; status: StepStatus }>>(freshSteps)
 
   const unlistenRef = useRef<UnlistenFn | null>(null)
+  const unlistenStatusRef = useRef<UnlistenFn | null>(null)
+  const speedSampleRef = useRef<SpeedSample | null>(null)
   const cancelledRef = useRef(false)
   const startedRef = useRef(false)
 
@@ -82,6 +107,74 @@ export function UpdateScreen() {
   const setStep = useCallback((index: number, status: StepStatus) => {
     setSteps((prev) => prev.map((s, i) => (i === index ? { ...s, status } : s)))
   }, [])
+
+  const resetSpeed = useCallback(() => {
+    speedSampleRef.current = null
+    setSpeed('—')
+  }, [])
+
+  const applyProgress = useCallback((p: DownloadProgress) => {
+    if (p.totalBytesAll > 0) {
+      const pct = (p.totalBytesDownloaded / p.totalBytesAll) * 100
+      setProgress(Math.min(100, pct))
+      setTotalBytes(p.totalBytesAll)
+    }
+    setFileIdx(p.fileIndex)
+    if (p.filePath) setCurrentFile(p.filePath)
+    setDownloadedBytes(p.totalBytesDownloaded)
+
+    const now = performance.now()
+    const key = `${p.fileIndex}:${p.filePath}`
+    const previous = speedSampleRef.current
+    let bytesPerSec = p.speedBytesPerSec
+    if (previous?.key === key && p.bytesDownloaded > previous.bytes && now > previous.time) {
+      bytesPerSec = ((p.bytesDownloaded - previous.bytes) * 1000) / (now - previous.time)
+    }
+    speedSampleRef.current = { key, bytes: p.bytesDownloaded, time: now }
+    setSpeed(bytesPerSec > 0 ? formatSpeed(bytesPerSec) : '—')
+  }, [])
+
+  const applyBackendStatus = useCallback(
+    (status: LauncherStatus) => {
+      setStatusMessage(status.message)
+      setCanCancel(status.cancelable)
+      addLog(status.message, status.phase === 'ready' ? 'ok' : 'info')
+
+      if (status.phase === 'setup' || status.phase === 'java' || status.phase === 'forge') {
+        setPhase('downloading')
+        setStep(1, 'active')
+        return
+      }
+
+      if (status.phase === 'prune' || status.phase === 'modpack') {
+        setPhase('downloading')
+        setStep(1, 'done')
+        setStep(2, 'active')
+        return
+      }
+
+      if (status.phase === 'runtime') {
+        setPhase('downloading')
+        setStep(2, 'done')
+        setStep(3, 'active')
+        return
+      }
+
+      if (status.phase === 'ready') {
+        setCanCancel(false)
+        setStep(1, 'done')
+        setStep(2, 'done')
+        setStep(3, 'done')
+        return
+      }
+
+      if (status.phase === 'launch') {
+        setPhase('launching')
+        setCanCancel(false)
+      }
+    },
+    [addLog, setStep],
+  )
 
   // Start the update flow on mount
   useEffect(() => {
@@ -99,8 +192,11 @@ export function UpdateScreen() {
     startedRef.current = true
 
     const run = async () => {
+      unlistenStatusRef.current = await listenLauncherStatus(applyBackendStatus)
       cancelledRef.current = false
       setPhase('checking')
+      setCanCancel(false)
+      resetSpeed()
       addLog('Establishing connection to deployment server...', 'info')
 
       // Step 1: Check for updates
@@ -120,6 +216,7 @@ export function UpdateScreen() {
       }
 
       setStep(0, 'done')
+      setMirror(formatMirror(versionResult.mirror))
 
       const needJava = versionResult.java && !versionResult.javaOk
       const needForge = !versionResult.forgeOk
@@ -153,39 +250,26 @@ export function UpdateScreen() {
       setFileCount(versionResult.fileCount)
       setTotalBytes(versionResult.totalSize)
 
-      // Step 2: Prune stale files
       setStep(1, 'active')
       addLog(
         `Update needed: ${versionResult.installedVersion} → ${versionResult.remoteVersion}`,
         'info',
       )
-      addLog(`Pruning stale assets... (${versionResult.fileCount} files queued)`, 'info')
-      setStep(1, 'done')
-
-      // Step 3: Download
-      setStep(2, 'active')
-      addLog('Phase 1/2 — downloading modpack payload', 'info')
+      addLog('Waiting for backend install tasks...', 'info')
       setPhase('downloading')
 
       // Listen for progress events
-      const unlisten = await listenDownloadProgress((p: DownloadProgress) => {
-        if (p.totalBytesAll > 0) {
-          const pct = (p.totalBytesDownloaded / p.totalBytesAll) * 100
-          setProgress(Math.min(100, pct))
-          setTotalBytes(p.totalBytesAll)
-        }
-        setFileIdx(p.fileIndex)
-        if (p.filePath) setCurrentFile(p.filePath)
-        setDownloadedBytes(p.totalBytesDownloaded)
-        if (p.speedBytesPerSec > 0) setSpeed(formatSpeed(p.speedBytesPerSec))
-      })
+      const unlisten = await listenDownloadProgress(applyProgress)
       unlistenRef.current = unlisten
 
       try {
         await invoke('download_modpack')
-        addLog(`Download complete: ${formatBytes(versionResult.totalSize)} transferred`, 'ok')
+        addLog('Install tasks complete.', 'ok')
         setProgress(100)
+        setCanCancel(false)
+        setStep(1, 'done')
         setStep(2, 'done')
+        setStep(3, 'done')
       } catch (e) {
         if (cancelledRef.current) {
           addLog('Download cancelled by operator.', 'dim')
@@ -202,9 +286,11 @@ export function UpdateScreen() {
         unlistenRef.current = null
       }
 
-      // Step 4: Verify integrity
-      setStep(3, 'active')
+      // Step 5: Verify integrity
+      setStep(4, 'active')
       setPhase('verifying')
+      setStatusMessage('')
+      setCanCancel(false)
       addLog('Verifying file integrity (SHA-256)...', 'info')
 
       try {
@@ -218,7 +304,7 @@ export function UpdateScreen() {
           return
         }
         addLog(`All ${versionResult.fileCount} file(s) passed integrity check.`, 'ok')
-        setStep(3, 'done')
+        setStep(4, 'done')
       } catch (e) {
         addLog(`ERROR: Verification failed — ${String(e)}`, 'warn')
         setPhase('error')
@@ -226,11 +312,9 @@ export function UpdateScreen() {
         return
       }
 
-      // Step 5: Finalize
-      setStep(4, 'active')
       addLog(`Modpack ${versionResult.remoteVersion} installed successfully.`, 'ok')
       addLog('Ready for deployment.', 'info')
-      setStep(4, 'done')
+      setStatusMessage('')
       setPhase('complete')
     }
 
@@ -238,30 +322,31 @@ export function UpdateScreen() {
 
     return () => {
       unlistenRef.current?.()
+      unlistenStatusRef.current?.()
     }
-  }, [addLog, setStep])
+  }, [addLog, applyBackendStatus, applyProgress, resetSpeed, setStep])
 
   const handleRetry = useCallback(() => {
     cancelledRef.current = false
     startedRef.current = false
     setError(null)
+    setStatusMessage('')
+    setCanCancel(false)
     setVerifyFailed([])
     setLogLines([])
     setProgress(0)
+    setMirror('—')
     setPhase('checking')
-    setSteps([
-      { label: 'update.step.verify', status: 'pending' },
-      { label: 'update.step.prune', status: 'pending' },
-      { label: 'update.step.download', status: 'pending' },
-      { label: 'update.step.integrity', status: 'pending' },
-      { label: 'update.step.finalize', status: 'pending' },
-    ])
+    resetSpeed()
+    setSteps(freshSteps())
     // Re-trigger the effect — a key trick is to remount, but for simplicity we reload
     window.location.reload()
-  }, [])
+  }, [resetSpeed])
 
   const handleCancel = useCallback(async () => {
     cancelledRef.current = true
+    setStatusMessage('Cancelling download...')
+    setCanCancel(false)
     if (isTauri()) {
       try {
         await invoke('cancel_download')
@@ -274,29 +359,40 @@ export function UpdateScreen() {
   const handleLaunch = useCallback(async () => {
     if (!isTauri() || launching) return
     setLaunching(true)
+    setPhase('launching')
+    setStatusMessage(t('main.launching'))
+    setCanCancel(false)
+    resetSpeed()
     addLog('Launching game...', 'info')
     try {
+      unlistenRef.current = await listenDownloadProgress(applyProgress)
       await invoke('launch_game')
       addLog('Game process started.', 'ok')
+      setStatusMessage(t('main.gameStarted'))
+      setPhase('complete')
     } catch (e) {
       addLog(`ERROR: Launch failed — ${String(e)}`, 'warn')
       setPhase('error')
       setError(String(e))
     } finally {
+      unlistenRef.current?.()
+      unlistenRef.current = null
       setLaunching(false)
     }
-  }, [addLog, launching])
+  }, [addLog, applyProgress, launching, resetSpeed, t])
 
   const statusText = () => {
     switch (phase) {
       case 'checking':
         return t('update.checking')
       case 'downloading':
-        return t('update.downloading')
+        return statusMessage || t('update.downloading')
       case 'verifying':
         return t('update.step.integrity')
+      case 'launching':
+        return statusMessage || t('main.launching')
       case 'complete':
-        return t('update.uptodate')
+        return statusMessage || t('update.uptodate')
       case 'uptodate':
         return t('update.uptodate')
       case 'error':
@@ -334,9 +430,11 @@ export function UpdateScreen() {
           </div>
           <div className="shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-[240px]">
             <div className="text-[10px] tracking-[0.16em] text-[#8E7A5E]">{t('update.mirror')}</div>
-            <div className="mt-2 tracking-[0.18em] text-[13px] text-neutral-100">CDN-FRA-02</div>
+            <div className="mt-2 tracking-[0.18em] text-[13px] text-neutral-100 truncate">
+              {mirror}
+            </div>
             <div className="mt-2 text-[11px] tracking-[0.22em] text-[#82D66B]">
-              ▸ {phase === 'downloading' ? speed : '—'}
+              ▸ {phase === 'downloading' || phase === 'launching' ? speed : '—'}
             </div>
           </div>
         </div>
@@ -344,7 +442,14 @@ export function UpdateScreen() {
         <GlowPanel className="p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-4">
-              {phase === 'downloading' || phase === 'verifying' ? (
+              {phase === 'launching' ? (
+                <DeployButton
+                  label={t('main.launching')}
+                  sub={statusMessage || '...'}
+                  onClick={handleLaunch}
+                  disabled
+                />
+              ) : phase === 'downloading' && canCancel ? (
                 <button
                   onClick={handleCancel}
                   className="relative h-[64px] w-[230px] shrink-0 overflow-hidden border border-[#3a2828] bg-[#1a0e0e] hover:border-[#7a3838] transition-colors"
@@ -359,10 +464,12 @@ export function UpdateScreen() {
                     </span>
                   </span>
                 </button>
+              ) : phase === 'downloading' || phase === 'verifying' ? (
+                <LockedButton lockedLabel="..." subLabel={statusText()} />
               ) : phase === 'complete' || phase === 'uptodate' ? (
                 <DeployButton
-                  label={launching ? 'LAUNCHING' : 'PLAY'}
-                  sub={launching ? '...' : t('main.enterBattlefield')}
+                  label={launching ? t('main.launching') : 'PLAY'}
+                  sub={launching ? statusMessage || '...' : t('main.enterBattlefield')}
                   onClick={handleLaunch}
                   disabled={launching}
                 />
@@ -371,7 +478,7 @@ export function UpdateScreen() {
               ) : (
                 <LockedButton lockedLabel="..." subLabel={t('update.checking')} />
               )}
-              {phase === 'downloading' && (
+              {phase === 'downloading' && canCancel && (
                 <button
                   onClick={handleCancel}
                   className="h-[40px] w-[40px] grid place-items-center border border-[#2A2116] hover:border-[#8A571C] text-[#C7AE86] hover:text-[#F3E7D0] transition-colors"
@@ -386,7 +493,7 @@ export function UpdateScreen() {
                 {t('update.completion')}
               </div>
               <div className="tracking-[0.04em] text-[#F3E7D0] leading-none mt-1.5 text-[44px]">
-                {phase === 'checking' ? (
+                {phase === 'checking' || (phase === 'launching' && progress >= 100) ? (
                   <LoaderCircle size={32} className="animate-spin text-[#8E7A5E] inline-block" />
                 ) : (
                   <>
@@ -416,7 +523,7 @@ export function UpdateScreen() {
               icon={<Download size={13} />}
               label={t('update.remaining')}
               value={
-                phase === 'downloading'
+                phase === 'downloading' || phase === 'launching'
                   ? `${fileIdx}/${fileCount || '...'}`
                   : totalBytes > 0
                     ? `${fileCount} files`
@@ -426,7 +533,7 @@ export function UpdateScreen() {
             <SubStat
               icon={<Zap size={13} />}
               label={t('update.throughput')}
-              value={phase === 'downloading' ? speed : '—'}
+              value={phase === 'downloading' || phase === 'launching' ? speed : '—'}
               accent
             />
           </div>
@@ -441,7 +548,7 @@ export function UpdateScreen() {
                       ? '#82D66B'
                       : '#F5A524'
                 }
-                pulse={phase === 'downloading'}
+                pulse={phase === 'downloading' || phase === 'verifying' || phase === 'launching'}
               />
               <span
                 className={`leading-snug ${

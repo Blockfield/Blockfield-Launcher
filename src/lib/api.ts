@@ -12,6 +12,7 @@ export interface VersionCheckResult {
   needsUpdate: boolean
   remoteVersion: string
   installedVersion: string
+  mirror: string
   fileCount: number
   totalSize: number
   java?: JavaInfo
@@ -31,6 +32,13 @@ export interface DownloadProgress {
   totalBytesDownloaded: number
   totalBytesAll: number
   speedBytesPerSec: number
+}
+
+/** Current backend operation. */
+export interface LauncherStatus {
+  phase: string
+  message: string
+  cancelable: boolean
 }
 
 // ── Launcher config ──────────────────────────────────────────────

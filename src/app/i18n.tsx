@@ -106,15 +106,17 @@ const en = {
   'update.opLog': 'OPERATION LOG',
   'update.steps': 'DEPLOYMENT STEPS',
   'update.step.verify': 'VERIFY MANIFEST',
+  'update.step.setup': 'SETUP RUNTIME',
   'update.step.prune': 'PRUNE STALE FILES',
   'update.step.download': 'DOWNLOAD PAYLOAD',
+  'update.step.runtime': 'MINECRAFT RUNTIME',
   'update.step.integrity': 'INTEGRITY CHECK',
   'update.step.finalize': 'FINALIZE INSTALL',
   'update.step.java': 'JAVA RUNTIME',
   'update.step.done': 'DONE',
   'update.step.running': 'RUNNING',
   'update.step.queued': 'QUEUED',
-  'update.log.handshake': 'Handshake established with CDN-FRA-02',
+  'update.log.handshake': 'Handshake established with package mirror',
   'update.log.manifest': 'Manifest verified · 142 files queued',
   'update.log.phase1': 'Phase 1/3 — pruning stale assets … done',
   'update.log.phase2': 'Phase 2/3 — downloading modpack payload',
@@ -156,6 +158,9 @@ const en = {
   // Main screen — dynamic states
   'main.checking': 'CHECKING...',
   'main.updateAvailable': 'UPDATE AVAILABLE',
+  'main.launching': 'LAUNCHING',
+  'main.launchFailed': 'LAUNCH FAILED',
+  'main.gameStarted': 'GAME STARTED',
 } as const
 
 export type TKey = keyof typeof en
@@ -253,15 +258,17 @@ const ru: Record<TKey, string> = {
   'update.opLog': 'ЖУРНАЛ ОПЕРАЦИИ',
   'update.steps': 'ЭТАПЫ ЗАПУСКА',
   'update.step.verify': 'ПРОВЕРКА МАНИФЕСТА',
+  'update.step.setup': 'ПОДГОТОВКА СРЕДЫ',
   'update.step.prune': 'ОЧИСТКА СТАРЫХ ФАЙЛОВ',
   'update.step.download': 'ЗАГРУЗКА ПАКЕТА',
+  'update.step.runtime': 'СРЕДА MINECRAFT',
   'update.step.integrity': 'ПРОВЕРКА ЦЕЛОСТНОСТИ',
   'update.step.finalize': 'ЗАВЕРШЕНИЕ УСТАНОВКИ',
   'update.step.java': 'СРЕДА JAVA',
   'update.step.done': 'ГОТОВО',
   'update.step.running': 'В РАБОТЕ',
   'update.step.queued': 'В ОЧЕРЕДИ',
-  'update.log.handshake': 'Установлено соединение с CDN-FRA-02',
+  'update.log.handshake': 'Установлено соединение с зеркалом пакетов',
   'update.log.manifest': 'Манифест проверен · 142 файла в очереди',
   'update.log.phase1': 'Фаза 1/3 — очистка старых ассетов … готово',
   'update.log.phase2': 'Фаза 2/3 — загрузка пакета модпака',
@@ -300,6 +307,9 @@ const ru: Record<TKey, string> = {
 
   'main.checking': 'ПРОВЕРКА...',
   'main.updateAvailable': 'ДОСТУПНО ОБНОВЛЕНИЕ',
+  'main.launching': 'ЗАПУСК',
+  'main.launchFailed': 'ОШИБКА ЗАПУСКА',
+  'main.gameStarted': 'ИГРА ЗАПУЩЕНА',
 }
 
 const uk: Record<TKey, string> = {
@@ -395,15 +405,17 @@ const uk: Record<TKey, string> = {
   'update.opLog': 'ЖУРНАЛ ОПЕРАЦІЇ',
   'update.steps': 'ЕТАПИ ЗАПУСКУ',
   'update.step.verify': 'ПЕРЕВІРКА МАНІФЕСТУ',
+  'update.step.setup': 'ПІДГОТОВКА СЕРЕДОВИЩА',
   'update.step.prune': 'ОЧИЩЕННЯ СТАРИХ ФАЙЛІВ',
   'update.step.download': 'ЗАВАНТАЖЕННЯ ПАКЕТА',
+  'update.step.runtime': 'СЕРЕДОВИЩЕ MINECRAFT',
   'update.step.integrity': 'ПЕРЕВІРКА ЦІЛІСНОСТІ',
   'update.step.finalize': 'ЗАВЕРШЕННЯ ВСТАНОВЛЕННЯ',
   'update.step.java': 'СЕРЕДОВИЩЕ JAVA',
   'update.step.done': 'ГОТОВО',
   'update.step.running': 'У РОБОТІ',
   'update.step.queued': 'У ЧЕРЗІ',
-  'update.log.handshake': "Встановлено з'єднання з CDN-FRA-02",
+  'update.log.handshake': "Встановлено з'єднання із дзеркалом пакетів",
   'update.log.manifest': 'Маніфест перевірено · 142 файли в черзі',
   'update.log.phase1': 'Фаза 1/3 — очищення старих ассетів … готово',
   'update.log.phase2': 'Фаза 2/3 — завантаження пакета модпака',
@@ -442,6 +454,9 @@ const uk: Record<TKey, string> = {
 
   'main.checking': 'ПЕРЕВІРКА...',
   'main.updateAvailable': 'ДОСТУПНЕ ОНОВЛЕННЯ',
+  'main.launching': 'ЗАПУСК',
+  'main.launchFailed': 'ПОМИЛКА ЗАПУСКУ',
+  'main.gameStarted': 'ГРУ ЗАПУЩЕНО',
 }
 
 const DICTS: Record<Lang, Record<TKey, string>> = { en, ru, uk }
