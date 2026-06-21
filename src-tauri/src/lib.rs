@@ -10,18 +10,33 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Pre-load .env so env vars are available for plugin configuration below.
+    // (setup() will load again and log the result; the second load is a no-op
+    // because dotenvy preserves existing env vars.)
+    let env_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join(".env");
+    let _ = dotenvy::from_path(&env_path);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(|app| {
+        .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            }
+
+            // Log whether .env was loaded successfully (or already loaded above).
+            match dotenvy::from_path(&env_path) {
+                Ok(()) => log::info!(".env loaded: {}", env_path.display()),
+                Err(e) => log::warn!(".env not loaded: {e} (tried {})", env_path.display()),
             }
 
             // Resolve app data directory for config persistence

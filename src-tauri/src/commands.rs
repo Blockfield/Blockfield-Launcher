@@ -628,8 +628,10 @@ pub async fn launch_game(
 
 /// Base URL for the launcher API.
 fn api_base_url() -> String {
-    std::env::var("BLOCKFIELD_API_URL")
-        .unwrap_or_else(|_| "http://localhost:3000/api/launcher/v1".to_string())
+    let url = std::env::var("VITE_BLOCKFIELD_API_URL")
+        .unwrap_or_else(|_| "http://localhost:3000/api/launcher/v1".to_string());
+    log::info!("[api_base_url] VITE_BLOCKFIELD_API_URL={url}");
+    url
 }
 
 /// Extract a ZIP archive to a target directory.
