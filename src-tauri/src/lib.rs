@@ -54,7 +54,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::load_settings,
             commands::save_settings,
-            commands::get_default_game_dir,
             commands::check_modpack_version,
             commands::download_modpack,
             commands::verify_files,

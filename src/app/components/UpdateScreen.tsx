@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Play, Pause, Download, HardDrive, FileBox, Zap, LoaderCircle } from 'lucide-react'
+import {
+  Play,
+  Pause,
+  Download,
+  HardDrive,
+  FileBox,
+  Zap,
+  LoaderCircle,
+  RefreshCw,
+} from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
@@ -70,12 +79,9 @@ export function UpdateScreen() {
     setLogLines((prev) => [...prev.slice(-49), { ts: timestamp(), tone, msg }])
   }, [])
 
-  const setStep = useCallback(
-    (index: number, status: StepStatus) => {
-      setSteps((prev) => prev.map((s, i) => (i === index ? { ...s, status } : s)))
-    },
-    [],
-  )
+  const setStep = useCallback((index: number, status: StepStatus) => {
+    setSteps((prev) => prev.map((s, i) => (i === index ? { ...s, status } : s)))
+  }, [])
 
   // Start the update flow on mount
   useEffect(() => {
@@ -149,7 +155,10 @@ export function UpdateScreen() {
 
       // Step 2: Prune stale files
       setStep(1, 'active')
-      addLog(`Update needed: ${versionResult.installedVersion} → ${versionResult.remoteVersion}`, 'info')
+      addLog(
+        `Update needed: ${versionResult.installedVersion} → ${versionResult.remoteVersion}`,
+        'info',
+      )
       addLog(`Pruning stale assets... (${versionResult.fileCount} files queued)`, 'info')
       setStep(1, 'done')
 
@@ -525,7 +534,7 @@ function RetryButton({ onClick, label }: { onClick: () => void; label: string })
       className="relative h-[64px] w-[230px] shrink-0 overflow-hidden border border-[#8A571C] bg-[#1a1008] hover:border-[#F5A524] transition-colors"
     >
       <span className="h-full flex items-center justify-center gap-4">
-        <RefreshCwIcon />
+        <RefreshCw size={18} className="text-[#F5A524]" />
         <span className="flex flex-col items-start leading-none">
           <span className="tracking-[0.2em] text-[17px] text-[#F5A524]">{label}</span>
           <span className="tracking-[0.14em] text-[9px] text-[#8E7A5E] mt-1 text-left">
@@ -537,17 +546,6 @@ function RetryButton({ onClick, label }: { onClick: () => void; label: string })
   )
 }
 
-function RefreshCwIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#F5A524]">
-      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-      <path d="M21 3v5h-5" />
-      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-      <path d="M3 21v-5h5" />
-    </svg>
-  )
-}
-
 function ProgressBar({ progress }: { progress: number }) {
   return (
     <div className="relative h-2.5 bg-[#0B0906] border border-[#2A2116] overflow-hidden">
@@ -555,11 +553,13 @@ function ProgressBar({ progress }: { progress: number }) {
         className="h-full bg-gradient-to-r from-[#8A571C] via-[#F5A524] to-[#FFC861] transition-all duration-200"
         style={{ width: `${progress}%`, boxShadow: '0 0 16px rgba(245,165,36,0.55)' }}
       />
-      <div className="absolute inset-0 pointer-events-none flex">
-        {Array.from({ length: 40 }).map((_, i) => (
-          <span key={i} className="flex-1 border-r border-[#070604]/60" />
-        ))}
-      </div>
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          backgroundImage:
+            'repeating-linear-gradient(to right, transparent 0 calc(2.5% - 1px), rgba(7,6,4,0.6) calc(2.5% - 1px) 2.5%)',
+        }}
+      />
     </div>
   )
 }
@@ -623,7 +623,15 @@ const LOG_TONE: Record<'ok' | 'info' | 'dim' | 'warn', string> = {
   warn: 'text-[#c98b8b]',
 }
 
-function LogLine({ ts, tone, msg }: { ts: string; tone: 'ok' | 'info' | 'dim' | 'warn'; msg: string }) {
+function LogLine({
+  ts,
+  tone,
+  msg,
+}: {
+  ts: string
+  tone: 'ok' | 'info' | 'dim' | 'warn'
+  msg: string
+}) {
   return (
     <div className="flex gap-4 min-w-0">
       <span className="text-[#5E5040] shrink-0">[{ts}]</span>

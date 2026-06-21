@@ -9,12 +9,3 @@ export function listenDownloadProgress(
     callback(event.payload)
   })
 }
-
-/** Subscribe to launch status events. */
-export function listenLaunchStatus(
-  callback: (status: string) => void,
-): Promise<UnlistenFn> {
-  return listen<string>('launch://status', (event) => {
-    callback(event.payload)
-  })
-}

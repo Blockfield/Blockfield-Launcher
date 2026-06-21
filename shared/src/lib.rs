@@ -54,9 +54,6 @@ pub struct ModpackManifest {
     /// Sum of all file sizes in bytes
     #[serde(rename = "totalSize")]
     pub total_size: u64,
-    /// ISO 8601 timestamp of the release
-    #[serde(rename = "releaseDate")]
-    pub release_date: String,
     /// Optional: glob-like paths to delete for this version
     pub prune: Option<Vec<String>>,
     /// Required Java runtime info (auto-downloaded if not installed)

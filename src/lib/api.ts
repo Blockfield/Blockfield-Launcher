@@ -1,17 +1,3 @@
-// ── Manifest types (mirrors server manifest + shared crate) ─────────
-
-/** A single file entry in the modpack manifest. */
-export interface ManifestFileEntry {
-  /** Relative path within the game directory, e.g. "mods/battlefield-core.jar" */
-  path: string
-  /** File size in bytes */
-  size: number
-  /** Hex-encoded SHA-256 hash */
-  sha256: string
-  /** Download URL */
-  url: string
-}
-
 /** Required Java runtime info. */
 export interface JavaInfo {
   version: string
@@ -19,17 +5,6 @@ export interface JavaInfo {
   url: string
   sha256: string
   size: number
-}
-
-/** The remote modpack manifest. */
-export interface ModpackManifest {
-  version: string
-  minecraftVersion: string
-  files: ManifestFileEntry[]
-  totalSize: number
-  releaseDate: string
-  prune?: string[]
-  java?: JavaInfo
 }
 
 /** Result of checking for modpack updates. */
@@ -68,8 +43,3 @@ export interface LauncherConfig {
   autoUpdate: boolean
   lang: string
 }
-
-// ── Default constants ────────────────────────────────────────────
-
-export const API_BASE_URL = 'https://play.blockfield.gg/api/launcher/v1'
-export const MANIFEST_URL = `${API_BASE_URL}/manifest.json`

@@ -51,11 +51,6 @@ pub fn save_settings(
     Ok(())
 }
 
-#[tauri::command]
-pub fn get_default_game_dir() -> String {
-    crate::config::LauncherConfig::default().game_dir
-}
-
 // ── Modpack commands ───────────────────────────────────────────
 
 #[tauri::command]
