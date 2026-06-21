@@ -25,6 +25,9 @@ struct AppConfig {
     extracted_dir: PathBuf,
     modpack_version: String,
     minecraft_version: String,
+    bind_host: String,
+    port: u16,
+    api_prefix: String,
     java_version: Option<String>,
     java_platform: Option<String>,
     java_url: Option<String>,
@@ -40,6 +43,14 @@ struct AppConfig {
     modpack_collection: String,
     content_collection: String,
     launcher_update_collection: String,
+    // Fallback JSON values (used when CMS is unavailable)
+    fallback_brand: String,
+    fallback_brand_subtitle: String,
+    fallback_chrome_title: String,
+    fallback_operation_name: String,
+    fallback_server_ip: String,
+    fallback_launcher_version: String,
+    fallback_update_url: String,
 }
 
 impl AppConfig {
@@ -50,6 +61,9 @@ impl AppConfig {
             extracted_dir: env_string("EXTRACTED_DIR", "server/extracted").into(),
             modpack_version: env_string("MODPACK_VERSION", "0.1.43"),
             minecraft_version: env_string("MINECRAFT_VERSION", "1.20.1"),
+            bind_host: env_string("BIND_HOST", "0.0.0.0"),
+            port: env_string("PORT", "3000").parse().unwrap_or(3000),
+            api_prefix: env_string("API_PREFIX", "api/launcher/v1"),
             java_version: env_opt("JAVA_VERSION"),
             java_platform: env_opt("JAVA_PLATFORM"),
             java_url: env_opt("JAVA_URL"),
@@ -67,6 +81,16 @@ impl AppConfig {
             launcher_update_collection: env_string(
                 "DIRECTUS_UPDATE_COLLECTION",
                 "launcher_updates",
+            ),
+            fallback_brand: env_string("FALLBACK_BRAND", "BLOCKFIELD"),
+            fallback_brand_subtitle: env_string("FALLBACK_BRAND_SUBTITLE", "TACTICAL OPS"),
+            fallback_chrome_title: env_string("FALLBACK_CHROME_TITLE", "BLOCKFIELD LAUNCHER"),
+            fallback_operation_name: env_string("FALLBACK_OPERATION_NAME", "IRON FRONT"),
+            fallback_server_ip: env_string("FALLBACK_SERVER_IP", "play.blockfield.gg:25565"),
+            fallback_launcher_version: env_string("FALLBACK_LAUNCHER_VERSION", "0.4.2"),
+            fallback_update_url: env_string(
+                "FALLBACK_UPDATE_URL",
+                "https://play.blockfield.gg/downloads/blockfield-launcher_0.1.0_x64-setup.exe",
             ),
         }
     }
@@ -842,13 +866,13 @@ async fn handle_reload(State(state): State<Arc<AppState>>) -> Response {
 async fn serve_update(State(state): State<Arc<AppState>>) -> Response {
     let value = match fetch_cms_update(&state.config, &state.client).await {
         Ok(Some(value)) => value,
-        Ok(None) => fallback_update_json(),
+        Ok(None) => fallback_update_json(&state.config),
         Err(e) if state.config.directus_required => {
             return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
         }
         Err(e) => {
             eprintln!("Directus update fallback: {e}");
-            fallback_update_json()
+            fallback_update_json(&state.config)
         }
     };
     json_value_response(value)
@@ -875,13 +899,13 @@ async fn fetch_cms_update(config: &AppConfig, client: &Client) -> Result<Option<
 async fn serve_content(State(state): State<Arc<AppState>>) -> Response {
     let value = match fetch_cms_content(&state.config, &state.client).await {
         Ok(Some(value)) => value,
-        Ok(None) => fallback_content_json(),
+        Ok(None) => fallback_content_json(&state.config),
         Err(e) if state.config.directus_required => {
             return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
         }
         Err(e) => {
             eprintln!("Directus content fallback: {e}");
-            fallback_content_json()
+            fallback_content_json(&state.config)
         }
     };
     json_value_response(value)
@@ -935,35 +959,35 @@ async fn health() -> &'static str {
     "ok"
 }
 
-fn fallback_update_json() -> Value {
+fn fallback_update_json(config: &AppConfig) -> Value {
     json!({
         "version": "0.1.0",
         "notes": "No launcher update available.",
         "pub_date": "2026-06-18T00:00:00Z",
         "platforms": {
             "windows-x86_64": {
-                "url": "https://play.blockfield.gg/downloads/blockfield-launcher_0.1.0_x64-setup.exe",
+                "url": config.fallback_update_url,
                 "signature": ""
             }
         }
     })
 }
 
-fn fallback_content_json() -> Value {
+fn fallback_content_json(config: &AppConfig) -> Value {
     json!({
-        "brand": "BLOCKFIELD",
-        "brand_subtitle": "TACTICAL OPS",
-        "chrome_title": "BLOCKFIELD LAUNCHER",
-        "operation_name": "IRON FRONT",
+        "brand": config.fallback_brand,
+        "brand_subtitle": config.fallback_brand_subtitle,
+        "chrome_title": config.fallback_chrome_title,
+        "operation_name": config.fallback_operation_name,
         "season": "/ SEASON 01",
         "description": "Large-scale tactical PvP across contested terrain.",
         "server_name": "BLOCKFIELD - PRIMARY",
-        "server_ip": "play.blockfield.gg:25565",
+        "server_ip": config.fallback_server_ip,
         "server_region": "EU-WEST - 28ms",
         "operators": "142",
         "ping": "28",
         "region": "EU-W",
-        "launcher_version": "0.4.2",
+        "launcher_version": config.fallback_launcher_version,
         "coordinates": "LAT 47.3829 / LON 19.0402",
         "copyright": "2026 BLOCKFIELD COMMAND",
         "login_sector": "SECTOR 07 - NORTH RIDGE",
@@ -1083,6 +1107,7 @@ async fn main() {
         }
     };
 
+    let prefix = config.api_prefix.clone();
     let state = Arc::new(AppState {
         config,
         client,
@@ -1091,18 +1116,18 @@ async fn main() {
 
     let app = Router::new()
         .route("/health", get(health))
-        .route("/api/launcher/v1/manifest.json", get(serve_manifest))
-        .route("/api/launcher/v1/files/{*path}", get(serve_file))
-        .route("/api/launcher/v1/reload", post(handle_reload))
-        .route("/api/launcher/v1/update.json", get(serve_update))
-        .route("/api/launcher/v1/content.json", get(serve_content))
+        .route(&format!("/{prefix}/manifest.json"), get(serve_manifest))
+        .route(&format!("/{prefix}/files/{{*path}}"), get(serve_file))
+        .route(&format!("/{prefix}/reload"), post(handle_reload))
+        .route(&format!("/{prefix}/update.json"), get(serve_update))
+        .route(&format!("/{prefix}/content.json"), get(serve_content))
         .layer(CorsLayer::permissive())
-        .with_state(state);
+        .with_state(state.clone());
 
-    let addr = "0.0.0.0:3000";
+    let addr = format!("{}:{}", state.config.bind_host, state.config.port);
     println!("Listening on {addr}");
 
-    let listener = tokio::net::TcpListener::bind(addr)
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("Failed to bind");
 

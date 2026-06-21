@@ -567,7 +567,12 @@ pub async fn launch_game(
                 .as_ref()
                 .and_then(|id| id.split_once("-forge-").map(|(mc, _)| mc.to_string()))
         })
-        .unwrap_or_else(|| "1.20.1".to_string());
+        .unwrap_or_else(|| {
+            std::env::var("BLOCKFIELD_MINECRAFT_VERSION")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| "1.20.1".to_string())
+        });
 
     log::info!("Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}");
 

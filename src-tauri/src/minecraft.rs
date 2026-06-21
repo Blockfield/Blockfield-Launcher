@@ -4,11 +4,47 @@ use sha2::Digest;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-const VERSION_MANIFEST_URL: &str =
-    "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
-const ASSET_BASE_URL: &str = "https://resources.download.minecraft.net";
-const LAUNCHER_NAME: &str = "BlockfieldLauncher";
-const OFFLINE_USERNAME: &str = "Blockfield";
+// ponytail: lazy-init from env, one fn per const — single-line lookup
+fn version_manifest_url() -> &'static str {
+    // Leak the env string to get a &'static str — the const was &'static anyway
+    Box::leak(
+        std::env::var("BLOCKFIELD_MOJANG_MANIFEST_URL")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json".to_string())
+            .into_boxed_str(),
+    )
+}
+
+fn asset_base_url() -> &'static str {
+    Box::leak(
+        std::env::var("BLOCKFIELD_MOJANG_ASSET_BASE_URL")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| "https://resources.download.minecraft.net".to_string())
+            .into_boxed_str(),
+    )
+}
+
+fn launcher_name() -> &'static str {
+    Box::leak(
+        std::env::var("BLOCKFIELD_LAUNCHER_NAME")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| "BlockfieldLauncher".to_string())
+            .into_boxed_str(),
+    )
+}
+
+fn offline_username() -> &'static str {
+    Box::leak(
+        std::env::var("BLOCKFIELD_OFFLINE_USERNAME")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| "Blockfield".to_string())
+            .into_boxed_str(),
+    )
+}
 
 #[derive(Debug, Clone)]
 struct Artifact {
@@ -204,7 +240,7 @@ async fn ensure_version_json(game_dir: &Path, minecraft_version: &str) -> Result
         return Ok(());
     }
 
-    let manifest = fetch_json(VERSION_MANIFEST_URL).await?;
+    let manifest = fetch_json(version_manifest_url()).await?;
     let url = manifest["versions"]
         .as_array()
         .and_then(|versions| {
@@ -413,7 +449,7 @@ fn collect_asset_artifacts(index_json: &Value) -> Vec<Artifact> {
             let prefix = hash.get(0..2)?;
             Some(Artifact {
                 path: format!("{prefix}/{hash}"),
-                url: format!("{ASSET_BASE_URL}/{prefix}/{hash}"),
+                url: format!("{}/{prefix}/{hash}", asset_base_url()),
                 size: object["size"].as_u64().unwrap_or(0),
             })
         })
@@ -650,7 +686,7 @@ fn launch_vars(
     let username = std::env::var("BLOCKFIELD_PLAYER_NAME")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| OFFLINE_USERNAME.to_string());
+        .unwrap_or_else(|| offline_username().to_string());
 
     HashMap::from([
         ("auth_player_name".to_string(), username.clone()),
@@ -672,7 +708,7 @@ fn launch_vars(
             "classpath_separator".to_string(),
             classpath_separator().to_string(),
         ),
-        ("launcher_name".to_string(), LAUNCHER_NAME.to_string()),
+        ("launcher_name".to_string(), launcher_name().to_string()),
         (
             "launcher_version".to_string(),
             env!("CARGO_PKG_VERSION").to_string(),

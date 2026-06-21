@@ -10,7 +10,7 @@ services:
     environment:
       KEY: ${DIRECTUS_KEY:-replace-with-random-value}
       SECRET: ${DIRECTUS_SECRET:-replace-with-random-value}
-      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@example.com}
+      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@localhost}
       ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-d1r3ctu5}
       ADMIN_TOKEN: ${DIRECTUS_ADMIN_TOKEN:-blockfield-dev-token}
       DB_CLIENT: sqlite3
@@ -31,9 +31,19 @@ services:
       - ./files:/data/files          # Drop new ZIPs here, POST /api/launcher/v1/reload
       - extracted:/data/extracted    # Auto-populated cache from ZIP on startup/reload
     environment:
-      - BASE_URL=https://play.blockfield.gg
-      - MODPACK_VERSION=0.1.43
-      - MINECRAFT_VERSION=1.20.1
+      - BASE_URL=${BASE_URL:-https://play.blockfield.gg}
+      - MODPACK_VERSION=${MODPACK_VERSION:-0.1.43}
+      - MINECRAFT_VERSION=${MINECRAFT_VERSION:-1.20.1}
+      - BIND_HOST=${BIND_HOST:-0.0.0.0}
+      - PORT=${PORT:-3000}
+      - API_PREFIX=${API_PREFIX:-api/launcher/v1}
+      - FALLBACK_BRAND=${FALLBACK_BRAND:-BLOCKFIELD}
+      - FALLBACK_BRAND_SUBTITLE=${FALLBACK_BRAND_SUBTITLE:-TACTICAL OPS}
+      - FALLBACK_CHROME_TITLE=${FALLBACK_CHROME_TITLE:-BLOCKFIELD LAUNCHER}
+      - FALLBACK_OPERATION_NAME=${FALLBACK_OPERATION_NAME:-IRON FRONT}
+      - FALLBACK_SERVER_IP=${FALLBACK_SERVER_IP:-play.blockfield.gg:25565}
+      - FALLBACK_LAUNCHER_VERSION=${FALLBACK_LAUNCHER_VERSION:-0.4.2}
+      - FALLBACK_UPDATE_URL=${FALLBACK_UPDATE_URL:-https://play.blockfield.gg/downloads/blockfield-launcher_0.1.0_x64-setup.exe}
       - DIRECTUS_URL=http://directus:8055
       - DIRECTUS_TOKEN=${DIRECTUS_TOKEN:-blockfield-dev-token}
     restart: unless-stopped

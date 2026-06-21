@@ -1,9 +1,14 @@
 const DIRECTUS_URL = (process.env.DIRECTUS_URL ?? 'http://localhost:8055').replace(/\/$/, '')
 const DIRECTUS_TOKEN = process.env.DIRECTUS_TOKEN ?? 'blockfield-dev-token'
-const DIRECTUS_ADMIN_EMAIL = process.env.DIRECTUS_ADMIN_EMAIL ?? 'admin@example.com'
+const DIRECTUS_ADMIN_EMAIL = process.env.DIRECTUS_ADMIN_EMAIL ?? 'admin@localhost'
 const DIRECTUS_ADMIN_PASSWORD = process.env.DIRECTUS_ADMIN_PASSWORD ?? 'd1r3ctu5'
 let directusToken = DIRECTUS_TOKEN
 let triedAdminLogin = false
+
+function env(key, fallback) {
+  const val = process.env[key]
+  return val != null && val !== '' ? val : fallback
+}
 
 const statusChoices = [
   { text: 'Draft', value: 'draft' },
@@ -240,32 +245,32 @@ async function seedContent() {
     method: 'POST',
     body: JSON.stringify({
       status: 'published',
-      brand: 'BLOCKFIELD',
-      brand_subtitle: 'TACTICAL OPS',
-      chrome_title: 'BLOCKFIELD LAUNCHER',
-      operation_name: 'IRON FRONT',
-      season: '/ SEASON 01',
-      description:
-        'Large-scale tactical PvP across contested terrain. Capture points, coordinate with your squad, and deploy armored vehicles.',
-      server_name: 'BLOCKFIELD - PRIMARY',
-      server_ip: 'play.blockfield.gg:25565',
-      server_region: 'EU-WEST - 28ms',
-      operators: '142',
-      ping: '28',
-      region: 'EU-W',
-      launcher_version: '0.4.2',
-      coordinates: 'LAT 47.3829 / LON 19.0402',
-      copyright: '2026 BLOCKFIELD COMMAND',
-      login_sector: 'SECTOR 07 - NORTH RIDGE',
-      login_slogan: 'DEPLOY. CAPTURE. DOMINATE.',
-      operator_handle: 'KILO_7',
-      operator_initials: 'K7',
-      operator_rank: 'RANK - SERGEANT',
-      support_label: 'SUPPORT',
-      network_status: 'NETWORK NOMINAL',
-      update_description:
-        'Synchronizing modpack assets with the primary deployment server. Do not close the launcher until the operation completes.',
-      settings_preferences: '/ LAUNCHER PREFERENCES',
+      brand: env('SEED_BRAND', 'BLOCKFIELD'),
+      brand_subtitle: env('SEED_BRAND_SUBTITLE', 'TACTICAL OPS'),
+      chrome_title: env('SEED_CHROME_TITLE', 'BLOCKFIELD LAUNCHER'),
+      operation_name: env('SEED_OPERATION_NAME', 'IRON FRONT'),
+      season: env('SEED_SEASON', '/ SEASON 01'),
+      description: env('SEED_DESCRIPTION',
+        'Large-scale tactical PvP across contested terrain. Capture points, coordinate with your squad, and deploy armored vehicles.'),
+      server_name: env('SEED_SERVER_NAME', 'BLOCKFIELD - PRIMARY'),
+      server_ip: env('SEED_SERVER_IP', 'play.blockfield.gg:25565'),
+      server_region: env('SEED_SERVER_REGION', 'EU-WEST - 28ms'),
+      operators: env('SEED_OPERATORS', '142'),
+      ping: env('SEED_PING', '28'),
+      region: env('SEED_REGION', 'EU-W'),
+      launcher_version: env('SEED_LAUNCHER_VERSION', '0.4.2'),
+      coordinates: env('SEED_COORDINATES', 'LAT 47.3829 / LON 19.0402'),
+      copyright: env('SEED_COPYRIGHT', '2026 BLOCKFIELD COMMAND'),
+      login_sector: env('SEED_LOGIN_SECTOR', 'SECTOR 07 - NORTH RIDGE'),
+      login_slogan: env('SEED_LOGIN_SLOGAN', 'DEPLOY. CAPTURE. DOMINATE.'),
+      operator_handle: env('SEED_OPERATOR_HANDLE', 'KILO_7'),
+      operator_initials: env('SEED_OPERATOR_INITIALS', 'K7'),
+      operator_rank: env('SEED_OPERATOR_RANK', 'RANK - SERGEANT'),
+      support_label: env('SEED_SUPPORT_LABEL', 'SUPPORT'),
+      network_status: env('SEED_NETWORK_STATUS', 'NETWORK NOMINAL'),
+      update_description: env('SEED_UPDATE_DESCRIPTION',
+        'Synchronizing modpack assets with the primary deployment server. Do not close the launcher until the operation completes.'),
+      settings_preferences: env('SEED_SETTINGS_PREFERENCES', '/ LAUNCHER PREFERENCES'),
       translations: {
         en: {},
         ru: {},
@@ -314,11 +319,11 @@ async function seedLauncherUpdate() {
     method: 'POST',
     body: JSON.stringify({
       status: 'published',
-      version: '0.1.0',
-      notes: 'No launcher update available.',
-      pub_date: '2026-06-18T00:00:00Z',
-      windows_url: 'https://play.blockfield.gg/downloads/blockfield-launcher_0.1.0_x64-setup.exe',
-      windows_signature: '',
+      version: env('SEED_UPDATE_VERSION', '0.1.0'),
+      notes: env('SEED_UPDATE_NOTES', 'No launcher update available.'),
+      pub_date: env('SEED_UPDATE_PUB_DATE', '2026-06-18T00:00:00Z'),
+      windows_url: env('SEED_UPDATE_WINDOWS_URL', 'https://play.blockfield.gg/downloads/blockfield-launcher_0.1.0_x64-setup.exe'),
+      windows_signature: env('SEED_UPDATE_WINDOWS_SIGNATURE', ''),
     }),
   })
   console.log('seeded launcher_updates')
