@@ -20,7 +20,7 @@ export function StatusDot({
 }) {
   return (
     <span
-      className={`size-1.5 rounded-full ${pulse ? 'animate-pulse' : ''}`}
+      className={`inline-block size-1.5 shrink-0 rounded-full align-middle ${pulse ? 'animate-pulse' : ''}`}
       style={{ background: color, boxShadow: `0 0 6px ${color}b3` }}
     />
   )
@@ -44,7 +44,7 @@ export function OperationBar({
           <span className="shrink-0 text-[10px] tracking-[0.28em] text-[#8E7A5E]">{label}</span>
           <span className="h-px min-w-4 flex-1 bg-[#18130D]" />
           <span
-            className="flex min-w-0 items-center gap-2 text-[10px] tracking-[0.24em]"
+            className="inline-flex min-w-0 shrink-0 items-center gap-2 whitespace-nowrap text-[10px] leading-none tracking-[0.24em]"
             style={{ color: statusColor }}
           >
             <StatusDot color={statusColor} pulse />

@@ -152,6 +152,7 @@ const en = {
   'update.retry': 'RETRY',
   'update.playNow': 'PLAY NOW',
   'update.uptodate': 'UP TO DATE',
+  'update.offline': 'OFFLINE',
   'update.checking': 'CHECKING FOR UPDATES...',
   'update.downloading': 'DOWNLOADING MODPACK',
 
@@ -302,6 +303,7 @@ const ru: Record<TKey, string> = {
   'update.retry': 'ПОВТОРИТЬ',
   'update.playNow': 'ИГРАТЬ',
   'update.uptodate': 'АКТУАЛЬНО',
+  'update.offline': 'ОФЛАЙН',
   'update.checking': 'ПРОВЕРКА ОБНОВЛЕНИЙ...',
   'update.downloading': 'ЗАГРУЗКА МОДПАКА',
 
@@ -449,6 +451,7 @@ const uk: Record<TKey, string> = {
   'update.retry': 'ПОВТОРИТИ',
   'update.playNow': 'ГРАТИ',
   'update.uptodate': 'АКТУАЛЬНО',
+  'update.offline': 'ОФЛАЙН',
   'update.checking': 'ПЕРЕВІРКА ОНОВЛЕНЬ...',
   'update.downloading': 'ЗАВАНТАЖЕННЯ МОДПАКА',
 

@@ -87,6 +87,7 @@ export function UpdateScreen() {
   const [totalBytes, setTotalBytes] = useState(0)
   const [speed, setSpeed] = useState('—')
   const [mirror, setMirror] = useState('—')
+  const [mirrorOnline, setMirrorOnline] = useState<boolean | null>(null)
   const [logLines, setLogLines] = useState<LogEntry[]>([])
   const [error, setError] = useState<string | null>(null)
   const [verifyFailed, setVerifyFailed] = useState<string[]>([])
@@ -204,11 +205,14 @@ export function UpdateScreen() {
       let versionResult: VersionCheckResult
       try {
         versionResult = await invoke<VersionCheckResult>('check_modpack_version')
+        setMirror(formatMirror(versionResult.mirror))
+        setMirrorOnline(true)
         addLog(
           `Manifest fetched: remote=${versionResult.remoteVersion}, installed=${versionResult.installedVersion}`,
           'ok',
         )
       } catch (e) {
+        setMirrorOnline(false)
         addLog(`ERROR: Failed to fetch manifest — ${String(e)}`, 'warn')
         setPhase('error')
         setError(String(e))
@@ -216,7 +220,6 @@ export function UpdateScreen() {
       }
 
       setStep(0, 'done')
-      setMirror(formatMirror(versionResult.mirror))
 
       const needJava = versionResult.java && !versionResult.javaOk
       const needForge = !versionResult.forgeOk
@@ -336,6 +339,7 @@ export function UpdateScreen() {
     setLogLines([])
     setProgress(0)
     setMirror('—')
+    setMirrorOnline(null)
     setPhase('checking')
     resetSpeed()
     setSteps(freshSteps())
@@ -401,6 +405,16 @@ export function UpdateScreen() {
         return t('update.updating')
     }
   }
+  const transferring = phase === 'downloading' || phase === 'launching'
+  const mirrorStatus = transferring
+    ? t('update.throughput')
+    : mirrorOnline === null
+      ? t('main.checking')
+      : mirrorOnline
+        ? t('main.online')
+        : t('update.offline')
+  const mirrorStatusClass =
+    mirrorOnline === false ? 'text-[#c98b8b]' : transferring ? 'text-[#F5A524]' : 'text-[#82D66B]'
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#070604]">
@@ -433,8 +447,8 @@ export function UpdateScreen() {
             <div className="mt-2 tracking-[0.18em] text-[13px] text-neutral-100 truncate">
               {mirror}
             </div>
-            <div className="mt-2 text-[11px] tracking-[0.22em] text-[#82D66B]">
-              ▸ {phase === 'downloading' || phase === 'launching' ? speed : '—'}
+            <div className={`mt-2 text-[11px] tracking-[0.22em] ${mirrorStatusClass}`}>
+              ▸ {mirrorStatus}
             </div>
           </div>
         </div>
@@ -538,8 +552,8 @@ export function UpdateScreen() {
             />
           </div>
 
-          <div className="mt-3 flex items-start justify-between gap-4 text-[10px] tracking-[0.16em]">
-            <div className="flex min-w-0 items-start gap-2">
+          <div className="mt-3 flex items-center justify-between gap-4 text-[10px] tracking-[0.16em]">
+            <div className="flex min-w-0 items-center gap-2">
               <StatusDot
                 color={
                   phase === 'error'
@@ -551,7 +565,7 @@ export function UpdateScreen() {
                 pulse={phase === 'downloading' || phase === 'verifying' || phase === 'launching'}
               />
               <span
-                className={`leading-snug ${
+                className={`leading-none ${
                   phase === 'error'
                     ? 'text-[#c98b8b]'
                     : phase === 'complete' || phase === 'uptodate'
