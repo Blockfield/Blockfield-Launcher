@@ -237,6 +237,172 @@ impl CmsLauncherUpdate {
     }
 }
 
+struct FieldDef {
+    field: &'static str,
+    field_type: &'static str,
+}
+
+const MODPACK_FIELDS: &[FieldDef] = &[
+    FieldDef { field: "version", field_type: "string" },
+    FieldDef { field: "minecraft_version", field_type: "string" },
+    FieldDef { field: "prune", field_type: "json" },
+    FieldDef { field: "java_version", field_type: "string" },
+    FieldDef { field: "java_platform", field_type: "string" },
+    FieldDef { field: "java_url", field_type: "string" },
+    FieldDef { field: "java_sha256", field_type: "string" },
+    FieldDef { field: "java_size", field_type: "integer" },
+    FieldDef { field: "forge_version", field_type: "string" },
+    FieldDef { field: "forge_url", field_type: "string" },
+    FieldDef { field: "forge_sha256", field_type: "string" },
+    FieldDef { field: "forge_size", field_type: "integer" },
+    FieldDef { field: "modpack_zip", field_type: "file" },
+    FieldDef { field: "build_zip", field_type: "file" },
+    FieldDef { field: "build_file", field_type: "file" },
+    FieldDef { field: "zip_file", field_type: "file" },
+    FieldDef { field: "file", field_type: "file" },
+    FieldDef { field: "zip_url", field_type: "string" },
+    FieldDef { field: "build_url", field_type: "string" },
+];
+
+const UPDATE_FIELDS: &[FieldDef] = &[
+    FieldDef { field: "version", field_type: "string" },
+    FieldDef { field: "notes", field_type: "text" },
+    FieldDef { field: "pub_date", field_type: "string" },
+    FieldDef { field: "platforms", field_type: "json" },
+    FieldDef { field: "windows_url", field_type: "string" },
+    FieldDef { field: "windows_signature", field_type: "string" },
+];
+
+// launcher_content: no predefined fields — user adds via admin UI
+
+async fn ensure_directus_collections(config: &AppConfig, client: &Client) {
+    let Some(base) = &config.directus_url else { return };
+    let Some(token) = &config.directus_token else { return };
+
+    // Step 1: list existing collections
+    let existing: Vec<String> = match list_directus_items(client, base, token, "collections").await
+    {
+        Some(items) => items
+            .into_iter()
+            .filter_map(|v| v["collection"].as_str().map(String::from))
+            .collect(),
+        None => return,
+    };
+
+    let needed: &[(&str, &[FieldDef])] = &[
+        (&config.modpack_collection, MODPACK_FIELDS),
+        (&config.content_collection, &[]),
+        (&config.launcher_update_collection, UPDATE_FIELDS),
+    ];
+
+    for (name, field_defs) in needed {
+        // Ensure collection exists
+        if !existing.iter().any(|c| c == name) {
+            let url = format!("{base}/collections");
+            match client
+                .post(&url)
+                .bearer_auth(token)
+                .json(&json!({"collection": name, "schema": {}}))
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => {
+                    println!("Directus: collection '{name}' created");
+                }
+                Ok(r) => {
+                    let status = r.status();
+                    let body = r.text().await.unwrap_or_default();
+                    eprintln!("Directus: cannot create '{name}' ({status}): {body}");
+                    continue; // can't create fields without collection
+                }
+                Err(e) => {
+                    eprintln!("Directus: create collection error for '{name}': {e}");
+                    continue;
+                }
+            }
+        }
+
+        // Ensure fields exist (skip if no fields defined)
+        ensure_fields(config, client, name, field_defs).await;
+    }
+}
+
+async fn list_directus_items(
+    client: &Client,
+    base: &str,
+    token: &str,
+    endpoint: &str,
+) -> Option<Vec<Value>> {
+    let url = format!("{base}/{endpoint}?limit=-1");
+    match client.get(&url).bearer_auth(token).send().await {
+        Ok(resp) if resp.status().is_success() => match resp.json::<DirectusList<Value>>().await {
+            Ok(list) => Some(list.data),
+            Err(e) => {
+                eprintln!("Directus: failed to parse {endpoint} list: {e}");
+                None
+            }
+        },
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            eprintln!("Directus: cannot list {endpoint} ({status}): {body}");
+            None
+        }
+        Err(e) => {
+            eprintln!("Directus: list {endpoint} error: {e}");
+            None
+        }
+    }
+}
+
+async fn ensure_fields(config: &AppConfig, client: &Client, collection: &str, needed: &[FieldDef]) {
+    if needed.is_empty() {
+        return;
+    }
+
+    let Some(base) = &config.directus_url else { return };
+    let Some(token) = &config.directus_token else { return };
+
+    // List existing fields
+    let existing: Vec<String> = match list_directus_items(client, base, token, &format!("fields/{collection}")).await
+    {
+        Some(items) => items
+            .into_iter()
+            .filter_map(|v| v["field"].as_str().map(String::from))
+            .collect(),
+        None => return,
+    };
+
+    for def in needed {
+        if existing.iter().any(|f| f == def.field) {
+            continue; // field already exists — never touch
+        }
+
+        let url = format!("{base}/fields/{collection}");
+        match client
+            .post(&url)
+            .bearer_auth(token)
+            .json(&json!({"field": def.field, "type": def.field_type}))
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => {
+                println!("Directus: field '{collection}.{field}' ({ftype}) created", field = def.field, ftype = def.field_type);
+            }
+            Ok(r) => {
+                let status = r.status();
+                let body = r.text().await.unwrap_or_default();
+                eprintln!("Directus: cannot create field '{collection}.{field}' ({status}): {body}", field = def.field);
+                // ponytail: don't abort on field-level errors, try next field
+            }
+            Err(e) => eprintln!(
+                "Directus: create field error for '{collection}.{field}': {e}",
+                field = def.field
+            ),
+        }
+    }
+}
+
 async fn regenerate_from(config: &AppConfig, client: &Client) -> Result<CachedManifest, String> {
     let release = fetch_release(config, client).await?;
     prepare_payload(config, client, &release).await?;
@@ -271,8 +437,9 @@ async fn fetch_cms_release(
         return Ok(None);
     }
 
+    // ponytail: fields=* only — explicit field refs would error if not yet created
     let query = format!(
-        "items/{}?filter[status][_eq]=published&sort=-id&limit=1&fields=*,modpack_zip.id,build_zip.id,build_file.id,zip_file.id,file.id",
+        "items/{}?sort=-id&limit=1&fields=*",
         config.modpack_collection
     );
     let response: DirectusList<CmsRelease> = directus_get_json(config, client, &query).await?;
@@ -693,7 +860,7 @@ async fn fetch_cms_update(config: &AppConfig, client: &Client) -> Result<Option<
     }
 
     let query = format!(
-        "items/{}?filter[status][_eq]=published&sort=-id&limit=1&fields=*",
+        "items/{}?sort=-id&limit=1&fields=*",
         config.launcher_update_collection
     );
     let response: DirectusList<CmsLauncherUpdate> =
@@ -726,7 +893,7 @@ async fn fetch_cms_content(config: &AppConfig, client: &Client) -> Result<Option
     }
 
     let query = format!(
-        "items/{}?filter[status][_eq]=published&sort=-id&limit=1&fields=*",
+        "items/{}?sort=-id&limit=1&fields=*",
         config.content_collection
     );
     let response: DirectusList<Value> = directus_get_json(config, client, &query).await?;
@@ -898,6 +1065,8 @@ async fn main() {
         "  Directus:    {}",
         config.directus_url.as_deref().unwrap_or("disabled")
     );
+
+    ensure_directus_collections(&config, &client).await;
 
     let manifest = match regenerate_from(&config, &client).await {
         Ok(manifest) => {
