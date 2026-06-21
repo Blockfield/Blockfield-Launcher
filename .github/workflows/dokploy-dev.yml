@@ -14,12 +14,12 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/netherguy4/blockfield-launcher-backend
+  IMAGE_NAME: ghcr.io/netherg-io/blockfield-launcher-backend
 
 jobs:
   build-push-deploy:
     name: Build, push, deploy
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     environment: dev
 
     steps:
