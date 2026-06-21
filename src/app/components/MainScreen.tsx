@@ -17,24 +17,32 @@ import { invoke } from '@tauri-apps/api/core'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
-import { useI18n, type TKey, type TFunction } from '../i18n'
+import { useI18n, type TKey } from '../i18n'
 import { MODPACK_VERSION, OPERATION_NAME, SERVER_IP } from '../constants'
 import { listenDownloadProgress, listenLauncherStatus } from '../../lib/events'
 import type { DownloadProgress, VersionCheckResult } from '../../lib/api'
+import { contentText, useLauncherContent } from '../../lib/content'
 
 type Tone = 'ok' | 'muted' | 'warn'
 
-type Feature = { icon: ReactNode; title: TKey; desc: TKey }
+type FallbackFeature = { icon: ReactNode; title: TKey; desc: TKey }
 
-const FEATURES: Feature[] = [
+const FEATURES: FallbackFeature[] = [
   { icon: <Flag size={14} />, title: 'main.feat.capture', desc: 'main.feat.captureDesc' },
   { icon: <Swords size={14} />, title: 'main.feat.classes', desc: 'main.feat.classesDesc' },
   { icon: <Truck size={14} />, title: 'main.feat.vehicles', desc: 'main.feat.vehiclesDesc' },
   { icon: <Crosshair size={14} />, title: 'main.feat.battles', desc: 'main.feat.battlesDesc' },
 ]
 
+const FEATURE_ICONS: Record<string, ReactNode> = {
+  flag: <Flag size={14} />,
+  swords: <Swords size={14} />,
+  truck: <Truck size={14} />,
+  crosshair: <Crosshair size={14} />,
+}
+
 type FeedTone = 'amber' | 'green' | 'sand'
-type FeedEntry = {
+type FallbackFeedEntry = {
   tagKey: TKey
   tone: FeedTone
   date: string
@@ -42,8 +50,9 @@ type FeedEntry = {
   bodyKey: TKey
   vars?: Record<string, string>
 }
+type FeedEntry = { tag: string; tone: FeedTone; date: string; title: string; body: string }
 
-const FEED: FeedEntry[] = [
+const FEED: FallbackFeedEntry[] = [
   {
     tagKey: 'main.tag.patch',
     tone: 'amber',
@@ -73,6 +82,7 @@ const isTauri = () => '__TAURI_INTERNALS__' in window
 
 export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const { t } = useI18n()
+  const content = useLauncherContent()
   const [versionInfo, setVersionInfo] = useState<VersionCheckResult | null>(null)
   const [checking, setChecking] = useState(true)
   const [checkError, setCheckError] = useState<string | null>(null)
@@ -182,6 +192,58 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
         : needsSetup
           ? { value: t('main.updateAvailable'), tone: 'warn' }
           : { value: t('main.upToDate'), tone: 'muted' }
+  const operationName = contentText(content, 'operationName', 'operation_name') ?? OPERATION_NAME
+  const season = contentText(content, 'season') ?? t('main.season')
+  const description = contentText(content, 'description') ?? t('main.description')
+  const serverName = contentText(content, 'serverName', 'server_name') ?? t('main.serverName')
+  const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
+  const operators = contentText(content, 'operators') ?? '142'
+  const ping = contentText(content, 'ping') ?? '28'
+  const region = contentText(content, 'region') ?? 'EU-W'
+  const features =
+    content?.features?.flatMap((feature) =>
+      feature.title && feature.desc
+        ? [
+            {
+              icon: featureIcon(feature.icon),
+              title: feature.title,
+              desc: feature.desc,
+            },
+          ]
+        : [],
+    ) ?? []
+  const displayFeatures =
+    features.length > 0
+      ? features
+      : FEATURES.map((feature) => ({
+          icon: feature.icon,
+          title: t(feature.title),
+          desc: t(feature.desc),
+        }))
+  const feed =
+    content?.feed?.flatMap((entry) =>
+      entry.title && entry.body
+        ? [
+            {
+              tag: entry.tag ?? '',
+              tone: feedTone(entry.tone),
+              date: entry.date ?? '',
+              title: entry.title,
+              body: entry.body,
+            },
+          ]
+        : [],
+    ) ?? []
+  const displayFeed =
+    feed.length > 0
+      ? feed
+      : FEED.map((entry) => ({
+          tag: t(entry.tagKey),
+          tone: entry.tone,
+          date: entry.date,
+          title: t(entry.titleKey, entry.vars),
+          body: t(entry.bodyKey),
+        }))
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#070604]">
@@ -196,18 +258,14 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
             <div className="max-w-[560px]">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
                 <h1 className="tracking-[0.06em] text-[26px] leading-none text-neutral-50">
-                  {OPERATION_NAME}
+                  {operationName}
                 </h1>
-                <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">
-                  {t('main.season')}
-                </span>
+                <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">{season}</span>
               </div>
-              <p className="text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">
-                {t('main.description')}
-              </p>
+              <p className="text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">{description}</p>
             </div>
 
-            <ServerStatus />
+            <ServerStatus serverName={serverName} serverIp={serverIp} />
           </div>
 
           {/* PLAY zone */}
@@ -236,13 +294,23 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                 <Metric
                   icon={<Users size={14} />}
                   label={t('main.operators')}
-                  value="142"
+                  value={operators}
                   sub="/ 200"
                 />
                 <span className="h-10 w-px bg-[#18130D]" />
-                <Metric icon={<Activity size={14} />} label={t('main.ping')} value="28" sub="MS" />
+                <Metric
+                  icon={<Activity size={14} />}
+                  label={t('main.ping')}
+                  value={ping}
+                  sub="MS"
+                />
                 <span className="h-10 w-px bg-[#18130D]" />
-                <Metric icon={<Wifi size={14} />} label={t('main.region')} value="EU-W" sub="FRA" />
+                <Metric
+                  icon={<Wifi size={14} />}
+                  label={t('main.region')}
+                  value={region}
+                  sub="FRA"
+                />
               </div>
             </div>
           </GlowPanel>
@@ -252,8 +320,8 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
             <div className="bg-[#0B0906] p-4 min-h-0">
               <SectionHeader label={t('main.briefing')} code="BRF-001" />
               <div className="grid grid-cols-2 gap-x-5 gap-y-3 mt-3">
-                {FEATURES.map((f) => (
-                  <FeatureItem key={f.title} icon={f.icon} title={t(f.title)} desc={t(f.desc)} />
+                {displayFeatures.map((f) => (
+                  <FeatureItem key={f.title} icon={f.icon} title={f.title} desc={f.desc} />
                 ))}
               </div>
             </div>
@@ -296,8 +364,8 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           <SectionHeader label={t('main.fieldReport')} code="OPS-LOG" />
 
           <div className="mt-3 flex-1 min-h-0 flex flex-col gap-px bg-[#18130D] border border-[#2A2116] overflow-hidden">
-            {FEED.map((entry) => (
-              <FeedItem key={entry.titleKey} entry={entry} t={t} />
+            {displayFeed.map((entry) => (
+              <FeedItem key={`${entry.date}:${entry.title}`} entry={entry} />
             ))}
           </div>
 
@@ -373,7 +441,7 @@ function DeployButton({
   )
 }
 
-function ServerStatus() {
+function ServerStatus({ serverName, serverIp }: { serverName: string; serverIp: string }) {
   const { t } = useI18n()
   return (
     <div className="shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-[240px]">
@@ -386,11 +454,9 @@ function ServerStatus() {
       </div>
       <div className="mt-2 flex items-center gap-2">
         <ShieldCheck size={14} className="text-[#F5A524]" />
-        <span className="tracking-[0.18em] text-[13px] text-neutral-100">
-          {t('main.serverName')}
-        </span>
+        <span className="tracking-[0.18em] text-[13px] text-neutral-100">{serverName}</span>
       </div>
-      <div className="mt-2 text-[10px] tracking-[0.22em] text-[#8E7A5E]">{SERVER_IP}</div>
+      <div className="mt-2 text-[10px] tracking-[0.22em] text-[#8E7A5E]">{serverIp}</div>
     </div>
   )
 }
@@ -467,21 +533,27 @@ const FEED_TAG_CLASS: Record<FeedTone, string> = {
   sand: 'text-[#C7AE86] border-[#3A2C1D]',
 }
 
-function FeedItem({ entry, t }: { entry: FeedEntry; t: TFunction }) {
+function FeedItem({ entry }: { entry: FeedEntry }) {
   return (
     <div className="bg-[#0B0906] p-4 flex flex-col gap-2 hover:bg-[#11100D] transition-colors cursor-pointer">
       <div className="flex items-start justify-between gap-2">
         <span
           className={`shrink-0 text-[9px] tracking-[0.16em] border px-1.5 py-0.5 ${FEED_TAG_CLASS[entry.tone]}`}
         >
-          {t(entry.tagKey)}
+          {entry.tag}
         </span>
         <span className="text-[10px] tracking-[0.24em] text-[#5E5040]">{entry.date}</span>
       </div>
-      <span className="text-[12px] tracking-[0.04em] text-neutral-100">
-        {t(entry.titleKey, entry.vars)}
-      </span>
-      <span className="text-[11px] leading-snug text-[#8E7A5E]">{t(entry.bodyKey)}</span>
+      <span className="text-[12px] tracking-[0.04em] text-neutral-100">{entry.title}</span>
+      <span className="text-[11px] leading-snug text-[#8E7A5E]">{entry.body}</span>
     </div>
   )
+}
+
+function featureIcon(icon?: string) {
+  return (icon && FEATURE_ICONS[icon]) || <Flag size={14} />
+}
+
+function feedTone(tone?: string): FeedTone {
+  return tone === 'green' || tone === 'sand' ? tone : 'amber'
 }

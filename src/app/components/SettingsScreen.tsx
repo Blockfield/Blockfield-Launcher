@@ -1,18 +1,31 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Folder, Cpu, Coffee, Globe, RefreshCw, LogOut, Save, Minus, Plus, LoaderCircle } from 'lucide-react'
+import {
+  Folder,
+  Cpu,
+  Coffee,
+  Globe,
+  RefreshCw,
+  LogOut,
+  Save,
+  Minus,
+  Plus,
+  LoaderCircle,
+} from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { GlowPanel } from './ui-bits'
 import { LANGUAGES, useI18n, type Lang } from '../i18n'
 import { OPERATOR_HANDLE } from '../constants'
 import type { LauncherConfig } from '../../lib/api'
+import { contentText, useLauncherContent } from '../../lib/content'
 
 /** Detect whether we're running inside Tauri. */
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
 export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
   const { lang, setLang, t } = useI18n()
+  const content = useLauncherContent()
   const [dir, setDir] = useState('')
   const [java, setJava] = useState('')
   const [ram, setRam] = useState(8)
@@ -21,6 +34,10 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
+  const operatorHandle =
+    contentText(content, 'operatorHandle', 'operator_handle') ?? OPERATOR_HANDLE
+  const preferences =
+    contentText(content, 'settingsPreferences', 'settings_preferences') ?? t('settings.preferences')
 
   // Load settings on mount
   useEffect(() => {
@@ -124,7 +141,7 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
           </span>
           <span className="h-px flex-1 bg-[#18130D]" />
           <span className="shrink-0 text-[10px] tracking-[0.22em] text-[#8E7A5E]">
-            {t('settings.operator', { handle: OPERATOR_HANDLE })}
+            {t('settings.operator', { handle: operatorHandle })}
           </span>
         </div>
 
@@ -132,9 +149,7 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
           <h1 className="tracking-[0.06em] text-[34px] leading-none text-neutral-50">
             {t('nav.settings')}
           </h1>
-          <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">
-            {t('settings.preferences')}
-          </span>
+          <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">{preferences}</span>
         </div>
 
         <GlowPanel glow={false} className="mt-5">
@@ -250,9 +265,7 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
                 {saveMessage && (
                   <span
                     className={`text-[9px] tracking-[0.16em] ${
-                      saveMessage === t('settings.saved')
-                        ? 'text-[#8E7A5E]'
-                        : 'text-[#c98b8b]'
+                      saveMessage === t('settings.saved') ? 'text-[#8E7A5E]' : 'text-[#c98b8b]'
                     }`}
                   >
                     {saveMessage}

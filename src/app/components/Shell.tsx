@@ -3,7 +3,14 @@ import { Settings, LogOut, Gamepad2, Download, LifeBuoy } from 'lucide-react'
 import { useI18n, type TKey } from '../i18n'
 import { Logo } from './Logo'
 import { StatusDot } from './ui-bits'
-import { LAUNCHER_VERSION, OPERATOR_HANDLE, OPERATOR_INITIALS, SERVER_IP } from '../constants'
+import {
+  BRAND,
+  LAUNCHER_VERSION,
+  OPERATOR_HANDLE,
+  OPERATOR_INITIALS,
+  SERVER_IP,
+} from '../constants'
+import { contentText, useLauncherContent } from '../../lib/content'
 
 type Screen = 'main' | 'update' | 'settings'
 
@@ -25,11 +32,26 @@ export function Shell({
   children: ReactNode
 }) {
   const { t } = useI18n()
+  const content = useLauncherContent()
+  const launcherVersion =
+    contentText(content, 'launcherVersion', 'launcher_version') ?? LAUNCHER_VERSION
+  const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
+  const operatorHandle =
+    contentText(content, 'operatorHandle', 'operator_handle') ?? OPERATOR_HANDLE
+  const operatorInitials =
+    contentText(content, 'operatorInitials', 'operator_initials') ?? OPERATOR_INITIALS
+  const operatorRank = contentText(content, 'operatorRank', 'operator_rank') ?? t('shell.rank')
+  const supportLabel = contentText(content, 'supportLabel', 'support_label') ?? t('shell.support')
+  const networkStatus =
+    contentText(content, 'networkStatus', 'network_status') ?? t('shell.network')
+  const brand = contentText(content, 'brand') ?? BRAND
+  const brandSubtitle = contentText(content, 'brandSubtitle', 'brand_subtitle') ?? 'TACTICAL OPS'
+
   return (
     <div className="relative h-full w-full bg-[#070604] flex flex-col">
       <header className="h-14 shrink-0 border-b border-[#18130D] bg-[#0B0906] flex items-center justify-between gap-4 px-5">
         <div className="flex min-w-0 items-center gap-6">
-          <Logo size={26} withWordmark />
+          <Logo size={26} withWordmark wordmark={brand} subtitle={brandSubtitle} />
           <nav className="flex items-center gap-1">
             {NAV_ITEMS.map((item) => (
               <NavItem
@@ -47,16 +69,14 @@ export function Shell({
           <div className="flex items-center gap-3 px-3 h-9 border border-[#2A2116] bg-[#11100D]">
             <div className="relative">
               <div className="size-6 bg-gradient-to-br from-[#8A571C] to-[#2A2116] grid place-items-center text-[10px] text-[#F3E7D0] tracking-widest">
-                {OPERATOR_INITIALS}
+                {operatorInitials}
               </div>
               <span className="absolute -bottom-0.5 -right-0.5 size-1.5 rounded-full bg-[#82D66B] ring-2 ring-[#11100D]" />
             </div>
             <div className="flex flex-col leading-none">
-              <span className="text-[11px] tracking-widest text-neutral-100">
-                {OPERATOR_HANDLE}
-              </span>
+              <span className="text-[11px] tracking-widest text-neutral-100">{operatorHandle}</span>
               <span className="text-[9px] tracking-[0.12em] text-[#8E7A5E] mt-0.5">
-                {t('shell.rank')}
+                {operatorRank}
               </span>
             </div>
           </div>
@@ -74,18 +94,18 @@ export function Shell({
 
       <footer className="h-8 shrink-0 border-t border-[#18130D] bg-[#0B0906] flex items-center justify-between gap-4 px-5 text-[10px] tracking-[0.16em] text-[#5E5040]">
         <div className="flex shrink-0 items-center gap-3">
-          <span>{t('shell.launcherVersion', { v: LAUNCHER_VERSION })}</span>
+          <span>{t('shell.launcherVersion', { v: launcherVersion })}</span>
           <span className="h-3 w-px bg-[#18130D]" />
-          <span>{t('shell.ip', { ip: SERVER_IP })}</span>
+          <span>{t('shell.ip', { ip: serverIp })}</span>
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <a className="flex items-center gap-1.5 hover:text-[#F5A524] cursor-pointer">
-            <LifeBuoy size={11} /> {t('shell.support')}
+            <LifeBuoy size={11} /> {supportLabel}
           </a>
           <span className="h-3 w-px bg-[#18130D]" />
           <span className="flex items-center gap-1.5">
             <StatusDot />
-            {t('shell.network')}
+            {networkStatus}
           </span>
         </div>
       </footer>

@@ -1,7 +1,29 @@
 services:
+  directus:
+    image: ${DIRECTUS_IMAGE:-directus/directus:latest}
+    ports:
+      - "8055:8055"
+    volumes:
+      - ./directus/database:/directus/database
+      - ./directus/uploads:/directus/uploads
+      - ./directus/extensions:/directus/extensions
+    environment:
+      KEY: ${DIRECTUS_KEY:-replace-with-random-value}
+      SECRET: ${DIRECTUS_SECRET:-replace-with-random-value}
+      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-d1r3ctu5}
+      ADMIN_TOKEN: ${DIRECTUS_ADMIN_TOKEN:-blockfield-dev-token}
+      DB_CLIENT: sqlite3
+      DB_FILENAME: /directus/database/data.db
+      PUBLIC_URL: ${DIRECTUS_PUBLIC_URL:-http://localhost:8055}
+      WEBSOCKETS_ENABLED: "true"
+    restart: unless-stopped
+
   blockfield-api:
     build: ..
     dockerfile: server/Dockerfile
+    depends_on:
+      - directus
     ports:
       - "3000:3000"
     volumes:
@@ -11,4 +33,6 @@ services:
       - BASE_URL=https://play.blockfield.gg
       - MODPACK_VERSION=0.1.43
       - MINECRAFT_VERSION=1.20.1
+      - DIRECTUS_URL=http://directus:8055
+      - DIRECTUS_TOKEN=${DIRECTUS_TOKEN:-blockfield-dev-token}
     restart: unless-stopped

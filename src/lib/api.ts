@@ -41,6 +41,67 @@ export interface LauncherStatus {
   cancelable: boolean
 }
 
+export interface LauncherContentFeature {
+  icon?: string
+  title?: string
+  desc?: string
+}
+
+export interface LauncherContentFeedEntry {
+  tag?: string
+  tone?: string
+  date?: string
+  title?: string
+  body?: string
+}
+
+export interface LauncherContent {
+  [key: string]: unknown
+  brand?: string
+  brandSubtitle?: string
+  brand_subtitle?: string
+  chromeTitle?: string
+  chrome_title?: string
+  operationName?: string
+  operation_name?: string
+  season?: string
+  description?: string
+  serverName?: string
+  server_name?: string
+  serverIp?: string
+  server_ip?: string
+  operators?: string
+  ping?: string
+  region?: string
+  launcherVersion?: string
+  launcher_version?: string
+  serverRegion?: string
+  server_region?: string
+  coordinates?: string
+  copyright?: string
+  loginSector?: string
+  login_sector?: string
+  loginSlogan?: string
+  login_slogan?: string
+  operatorHandle?: string
+  operator_handle?: string
+  operatorInitials?: string
+  operator_initials?: string
+  operatorRank?: string
+  operator_rank?: string
+  supportLabel?: string
+  support_label?: string
+  networkStatus?: string
+  network_status?: string
+  updateDescription?: string
+  update_description?: string
+  settingsPreferences?: string
+  settings_preferences?: string
+  translations?: Record<string, Record<string, string>>
+  features?: LauncherContentFeature[]
+  feed?: LauncherContentFeedEntry[]
+}
+
 // ── Launcher config ──────────────────────────────────────────────
 
 /** Launcher configuration persisted to disk. */

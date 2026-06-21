@@ -1,11 +1,14 @@
 import { Minus, Square, X } from 'lucide-react'
 import { useState, useEffect, type ReactNode } from 'react'
 import type { Window as TauriWindow } from '@tauri-apps/api/window'
+import { contentText, useLauncherContent } from '../../lib/content'
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 export function WindowChrome({ children }: { children: ReactNode }) {
+  const content = useLauncherContent()
   const [appWindow, setAppWindow] = useState<TauriWindow | null>(null)
+  const title = contentText(content, 'chromeTitle', 'chrome_title') ?? 'BLOCKFIELD LAUNCHER'
 
   useEffect(() => {
     if (isTauri) {
@@ -14,6 +17,10 @@ export function WindowChrome({ children }: { children: ReactNode }) {
       })
     }
   }, [])
+
+  useEffect(() => {
+    document.title = title
+  }, [title])
 
   const handleMinimize = async () => {
     if (appWindow) await appWindow.minimize()
@@ -44,7 +51,7 @@ export function WindowChrome({ children }: { children: ReactNode }) {
             className="flex items-center gap-2 text-[10px] tracking-[0.3em] text-[#8E7A5E]"
           >
             <span className="size-1.5 rounded-full bg-[#F5A524]" />
-            BLOCKFIELD LAUNCHER
+            {title}
           </div>
           <div className="flex items-center gap-1 text-[#8E7A5E] z-50">
             <button
@@ -83,7 +90,7 @@ export function WindowChrome({ children }: { children: ReactNode }) {
         <div className="h-9 flex items-center justify-between border-b border-[#18130D] bg-[#0B0906] px-3 select-none">
           <div className="flex items-center gap-2 text-[10px] tracking-[0.3em] text-[#8E7A5E]">
             <span className="size-1.5 rounded-full bg-[#F5A524]" />
-            BLOCKFIELD LAUNCHER
+            {title}
           </div>
           <div className="flex items-center gap-1 text-[#8E7A5E]">
             <button className="h-6 w-8 grid place-items-center hover:bg-[#18130D] rounded-sm transition-colors">

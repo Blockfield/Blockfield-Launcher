@@ -1,189 +1,476 @@
 use axum::{
-    extract::State,
+    extract::{Path as AxumPath, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
-use blockfield_shared::{ManifestFileEntry, ModpackManifest};
+use blockfield_shared::{ForgeInfo, JavaInfo, ManifestFileEntry, ModpackManifest};
+use futures_util::StreamExt;
+use reqwest::Client;
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
+use serde_json::{json, Value};
 use sha2::Digest;
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::{
+    path::{Component, Path, PathBuf},
+    sync::Arc,
+};
+use tokio::{io::AsyncWriteExt, sync::RwLock};
 use tower_http::cors::CorsLayer;
 
-// ── Config ──────────────────────────────────────────────────────
-
 struct AppConfig {
-    /// Base URL for constructing download URLs, e.g. "https://play.blockfield.gg"
     base_url: String,
-    /// Path to the directory containing input ZIPs
     files_dir: PathBuf,
-    /// Path to the directory where files are extracted and served from
     extracted_dir: PathBuf,
-    /// Modpack version override (reads from env or defaults)
     modpack_version: String,
-    /// Minecraft version override
     minecraft_version: String,
-    /// Java version required by the modpack
     java_version: Option<String>,
-    /// Java platform (e.g. "windows-x86_64")
     java_platform: Option<String>,
-    /// URL to download the Java archive
     java_url: Option<String>,
-    /// SHA-256 of the Java archive
     java_sha256: Option<String>,
-    /// Size of the Java archive in bytes
     java_size: Option<u64>,
-    /// Forge installer URL
     forge_url: Option<String>,
-    /// Forge version
     forge_version: Option<String>,
-    /// Forge installer SHA-256
     forge_sha256: Option<String>,
-    /// Forge installer size in bytes
     forge_size: Option<u64>,
+    directus_url: Option<String>,
+    directus_token: Option<String>,
+    directus_required: bool,
+    modpack_collection: String,
+    content_collection: String,
+    launcher_update_collection: String,
 }
 
 impl AppConfig {
     fn from_env() -> Self {
         Self {
-            base_url: std::env::var("BASE_URL")
-                .unwrap_or_else(|_| "http://localhost:3000".into()),
-            files_dir: std::env::var("FILES_DIR")
-                .unwrap_or_else(|_| "server/files".into())
-                .into(),
-            extracted_dir: std::env::var("EXTRACTED_DIR")
-                .unwrap_or_else(|_| "server/extracted".into())
-                .into(),
-            modpack_version: std::env::var("MODPACK_VERSION")
-                .unwrap_or_else(|_| "0.1.43".into()),
-            minecraft_version: std::env::var("MINECRAFT_VERSION")
-                .unwrap_or_else(|_| "1.20.1".into()),
-            java_version: std::env::var("JAVA_VERSION").ok(),
-            java_platform: std::env::var("JAVA_PLATFORM").ok(),
-            java_url: std::env::var("JAVA_URL").ok(),
-            java_sha256: std::env::var("JAVA_SHA256").ok(),
-            java_size: std::env::var("JAVA_SIZE")
-                .ok()
-                .and_then(|s| s.parse().ok()),
-            forge_url: std::env::var("FORGE_URL").ok(),
-            forge_version: std::env::var("FORGE_VERSION").ok(),
-            forge_sha256: std::env::var("FORGE_SHA256").ok(),
-            forge_size: std::env::var("FORGE_SIZE")
-                .ok()
-                .and_then(|s| s.parse().ok()),
+            base_url: env_string("BASE_URL", "http://localhost:3000"),
+            files_dir: env_string("FILES_DIR", "server/files").into(),
+            extracted_dir: env_string("EXTRACTED_DIR", "server/extracted").into(),
+            modpack_version: env_string("MODPACK_VERSION", "0.1.43"),
+            minecraft_version: env_string("MINECRAFT_VERSION", "1.20.1"),
+            java_version: env_opt("JAVA_VERSION"),
+            java_platform: env_opt("JAVA_PLATFORM"),
+            java_url: env_opt("JAVA_URL"),
+            java_sha256: env_opt("JAVA_SHA256"),
+            java_size: env_u64("JAVA_SIZE"),
+            forge_url: env_opt("FORGE_URL"),
+            forge_version: env_opt("FORGE_VERSION"),
+            forge_sha256: env_opt("FORGE_SHA256"),
+            forge_size: env_u64("FORGE_SIZE"),
+            directus_url: env_opt("DIRECTUS_URL").map(|url| url.trim_end_matches('/').to_string()),
+            directus_token: env_opt("DIRECTUS_TOKEN"),
+            directus_required: env_string("DIRECTUS_REQUIRED", "false") == "true",
+            modpack_collection: env_string("DIRECTUS_MODPACK_COLLECTION", "modpack_releases"),
+            content_collection: env_string("DIRECTUS_CONTENT_COLLECTION", "launcher_content"),
+            launcher_update_collection: env_string(
+                "DIRECTUS_UPDATE_COLLECTION",
+                "launcher_updates",
+            ),
         }
     }
 }
-
-// ── Server state ────────────────────────────────────────────────
 
 struct AppState {
     config: AppConfig,
-    /// Cached manifest, regenerated on reload or ZIP change
+    client: Client,
     manifest: RwLock<Option<ModpackManifest>>,
 }
 
-// ── Manifest generation ─────────────────────────────────────────
+#[derive(Clone)]
+struct ReleaseMetadata {
+    version: String,
+    minecraft_version: String,
+    prune: Option<Vec<String>>,
+    java: Option<JavaInfo>,
+    forge: Option<ForgeInfo>,
+    source: Option<ReleaseSource>,
+}
 
-/// Extract the first ZIP found in `files_dir` to `extracted_dir`.
-/// Returns the list of extracted file paths (relative to extracted_dir).
-fn extract_zips(files_dir: &PathBuf, extracted_dir: &PathBuf) -> Result<Vec<PathBuf>, String> {
-    // Clear previous extraction
-    if extracted_dir.exists() {
-        std::fs::remove_dir_all(extracted_dir)
-            .map_err(|e| format!("Failed to clear extracted dir: {e}"))?;
+#[derive(Clone)]
+enum ReleaseSource {
+    DirectusAsset(String),
+    Url(String),
+}
+
+#[derive(Deserialize)]
+struct DirectusList<T> {
+    data: Vec<T>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(untagged)]
+enum DirectusFileField {
+    Id(String),
+    Object { id: String },
+}
+
+impl DirectusFileField {
+    fn id(&self) -> &str {
+        match self {
+            Self::Id(id) => id,
+            Self::Object { id } => id,
+        }
     }
-    std::fs::create_dir_all(extracted_dir)
-        .map_err(|e| format!("Failed to create extracted dir: {e}"))?;
+}
 
-    let mut extracted = Vec::new();
+#[derive(Deserialize)]
+struct CmsRelease {
+    version: Option<String>,
+    #[serde(alias = "minecraftVersion")]
+    minecraft_version: Option<String>,
+    prune: Option<Value>,
+    java: Option<JavaInfo>,
+    forge: Option<ForgeInfo>,
+    #[serde(alias = "javaVersion")]
+    java_version: Option<String>,
+    #[serde(alias = "javaPlatform")]
+    java_platform: Option<String>,
+    #[serde(alias = "javaUrl")]
+    java_url: Option<String>,
+    #[serde(alias = "javaSha256")]
+    java_sha256: Option<String>,
+    #[serde(alias = "javaSize")]
+    java_size: Option<u64>,
+    #[serde(alias = "forgeVersion")]
+    forge_version: Option<String>,
+    #[serde(alias = "forgeUrl")]
+    forge_url: Option<String>,
+    #[serde(alias = "forgeSha256")]
+    forge_sha256: Option<String>,
+    #[serde(alias = "forgeSize")]
+    forge_size: Option<u64>,
+    modpack_zip: Option<DirectusFileField>,
+    build_zip: Option<DirectusFileField>,
+    build_file: Option<DirectusFileField>,
+    zip_file: Option<DirectusFileField>,
+    file: Option<DirectusFileField>,
+    zip_url: Option<String>,
+    build_url: Option<String>,
+}
 
-    // Find and extract all ZIPs in the files directory
-    let entries = std::fs::read_dir(files_dir)
-        .map_err(|e| format!("Failed to read files dir: {e}"))?;
+impl CmsRelease {
+    fn into_metadata(self, config: &AppConfig) -> ReleaseMetadata {
+        let java = self.java.or_else(|| {
+            Some(JavaInfo {
+                version: self.java_version?,
+                platform: self.java_platform?,
+                url: self.java_url?,
+                sha256: self.java_sha256?,
+                size: self.java_size?,
+            })
+        });
+        let forge = self.forge.or_else(|| {
+            Some(ForgeInfo {
+                version: self.forge_version?,
+                url: self.forge_url?,
+                sha256: self.forge_sha256?,
+                size: self.forge_size?,
+            })
+        });
+        let file = self
+            .modpack_zip
+            .or(self.build_zip)
+            .or(self.build_file)
+            .or(self.zip_file)
+            .or(self.file);
+        let source = file
+            .map(|file| ReleaseSource::DirectusAsset(file.id().to_string()))
+            .or_else(|| self.zip_url.or(self.build_url).map(ReleaseSource::Url));
 
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("Read dir entry error: {e}"))?;
-        let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "zip") {
+        ReleaseMetadata {
+            version: self
+                .version
+                .unwrap_or_else(|| config.modpack_version.clone()),
+            minecraft_version: self
+                .minecraft_version
+                .unwrap_or_else(|| config.minecraft_version.clone()),
+            prune: parse_prune(self.prune),
+            java: java.or_else(|| java_from_env(config)),
+            forge: forge.or_else(|| forge_from_env(config)),
+            source,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct CmsLauncherUpdate {
+    version: Option<String>,
+    notes: Option<String>,
+    pub_date: Option<String>,
+    platforms: Option<Value>,
+    windows_url: Option<String>,
+    windows_signature: Option<String>,
+}
+
+impl CmsLauncherUpdate {
+    fn into_json(self) -> Value {
+        let platforms = self.platforms.unwrap_or_else(|| {
+            json!({
+                "windows-x86_64": {
+                    "url": self.windows_url.unwrap_or_default(),
+                    "signature": self.windows_signature.unwrap_or_default()
+                }
+            })
+        });
+
+        json!({
+            "version": self.version.unwrap_or_else(|| "0.1.0".to_string()),
+            "notes": self.notes.unwrap_or_else(|| "No launcher update available.".to_string()),
+            "pub_date": self.pub_date.unwrap_or_else(|| "2026-06-18T00:00:00Z".to_string()),
+            "platforms": platforms
+        })
+    }
+}
+
+async fn regenerate_from(config: &AppConfig, client: &Client) -> Result<ModpackManifest, String> {
+    let release = fetch_release(config, client).await?;
+    prepare_payload(config, client, &release).await?;
+    build_manifest(config, &release)
+}
+
+async fn fetch_release(config: &AppConfig, client: &Client) -> Result<ReleaseMetadata, String> {
+    match fetch_cms_release(config, client).await {
+        Ok(Some(release)) => Ok(release),
+        Ok(None) => Ok(fallback_release(config)),
+        Err(e) if config.directus_required => Err(e),
+        Err(e) => {
+            eprintln!("Directus release fallback: {e}");
+            Ok(fallback_release(config))
+        }
+    }
+}
+
+async fn fetch_cms_release(
+    config: &AppConfig,
+    client: &Client,
+) -> Result<Option<ReleaseMetadata>, String> {
+    if config.directus_url.is_none() {
+        return Ok(None);
+    }
+
+    let query = format!(
+        "items/{}?filter[status][_eq]=published&sort=-id&limit=1&fields=*,modpack_zip.id,build_zip.id,build_file.id,zip_file.id,file.id",
+        config.modpack_collection
+    );
+    let response: DirectusList<CmsRelease> = directus_get_json(config, client, &query).await?;
+    Ok(response
+        .data
+        .into_iter()
+        .next()
+        .map(|item| item.into_metadata(config)))
+}
+
+fn fallback_release(config: &AppConfig) -> ReleaseMetadata {
+    ReleaseMetadata {
+        version: config.modpack_version.clone(),
+        minecraft_version: config.minecraft_version.clone(),
+        prune: None,
+        java: java_from_env(config),
+        forge: forge_from_env(config),
+        source: None,
+    }
+}
+
+fn java_from_env(config: &AppConfig) -> Option<JavaInfo> {
+    Some(JavaInfo {
+        version: config.java_version.clone()?,
+        platform: config.java_platform.clone()?,
+        url: config.java_url.clone()?,
+        sha256: config.java_sha256.clone()?,
+        size: config.java_size?,
+    })
+}
+
+fn forge_from_env(config: &AppConfig) -> Option<ForgeInfo> {
+    Some(ForgeInfo {
+        version: config.forge_version.clone()?,
+        url: config.forge_url.clone()?,
+        sha256: config.forge_sha256.clone()?,
+        size: config.forge_size?,
+    })
+}
+
+async fn prepare_payload(
+    config: &AppConfig,
+    client: &Client,
+    release: &ReleaseMetadata,
+) -> Result<(), String> {
+    match &release.source {
+        Some(ReleaseSource::DirectusAsset(id)) => {
+            let url = directus_asset_url(config, id)?;
+            let zip_path = directus_cache_path(config, &release.version);
+            download_file(client, &url, config.directus_token.as_deref(), &zip_path).await?;
+            reset_dir(&config.extracted_dir)?;
+            extract_zip_archive(&zip_path, &config.extracted_dir)
+        }
+        Some(ReleaseSource::Url(url)) => {
+            let zip_path = directus_cache_path(config, &release.version);
+            download_file(client, url, None, &zip_path).await?;
+            reset_dir(&config.extracted_dir)?;
+            extract_zip_archive(&zip_path, &config.extracted_dir)
+        }
+        None => extract_zips(&config.files_dir, &config.extracted_dir),
+    }
+}
+
+async fn download_file(
+    client: &Client,
+    url: &str,
+    bearer: Option<&str>,
+    dest: &Path,
+) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+    }
+
+    let mut request = client.get(url);
+    if let Some(token) = bearer {
+        request = request.bearer_auth(token);
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download {url}: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Failed to download {url}: {e}"))?;
+
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .map_err(|e| format!("Failed to create {}: {e}", dest.display()))?;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Failed to read {url}: {e}"))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("Failed to write {}: {e}", dest.display()))?;
+    }
+
+    file.flush()
+        .await
+        .map_err(|e| format!("Failed to flush {}: {e}", dest.display()))
+}
+
+fn directus_cache_path(config: &AppConfig, version: &str) -> PathBuf {
+    config
+        .files_dir
+        .join(".directus-cache")
+        .join(format!("{}.zip", safe_file_part(version)))
+}
+
+fn directus_asset_url(config: &AppConfig, id: &str) -> Result<String, String> {
+    let base = config
+        .directus_url
+        .as_ref()
+        .ok_or_else(|| "DIRECTUS_URL is not configured".to_string())?;
+    Ok(format!("{base}/assets/{id}"))
+}
+
+fn extract_zips(files_dir: &Path, extracted_dir: &Path) -> Result<(), String> {
+    reset_dir(extracted_dir)?;
+
+    for entry in std::fs::read_dir(files_dir)
+        .map_err(|e| format!("Failed to read files dir {}: {e}", files_dir.display()))?
+    {
+        let path = entry
+            .map_err(|e| format!("Read dir entry error: {e}"))?
+            .path();
+        let is_zip = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
+
+        if is_zip {
             println!("Extracting: {}", path.display());
-            let file = std::fs::File::open(&path)
-                .map_err(|e| format!("Failed to open zip: {e}"))?;
-            let mut archive = zip::ZipArchive::new(file)
-                .map_err(|e| format!("Failed to open zip archive: {e}"))?;
-
-            for i in 0..archive.len() {
-                let mut entry = archive.by_index(i)
-                    .map_err(|e| format!("Zip entry {i} error: {e}"))?;
-                let name = entry.name().to_string();
-
-                // Skip directories
-                if entry.is_dir() {
-                    continue;
-                }
-
-                let dest = extracted_dir.join(&name);
-                if let Some(parent) = dest.parent() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| format!("Failed to create dir {}: {e}", parent.display()))?;
-                }
-
-                let mut out = std::fs::File::create(&dest)
-                    .map_err(|e| format!("Failed to create file {}: {e}", dest.display()))?;
-                std::io::copy(&mut entry, &mut out)
-                    .map_err(|e| format!("Failed to extract {}: {e}", name))?;
-
-                extracted.push(PathBuf::from(&name));
-            }
+            extract_zip_archive(&path, extracted_dir)?;
         } else if path.is_file() {
-            // Copy individual files directly (e.g. Forge JAR)
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            let dest = extracted_dir.join(&name);
+            let name = path.file_name().unwrap_or_default();
+            let dest = extracted_dir.join(name);
             std::fs::copy(&path, &dest)
                 .map_err(|e| format!("Failed to copy {}: {e}", path.display()))?;
-            println!("Copied: {}", name);
-            extracted.push(PathBuf::from(&name));
+            println!("Copied: {}", name.to_string_lossy());
         }
     }
 
-    println!("Extracted {} files to {}", extracted.len(), extracted_dir.display());
-    Ok(extracted)
+    Ok(())
 }
 
-/// Percent-encode characters that are unsafe in URL paths.
-fn percent_encode_path(path: &str) -> String {
-    // Encode % first to avoid double-encoding already-encoded filenames
-    let mut out = String::with_capacity(path.len() * 3 / 2);
-    for b in path.bytes() {
-        match b {
-            b'/' | b'-' | b'_' | b'.' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => out.push(b as char),
-            b' ' => out.push_str("%20"),
-            b'%' => out.push_str("%25"),
-            b'[' => out.push_str("%5B"),
-            b']' => out.push_str("%5D"),
-            b'+' => out.push_str("%2B"),
-            _ => out.push(b as char),
+fn reset_dir(dir: &Path) -> Result<(), String> {
+    if dir.exists() {
+        std::fs::remove_dir_all(dir)
+            .map_err(|e| format!("Failed to clear {}: {e}", dir.display()))?;
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))
+}
+
+fn extract_zip_archive(zip_path: &Path, extracted_dir: &Path) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path)
+        .map_err(|e| format!("Failed to open zip {}: {e}", zip_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip: {e}"))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("Zip entry {i} error: {e}"))?;
+        if entry.is_dir() {
+            continue;
+        }
+
+        let Some(rel_path) = safe_zip_entry_path(entry.name()) else {
+            continue;
+        };
+        let dest = extracted_dir.join(rel_path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+        }
+
+        let mut out = std::fs::File::create(&dest)
+            .map_err(|e| format!("Failed to create {}: {e}", dest.display()))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|e| format!("Failed to extract {}: {e}", dest.display()))?;
+    }
+
+    Ok(())
+}
+
+fn safe_zip_entry_path(name: &str) -> Option<PathBuf> {
+    let normalized = name.replace('\\', "/");
+    let path = Path::new(&normalized);
+    if path.is_absolute() {
+        return None;
+    }
+
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => out.push(part),
+            Component::CurDir => {}
+            _ => return None,
         }
     }
-    out
+    (!out.as_os_str().is_empty()).then_some(out)
 }
 
-/// Build a manifest by walking the extracted directory and computing SHA256.
-fn build_manifest(config: &AppConfig) -> Result<ModpackManifest, String> {
+fn build_manifest(
+    config: &AppConfig,
+    release: &ReleaseMetadata,
+) -> Result<ModpackManifest, String> {
     let mut files = Vec::new();
-    let mut total_size: u64 = 0;
+    let mut total_size = 0;
+    let base_url = config.base_url.trim_end_matches('/');
 
     for entry in walkdir::WalkDir::new(&config.extracted_dir)
         .sort_by_file_name()
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
     {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
         let abs_path = entry.path();
         let rel_path = abs_path
             .strip_prefix(&config.extracted_dir)
@@ -191,170 +478,109 @@ fn build_manifest(config: &AppConfig) -> Result<ModpackManifest, String> {
             .to_string_lossy()
             .replace('\\', "/");
 
-        let size = abs_path.metadata().map(|m| m.len()).unwrap_or(0);
         let data = std::fs::read(abs_path)
             .map_err(|e| format!("Failed to read {}: {e}", abs_path.display()))?;
+        let size = data.len() as u64;
         let mut hasher = sha2::Sha256::new();
         hasher.update(&data);
         let sha256 = format!("{:x}", hasher.finalize());
         let encoded = percent_encode_path(&rel_path);
-        let url = format!("{}/api/launcher/v1/files/{}", config.base_url, encoded);
 
         total_size += size;
         files.push(ManifestFileEntry {
             path: rel_path,
             size,
             sha256,
-            url,
+            url: format!("{base_url}/api/launcher/v1/files/{encoded}"),
         });
     }
 
-    println!("Manifest built: {} files, {} bytes total", files.len(), total_size);
-
-    let java = if let (Some(version), Some(platform), Some(url), Some(sha256), Some(size)) = (
-        config.java_version.as_ref(),
-        config.java_platform.as_ref(),
-        config.java_url.as_ref(),
-        config.java_sha256.as_ref(),
-        config.java_size,
-    ) {
-        println!("Java info: {version} for {platform}");
-        Some(blockfield_shared::JavaInfo {
-            version: version.clone(),
-            platform: platform.clone(),
-            url: url.clone(),
-            sha256: sha256.clone(),
-            size,
-        })
-    } else {
-        None
-    };
-
-    let forge = if let (Some(version), Some(url), Some(sha256), Some(size)) = (
-        config.forge_version.as_ref(),
-        config.forge_url.as_ref(),
-        config.forge_sha256.as_ref(),
-        config.forge_size,
-    ) {
-        println!("Forge info: {version}");
-        Some(blockfield_shared::ForgeInfo {
-            version: version.clone(),
-            url: url.clone(),
-            sha256: sha256.clone(),
-            size,
-        })
-    } else {
-        None
-    };
+    println!(
+        "Manifest built: {} files, {} bytes total",
+        files.len(),
+        total_size
+    );
 
     Ok(ModpackManifest {
-        version: config.modpack_version.clone(),
-        minecraft_version: config.minecraft_version.clone(),
+        version: release.version.clone(),
+        minecraft_version: release.minecraft_version.clone(),
         files,
         total_size,
-        prune: None,
-        java,
-        forge,
+        prune: release.prune.clone(),
+        java: release.java.clone(),
+        forge: release.forge.clone(),
     })
 }
 
-/// Regenerate the manifest: extract ZIPs, rebuild.
-async fn regenerate(config: &AppConfig) -> Result<ModpackManifest, String> {
-    extract_zips(&config.files_dir, &config.extracted_dir)?;
-    build_manifest(config)
+fn percent_encode_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        match b {
+            b'/' | b'-' | b'_' | b'.' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
-// ── Endpoints ───────────────────────────────────────────────────
-
-/// GET /api/launcher/v1/manifest.json
-async fn serve_manifest(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // Check if we need to regenerate (ZIP changed)
-    let needs_regen = {
-        let cached = state.manifest.read().await;
-        cached.is_none()
-    };
-
+async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
+    let needs_regen = state.manifest.read().await.is_none();
     if needs_regen {
-        match regenerate(&state.config).await {
-            Ok(manifest) => {
-                let mut cached = state.manifest.write().await;
-                *cached = Some(manifest);
-            }
+        match regenerate_from(&state.config, &state.client).await {
+            Ok(manifest) => *state.manifest.write().await = Some(manifest),
             Err(e) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("Manifest generation error: {e}"),
                 )
-                    .into_response();
+                    .into_response()
             }
         }
     }
 
-    let cached = state.manifest.read().await;
-    match cached.as_ref() {
-        Some(manifest) => match serde_json::to_vec(manifest) {
-            Ok(json) => (
-                StatusCode::OK,
-                [("content-type", "application/json")],
-                json,
-            )
-                .into_response(),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Manifest serialization error: {e}"),
-            )
-                .into_response(),
-        },
-        None => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "No manifest available",
-        )
-            .into_response(),
+    match state.manifest.read().await.as_ref() {
+        Some(manifest) => json_bytes_response(manifest),
+        None => (StatusCode::INTERNAL_SERVER_ERROR, "No manifest available").into_response(),
     }
 }
 
-/// GET /api/launcher/v1/files/{*path}
 async fn serve_file(
     State(state): State<Arc<AppState>>,
-    axum::extract::Path(path): axum::extract::Path<String>,
-) -> impl IntoResponse {
-    // Sanitize — prevent directory traversal
-    let safe_path: PathBuf = path
-        .split('/')
-        .filter(|c| !c.is_empty() && *c != ".." && *c != ".")
-        .collect();
+    AxumPath(path): AxumPath<String>,
+) -> Response {
+    let mut safe_path = PathBuf::new();
+    for part in path.split('/') {
+        if !part.is_empty() && part != "." && part != ".." {
+            safe_path.push(part);
+        }
+    }
 
     let file_path = state.config.extracted_dir.join(&safe_path);
-
-    // Verify the path is actually inside extracted_dir (resolve .. and symlinks)
     let resolved = match std::fs::canonicalize(&file_path) {
-        Ok(r) => r,
+        Ok(path) => path,
         Err(_) => {
             return (
                 StatusCode::NOT_FOUND,
                 format!("File not found: {}", safe_path.display()),
             )
-                .into_response();
+                .into_response()
         }
     };
-
     let extracted_root = match std::fs::canonicalize(&state.config.extracted_dir) {
-        Ok(r) => r,
+        Ok(path) => path,
         Err(_) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Server misconfiguration: extracted dir not accessible",
             )
-                .into_response();
+                .into_response()
         }
     };
 
-    if !resolved.starts_with(&extracted_root) {
-        return (
-            StatusCode::FORBIDDEN,
-            "Access denied",
-        )
-            .into_response();
+    if !resolved.starts_with(extracted_root) {
+        return (StatusCode::FORBIDDEN, "Access denied").into_response();
     }
 
     match tokio::fs::read(&resolved).await {
@@ -372,15 +598,12 @@ async fn serve_file(
     }
 }
 
-/// POST /api/launcher/v1/reload
-/// Hot-reload: re-extract ZIP and regenerate manifest without restarting.
-async fn handle_reload(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match regenerate(&state.config).await {
+async fn handle_reload(State(state): State<Arc<AppState>>) -> Response {
+    match regenerate_from(&state.config, &state.client).await {
         Ok(manifest) => {
             let file_count = manifest.files.len();
             let total_mb = manifest.total_size as f64 / 1_048_576.0;
-            let mut cached = state.manifest.write().await;
-            *cached = Some(manifest);
+            *state.manifest.write().await = Some(manifest);
             (
                 StatusCode::OK,
                 format!("Reloaded: {file_count} files, {total_mb:.1} MB"),
@@ -395,11 +618,104 @@ async fn handle_reload(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     }
 }
 
-/// GET /api/launcher/v1/update.json
-async fn serve_update() -> impl IntoResponse {
-    // Return current launcher version so updater knows no update is available.
-    // Tauri updater only downloads if remote version > current version.
-    let update_info = serde_json::json!({
+async fn serve_update(State(state): State<Arc<AppState>>) -> Response {
+    let value = match fetch_cms_update(&state.config, &state.client).await {
+        Ok(Some(value)) => value,
+        Ok(None) => fallback_update_json(),
+        Err(e) if state.config.directus_required => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
+        }
+        Err(e) => {
+            eprintln!("Directus update fallback: {e}");
+            fallback_update_json()
+        }
+    };
+    json_value_response(value)
+}
+
+async fn fetch_cms_update(config: &AppConfig, client: &Client) -> Result<Option<Value>, String> {
+    if config.directus_url.is_none() {
+        return Ok(None);
+    }
+
+    let query = format!(
+        "items/{}?filter[status][_eq]=published&sort=-id&limit=1&fields=*",
+        config.launcher_update_collection
+    );
+    let response: DirectusList<CmsLauncherUpdate> =
+        directus_get_json(config, client, &query).await?;
+    Ok(response
+        .data
+        .into_iter()
+        .next()
+        .map(CmsLauncherUpdate::into_json))
+}
+
+async fn serve_content(State(state): State<Arc<AppState>>) -> Response {
+    let value = match fetch_cms_content(&state.config, &state.client).await {
+        Ok(Some(value)) => value,
+        Ok(None) => fallback_content_json(),
+        Err(e) if state.config.directus_required => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
+        }
+        Err(e) => {
+            eprintln!("Directus content fallback: {e}");
+            fallback_content_json()
+        }
+    };
+    json_value_response(value)
+}
+
+async fn fetch_cms_content(config: &AppConfig, client: &Client) -> Result<Option<Value>, String> {
+    if config.directus_url.is_none() {
+        return Ok(None);
+    }
+
+    let query = format!(
+        "items/{}?filter[status][_eq]=published&sort=-id&limit=1&fields=*",
+        config.content_collection
+    );
+    let response: DirectusList<Value> = directus_get_json(config, client, &query).await?;
+    Ok(response.data.into_iter().next())
+}
+
+async fn directus_get_json<T: DeserializeOwned>(
+    config: &AppConfig,
+    client: &Client,
+    path: &str,
+) -> Result<T, String> {
+    let base = config
+        .directus_url
+        .as_ref()
+        .ok_or_else(|| "DIRECTUS_URL is not configured".to_string())?;
+    let url = format!("{base}/{}", path.trim_start_matches('/'));
+    let mut request = client.get(&url);
+    if let Some(token) = config.directus_token.as_ref() {
+        request = request.bearer_auth(token);
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("Directus request failed: {e}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Directus returned {status}: {body}"));
+    }
+
+    response
+        .json()
+        .await
+        .map_err(|e| format!("Directus JSON parse failed: {e}"))
+}
+
+async fn health() -> &'static str {
+    "ok"
+}
+
+fn fallback_update_json() -> Value {
+    json!({
         "version": "0.1.0",
         "notes": "No launcher update available.",
         "pub_date": "2026-06-18T00:00:00Z",
@@ -409,47 +725,144 @@ async fn serve_update() -> impl IntoResponse {
                 "signature": ""
             }
         }
-    });
-    (
-        StatusCode::OK,
-        [("content-type", "application/json")],
-        serde_json::to_vec(&update_info).unwrap_or_default(),
-    )
-        .into_response()
+    })
 }
 
-/// Health check.
-async fn health() -> &'static str {
-    "ok"
+fn fallback_content_json() -> Value {
+    json!({
+        "brand": "BLOCKFIELD",
+        "brand_subtitle": "TACTICAL OPS",
+        "chrome_title": "BLOCKFIELD LAUNCHER",
+        "operation_name": "IRON FRONT",
+        "season": "/ SEASON 01",
+        "description": "Large-scale tactical PvP across contested terrain.",
+        "server_name": "BLOCKFIELD - PRIMARY",
+        "server_ip": "play.blockfield.gg:25565",
+        "server_region": "EU-WEST - 28ms",
+        "operators": "142",
+        "ping": "28",
+        "region": "EU-W",
+        "launcher_version": "0.4.2",
+        "coordinates": "LAT 47.3829 / LON 19.0402",
+        "copyright": "2026 BLOCKFIELD COMMAND",
+        "login_sector": "SECTOR 07 - NORTH RIDGE",
+        "login_slogan": "DEPLOY. CAPTURE. DOMINATE.",
+        "operator_handle": "KILO_7",
+        "operator_initials": "K7",
+        "operator_rank": "RANK - SERGEANT",
+        "support_label": "SUPPORT",
+        "network_status": "NETWORK NOMINAL",
+        "update_description": "Synchronizing modpack assets with the primary deployment server. Do not close the launcher until the operation completes.",
+        "settings_preferences": "/ LAUNCHER PREFERENCES",
+        "translations": {
+            "en": {},
+            "ru": {},
+            "uk": {}
+        },
+        "features": [
+            { "icon": "flag", "title": "CAPTURE POINTS", "desc": "Dynamic objective control across multiple sectors." },
+            { "icon": "swords", "title": "6 CLASSES", "desc": "Assault, Recon, Engineer, Medic, Support, Pilot." },
+            { "icon": "truck", "title": "ARMORED VEHICLES", "desc": "Tanks, APCs, light recon and air transport." },
+            { "icon": "crosshair", "title": "TACTICAL BATTLES", "desc": "Squad-based 64v64 persistent warfare." }
+        ],
+        "feed": [
+            { "tag": "PATCH", "tone": "amber", "date": "06.07", "title": "0.1.43 - Vehicle Balance", "body": "New modpack release is available." }
+        ]
+    })
 }
 
-// ── Main ────────────────────────────────────────────────────────
+fn json_bytes_response<T: serde::Serialize>(value: &T) -> Response {
+    match serde_json::to_vec(value) {
+        Ok(json) => (StatusCode::OK, [("content-type", "application/json")], json).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("JSON serialization error: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+fn json_value_response(value: Value) -> Response {
+    json_bytes_response(&value)
+}
+
+fn parse_prune(value: Option<Value>) -> Option<Vec<String>> {
+    let paths: Vec<String> = match value? {
+        Value::Array(items) => items
+            .into_iter()
+            .filter_map(|item| item.as_str().map(str::trim).map(str::to_string))
+            .filter(|item| !item.is_empty())
+            .collect(),
+        Value::String(text) => text
+            .split([',', '\n'])
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    };
+    (!paths.is_empty()).then_some(paths)
+}
+
+fn safe_file_part(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn env_string(key: &str, default: &str) -> String {
+    env_opt(key).unwrap_or_else(|| default.to_string())
+}
+
+fn env_opt(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn env_u64(key: &str) -> Option<u64> {
+    env_opt(key).and_then(|value| value.parse().ok())
+}
 
 #[tokio::main]
 async fn main() {
     let config = AppConfig::from_env();
+    let client = Client::new();
 
     println!("Blockfield API Server");
     println!("  Base URL:    {}", config.base_url);
     println!("  Files dir:   {}", config.files_dir.display());
     println!("  Extracted:   {}", config.extracted_dir.display());
-    println!("  Version:     {} (MC {})", config.modpack_version, config.minecraft_version);
+    println!(
+        "  Directus:    {}",
+        config.directus_url.as_deref().unwrap_or("disabled")
+    );
 
-    // Bootstrap: extract ZIP and build manifest on startup
-    let manifest = match regenerate(&config).await {
-        Ok(m) => {
-            println!("Startup OK: {} files, {:.1} MB",
-                m.files.len(), m.total_size as f64 / 1_048_576.0);
-            Some(m)
+    let manifest = match regenerate_from(&config, &client).await {
+        Ok(manifest) => {
+            println!(
+                "Startup OK: {} files, {:.1} MB",
+                manifest.files.len(),
+                manifest.total_size as f64 / 1_048_576.0
+            );
+            Some(manifest)
         }
         Err(e) => {
-            eprintln!("Startup WARNING: {} (server will retry on first request)", e);
+            eprintln!("Startup WARNING: {e} (server will retry on first request)");
             None
         }
     };
 
     let state = Arc::new(AppState {
         config,
+        client,
         manifest: RwLock::new(manifest),
     });
 
@@ -459,6 +872,7 @@ async fn main() {
         .route("/api/launcher/v1/files/{*path}", get(serve_file))
         .route("/api/launcher/v1/reload", post(handle_reload))
         .route("/api/launcher/v1/update.json", get(serve_update))
+        .route("/api/launcher/v1/content.json", get(serve_content))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -469,7 +883,34 @@ async fn main() {
         .await
         .expect("Failed to bind");
 
-    axum::serve(listener, app)
-        .await
-        .expect("Server error");
+    axum::serve(listener, app).await.expect("Server error");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_zip_path_traversal() {
+        assert!(safe_zip_entry_path("../evil.jar").is_none());
+        assert!(safe_zip_entry_path("mods/ok.jar").is_some());
+    }
+
+    #[test]
+    fn encodes_url_path_bytes() {
+        assert_eq!(percent_encode_path("mods/a b.jar"), "mods/a%20b.jar");
+        assert_eq!(percent_encode_path("mods/[x].jar"), "mods/%5Bx%5D.jar");
+    }
+
+    #[test]
+    fn parses_prune_from_text_or_json() {
+        assert_eq!(
+            parse_prune(Some(json!(["mods/old.jar", "config/*"]))).unwrap(),
+            vec!["mods/old.jar", "config/*"]
+        );
+        assert_eq!(
+            parse_prune(Some(json!("mods/old.jar\nconfig/*"))).unwrap(),
+            vec!["mods/old.jar", "config/*"]
+        );
+    }
 }

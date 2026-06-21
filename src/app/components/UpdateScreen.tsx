@@ -17,6 +17,7 @@ import { useI18n, type TKey, type TFunction } from '../i18n'
 import { OPERATION_NAME } from '../constants'
 import { listenDownloadProgress, listenLauncherStatus } from '../../lib/events'
 import type { DownloadProgress, LauncherStatus, VersionCheckResult } from '../../lib/api'
+import { contentText, useLauncherContent } from '../../lib/content'
 
 type StepStatus = 'done' | 'active' | 'pending'
 type Phase =
@@ -76,6 +77,7 @@ const freshSteps = () => INITIAL_STEPS.map((step) => ({ ...step }))
 
 export function UpdateScreen() {
   const { t } = useI18n()
+  const content = useLauncherContent()
   const [phase, setPhase] = useState<Phase>('checking')
   const [statusMessage, setStatusMessage] = useState('')
   const [canCancel, setCanCancel] = useState(false)
@@ -415,6 +417,9 @@ export function UpdateScreen() {
         : t('update.offline')
   const mirrorStatusClass =
     mirrorOnline === false ? 'text-[#c98b8b]' : transferring ? 'text-[#F5A524]' : 'text-[#82D66B]'
+  const operationName = contentText(content, 'operationName', 'operation_name') ?? OPERATION_NAME
+  const updateDescription =
+    contentText(content, 'updateDescription', 'update_description') ?? t('update.description')
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#070604]">
@@ -432,14 +437,14 @@ export function UpdateScreen() {
           <div>
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
               <h1 className="tracking-[0.06em] text-[26px] leading-none text-neutral-50">
-                {OPERATION_NAME}
+                {operationName}
               </h1>
               <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">
                 {t('update.patch', { v: manifestVersion || '...' })}
               </span>
             </div>
             <p className="text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">
-              {error ? error.slice(0, 200) : t('update.description')}
+              {error ? error.slice(0, 200) : updateDescription}
             </p>
           </div>
           <div className="shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-[240px]">

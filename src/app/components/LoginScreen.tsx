@@ -5,12 +5,22 @@ import { GridBackdrop, TopoBackdrop, CornerTicks } from './Backdrop'
 import { StatusDot } from './ui-bits'
 import { useI18n } from '../i18n'
 import { BRAND, COORDINATES, COPYRIGHT, LAUNCHER_VERSION, SERVER_REGION } from '../constants'
+import { contentText, useLauncherContent } from '../../lib/content'
 
 export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
   const { t } = useI18n()
+  const content = useLauncherContent()
   const [remember, setRemember] = useState(true)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const brand = contentText(content, 'brand') ?? BRAND
+  const coordinates = contentText(content, 'coordinates') ?? COORDINATES
+  const copyright = contentText(content, 'copyright') ?? COPYRIGHT
+  const launcherVersion =
+    contentText(content, 'launcherVersion', 'launcher_version') ?? LAUNCHER_VERSION
+  const serverRegion = contentText(content, 'serverRegion', 'server_region') ?? SERVER_REGION
+  const sector = contentText(content, 'loginSector', 'login_sector') ?? t('login.sector')
+  const slogan = contentText(content, 'loginSlogan', 'login_slogan') ?? t('login.slogan')
 
   return (
     <div className="relative h-full w-full bg-[#070604] overflow-hidden">
@@ -18,11 +28,11 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
       <GridBackdrop intensity={0.6} />
 
       <div className="absolute left-5 top-5 text-[10px] tracking-[0.16em] text-[#5E5040] flex flex-col gap-2">
-        <span>{t('login.sector')}</span>
-        <span>{COORDINATES}</span>
+        <span>{sector}</span>
+        <span>{coordinates}</span>
       </div>
       <div className="absolute right-5 top-5 text-[10px] tracking-[0.16em] text-[#5E5040] flex flex-col items-end gap-2">
-        <span>{t('login.build', { v: LAUNCHER_VERSION })}</span>
+        <span>{t('login.build', { v: launcherVersion })}</span>
         <span className="flex items-center gap-2">
           <StatusDot pulse />
           {t('login.authOnline')}
@@ -30,8 +40,8 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
       </div>
 
       <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between text-[10px] tracking-[0.16em] text-[#5E5040]">
-        <span>{t('login.slogan')}</span>
-        <span>{COPYRIGHT}</span>
+        <span>{slogan}</span>
+        <span>{copyright}</span>
       </div>
 
       <div className="h-full w-full grid place-items-center">
@@ -42,7 +52,7 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
               <div className="flex flex-col items-center gap-5">
                 <Logo size={44} />
                 <div className="flex flex-col items-center gap-1.5">
-                  <div className="tracking-[0.24em] text-[11px] text-[#C7AE86]">{BRAND}</div>
+                  <div className="tracking-[0.24em] text-[11px] text-[#C7AE86]">{brand}</div>
                   <h2 className="tracking-[0.18em] text-neutral-50">{t('login.launcher')}</h2>
                 </div>
                 <div className="h-px w-16 bg-gradient-to-r from-transparent via-[#8A571C] to-transparent" />
@@ -110,10 +120,10 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
               <div className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-[#F5A524]" />
                 <span className="text-[10px] tracking-[0.22em] text-[#8E7A5E]">
-                  {t('login.ready')} · v{LAUNCHER_VERSION}
+                  {t('login.ready')} · v{launcherVersion}
                 </span>
               </div>
-              <span className="text-[10px] tracking-[0.22em] text-[#5E5040]">{SERVER_REGION}</span>
+              <span className="text-[10px] tracking-[0.22em] text-[#5E5040]">{serverRegion}</span>
             </div>
           </div>
         </div>
