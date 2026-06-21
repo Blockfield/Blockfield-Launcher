@@ -56,9 +56,14 @@ pub fn run() {
             // Bootstrap managed state
             let app_handle = app.handle().clone();
             let downloader = download::Downloader::new(app_handle);
+            // Share the atomic cancel flag so cancel_download can set it
+            // without locking the downloader.
+            let cancel_flag = downloader.cancel_flag.clone();
+            let downloader = Arc::new(downloader);
 
             app.manage(LauncherAppState {
-                downloader: Arc::new(tokio::sync::Mutex::new(downloader)),
+                downloader,
+                cancel_flag,
                 manifest: tokio::sync::RwLock::new(None),
                 config: tokio::sync::RwLock::new(loaded_config),
                 app_data_dir,

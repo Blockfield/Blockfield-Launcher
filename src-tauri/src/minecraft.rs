@@ -361,6 +361,9 @@ async fn download_artifacts(
     }
 
     let total_bytes = missing.iter().map(|artifact| artifact.size).sum();
+    // Add this batch's total to the Downloader's atomic grand total
+    // so the frontend sees consistent total-bytes-all across all phases.
+    downloader.add_to_grand_total(total_bytes);
     let mut downloaded = 0;
     let file_count = missing.len();
 

@@ -1,10 +1,10 @@
 use crate::manifest::ModpackManifest;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::Mutex;
 
 /// Serializable progress payload emitted to the frontend via `download://progress`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -41,7 +41,12 @@ impl From<DownloadError> for String {
 pub struct Downloader {
     client: Client,
     app_handle: AppHandle,
-    cancel_flag: Arc<Mutex<bool>>,
+    /// Atomic cancel flag — set from any thread without locking the downloader.
+    pub cancel_flag: Arc<AtomicBool>,
+    /// Grand total of bytes across all download phases (set before downloads begin).
+    grand_total: AtomicU64,
+    /// Cumulative bytes downloaded across all phases (never resets mid-operation).
+    cumulative_downloaded: AtomicU64,
 }
 
 impl Downloader {
@@ -49,26 +54,40 @@ impl Downloader {
         Self {
             client: Client::new(),
             app_handle,
-            cancel_flag: Arc::new(Mutex::new(false)),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            grand_total: AtomicU64::new(0),
+            cumulative_downloaded: AtomicU64::new(0),
         }
     }
 
     /// Signal the downloader to cancel the current operation.
-    pub async fn cancel(&self) {
-        let mut flag = self.cancel_flag.lock().await;
-        *flag = true;
+    /// Non-async: uses atomic flag so it works even when a download is in progress.
+    #[allow(dead_code)]
+    pub fn cancel(&self) {
+        self.cancel_flag.store(true, Ordering::SeqCst);
         log::info!("Download cancel requested");
     }
 
-    /// Reset the cancel flag before starting a new download.
-    pub async fn reset_cancel(&self) {
-        let mut flag = self.cancel_flag.lock().await;
-        *flag = false;
+    /// Reset the cancel flag and cumulative counters before starting a new download.
+    pub fn reset_cancel(&self) {
+        self.cancel_flag.store(false, Ordering::SeqCst);
+        self.cumulative_downloaded.store(0, Ordering::SeqCst);
+        self.grand_total.store(0, Ordering::SeqCst);
+    }
+
+    /// Set the grand total of all expected bytes across all download phases.
+    pub fn set_grand_total(&self, total: u64) {
+        self.grand_total.store(total, Ordering::SeqCst);
+    }
+
+    /// Add to the grand total (useful when phases discover their size dynamically).
+    pub fn add_to_grand_total(&self, delta: u64) {
+        self.grand_total.fetch_add(delta, Ordering::SeqCst);
     }
 
     /// Check whether cancellation has been requested.
     async fn is_cancelled(&self) -> bool {
-        *self.cancel_flag.lock().await
+        self.cancel_flag.load(Ordering::SeqCst)
     }
 
     /// Fetch the remote modpack manifest.
@@ -98,7 +117,6 @@ impl Downloader {
         std::fs::create_dir_all(&game_dir)?;
 
         let file_count = manifest.files.len();
-        let total_bytes_all = manifest.total_size;
         let mut total_downloaded: u64 = 0;
         let mut new_installed: std::collections::HashMap<String, String> = installed_sha256.clone();
 
@@ -117,14 +135,19 @@ impl Downloader {
                         Ok(actual_hash) if actual_hash == entry.sha256 => {
                             log::info!("Skipping unchanged file: {}", entry.path);
                             total_downloaded += entry.size;
+                            // Advance the atomic cumulative counter for skipped files too
+                            self.cumulative_downloaded
+                                .fetch_add(entry.size, Ordering::Relaxed);
+                            let cumulative = self.cumulative_downloaded.load(Ordering::Relaxed);
+                            let grand = self.grand_total.load(Ordering::Relaxed);
                             self.emit_progress(
                                 &entry.path,
                                 i + 1,
                                 file_count,
                                 entry.size,
                                 entry.size,
-                                total_downloaded,
-                                total_bytes_all,
+                                cumulative,
+                                grand,
                                 0,
                             );
                             continue;
@@ -153,7 +176,7 @@ impl Downloader {
                 i + 1,
                 file_count,
                 &mut total_downloaded,
-                total_bytes_all,
+                0, // unused — download_one uses atomic grand_total
             )
             .await?;
 
@@ -186,21 +209,16 @@ impl Downloader {
         );
 
         // Emit a final event with speed=0 to signal completion
-        self.emit_progress(
-            "",
-            file_count,
-            file_count,
-            0,
-            0,
-            total_downloaded,
-            total_bytes_all,
-            0,
-        );
+        let cumulative = self.cumulative_downloaded.load(Ordering::Relaxed);
+        let grand = self.grand_total.load(Ordering::Relaxed);
+        self.emit_progress("", file_count, file_count, 0, 0, cumulative, grand, 0);
 
         Ok(())
     }
 
     /// Download a single file with streaming, emitting progress events.
+    /// Progress uses the Downloader's atomic `cumulative_downloaded` and `grand_total`
+    /// so the frontend sees one continuous progress bar across all download phases.
     pub async fn download_one(
         &self,
         url: &str,
@@ -209,8 +227,8 @@ impl Downloader {
         file_size: u64,
         file_index: usize,
         file_count: usize,
-        total_downloaded: &mut u64,
-        total_bytes_all: u64,
+        _total_downloaded: &mut u64,
+        _total_bytes_all: u64,
     ) -> Result<(), DownloadError> {
         log::info!("Downloading: {file_path} ({file_size} bytes)");
 
@@ -236,7 +254,11 @@ impl Downloader {
             let chunk = chunk?;
             std::io::Write::write_all(&mut file, &chunk)?;
             file_bytes += chunk.len() as u64;
-            *total_downloaded += chunk.len() as u64;
+            *_total_downloaded += chunk.len() as u64;
+
+            // Update the atomic cumulative counter (never resets across phases)
+            self.cumulative_downloaded
+                .fetch_add(chunk.len() as u64, Ordering::Relaxed);
 
             // Calculate speed
             let elapsed = start.elapsed().as_secs_f64();
@@ -246,14 +268,18 @@ impl Downloader {
                 0
             };
 
+            // Use atomic cumulative values so the frontend sees continuous progress
+            let cumulative = self.cumulative_downloaded.load(Ordering::Relaxed);
+            let grand = self.grand_total.load(Ordering::Relaxed);
+
             self.emit_progress(
                 file_path,
                 file_index,
                 file_count,
                 file_bytes,
                 file_size,
-                *total_downloaded,
-                total_bytes_all,
+                cumulative,
+                grand,
                 speed,
             );
         }
@@ -261,7 +287,7 @@ impl Downloader {
         Ok(())
     }
 
-    /// Emit a progress event to the frontend, rate-limited to ~150ms.
+    /// Emit a progress event to the frontend.
     fn emit_progress(
         &self,
         file_path: &str,

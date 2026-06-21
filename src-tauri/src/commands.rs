@@ -3,16 +3,21 @@ use crate::download::Downloader;
 use crate::manifest::{InstalledManifest, ModpackManifest, VersionCheckResult};
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 
 /// Shared application state managed by Tauri.
 pub struct LauncherAppState {
-    pub downloader: Arc<tokio::sync::Mutex<Downloader>>,
+    /// No outer mutex — Downloader uses atomics internally for cancel flag and progress.
+    pub downloader: Arc<Downloader>,
     pub manifest: RwLock<Option<ModpackManifest>>,
     pub config: RwLock<LauncherConfig>,
     pub app_data_dir: PathBuf,
+    /// Direct handle to the atomic cancel flag so cancel_download can set it
+    /// without any lock contention.
+    pub cancel_flag: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Serialize)]
@@ -86,8 +91,8 @@ pub async fn check_modpack_version(
     let manifest_url = format!("{api_base}/manifest.json");
     log::info!("[check_modpack_version] Fetching: {manifest_url}");
 
-    let downloader = state.downloader.lock().await;
-    let manifest = downloader
+    let manifest = state
+        .downloader
         .fetch_manifest(&manifest_url)
         .await
         .map_err(|e| {
@@ -242,8 +247,44 @@ pub async fn download_modpack(
     let mut config = state.config.read().await.clone();
     let installed = InstalledManifest::load(&config.game_dir);
 
-    let downloader = state.downloader.lock().await;
-    downloader.reset_cancel().await;
+    state.downloader.reset_cancel();
+
+    // ── Compute grand total for unified progress ──────────────────
+    // We sum up everything upfront so the frontend sees one smooth 0→100% bar.
+    let mut grand_total: u64 = 0;
+    // Java
+    if let Some(ref java) = manifest.java {
+        let java_ver_path = PathBuf::from(&config.game_dir)
+            .join("java")
+            .join(".version");
+        let need_java = match std::fs::read_to_string(&java_ver_path) {
+            Ok(v) if v.trim() == java.version => false,
+            _ => true,
+        };
+        if need_java {
+            grand_total += java.size;
+        }
+    }
+    // Forge
+    if let Some(ref forge) = manifest.forge {
+        let forge_version_id = crate::minecraft::forge_version_id(&forge.version);
+        let forge_json = PathBuf::from(&config.game_dir)
+            .join("versions")
+            .join(&forge_version_id)
+            .join(format!("{}.json", forge_version_id));
+        if !forge_json.exists() {
+            grand_total += forge.size;
+        }
+    }
+    // Modpack files (the manifest's own total)
+    grand_total += manifest.total_size;
+
+    // Minecraft runtime estimate: we add a rough minimum, and
+    // download_artifacts will add precise totals dynamically via add_to_grand_total.
+    // Start with a floor of 16 MiB so the progress bar never divides by zero.
+    grand_total = grand_total.max(16 * 1024 * 1024);
+    state.downloader.set_grand_total(grand_total);
+
     emit_status(&app_handle, "setup", "Preparing install tasks", false);
 
     // Download Java runtime if needed
@@ -268,7 +309,8 @@ pub async fn download_modpack(
                 .map_err(|e| format!("Failed to create java dir: {e}"))?;
 
             let mut java_downloaded = 0;
-            downloader
+            state
+                .downloader
                 .download_one(
                     &java.url,
                     &archive_path,
@@ -336,7 +378,8 @@ pub async fn download_modpack(
             );
             let installer_path = PathBuf::from(&config.game_dir).join("forge-installer.jar");
             let mut forge_downloaded = 0;
-            downloader
+            state
+                .downloader
                 .download_one(
                     &forge.url,
                     &installer_path,
@@ -459,7 +502,8 @@ pub async fn download_modpack(
     };
 
     emit_status(&app_handle, "modpack", "Syncing modpack files", true);
-    downloader
+    state
+        .downloader
         .download_files(&manifest, &config.game_dir, &installed_sha256)
         .await
         .map_err(|e| {
@@ -474,7 +518,7 @@ pub async fn download_modpack(
         .map(|forge| crate::minecraft::forge_version_id(&forge.version));
     emit_status(&app_handle, "runtime", "Preparing Minecraft runtime", true);
     let result = crate::minecraft::ensure_launch_dependencies(
-        &downloader,
+        &state.downloader,
         &PathBuf::from(&config.game_dir),
         &manifest.minecraft_version,
         forge_version_id.as_deref(),
@@ -516,8 +560,9 @@ pub async fn verify_files(state: State<'_, LauncherAppState>) -> Result<Vec<Stri
 
 #[tauri::command]
 pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), String> {
-    let downloader = state.downloader.lock().await;
-    downloader.cancel().await;
+    // Use the atomic flag directly — no mutex, works even during active downloads.
+    state.cancel_flag.store(true, Ordering::SeqCst);
+    log::info!("Download cancel requested from frontend");
     Ok(())
 }
 
@@ -577,8 +622,9 @@ pub async fn launch_game(
     log::info!("Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}");
 
     {
-        let downloader = state.downloader.lock().await;
-        downloader.reset_cancel().await;
+        state.downloader.reset_cancel();
+        // Floor so the frontend always has a non-zero denominator for progress.
+        state.downloader.set_grand_total(16 * 1024 * 1024);
         emit_status(
             &app_handle,
             "launch",
@@ -586,7 +632,7 @@ pub async fn launch_game(
             false,
         );
         crate::minecraft::ensure_launch_dependencies(
-            &downloader,
+            &state.downloader,
             &game_dir_path,
             &minecraft_version,
             forge_version_id.as_deref(),
