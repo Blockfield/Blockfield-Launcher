@@ -9,7 +9,9 @@ COPY shared/ shared/
 COPY server/ server/
 COPY src-tauri/Cargo.toml src-tauri/Cargo.toml
 # Create dummy source files so cargo can resolve the workspace
-RUN mkdir -p src-tauri/src && echo 'fn main() {}' > src-tauri/src/main.rs
+RUN mkdir -p src-tauri/src && \
+    echo 'fn main() {}' > src-tauri/src/main.rs && \
+    echo '' > src-tauri/src/lib.rs
 
 RUN cargo build --release -p blockfield-server && \
     cp target/release/blockfield-server /usr/local/bin/
