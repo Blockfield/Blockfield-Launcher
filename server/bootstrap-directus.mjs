@@ -1,5 +1,9 @@
 const DIRECTUS_URL = (process.env.DIRECTUS_URL ?? 'http://localhost:8055').replace(/\/$/, '')
 const DIRECTUS_TOKEN = process.env.DIRECTUS_TOKEN ?? 'blockfield-dev-token'
+const DIRECTUS_ADMIN_EMAIL = process.env.DIRECTUS_ADMIN_EMAIL ?? 'admin@example.com'
+const DIRECTUS_ADMIN_PASSWORD = process.env.DIRECTUS_ADMIN_PASSWORD ?? 'd1r3ctu5'
+let directusToken = DIRECTUS_TOKEN
+let triedAdminLogin = false
 
 const statusChoices = [
   { text: 'Draft', value: 'draft' },
@@ -94,6 +98,7 @@ const collections = [
 
 async function main() {
   await waitForDirectus()
+  await ensureStaticToken()
 
   for (const collection of collections) {
     await ensureCollection(collection)
@@ -108,6 +113,18 @@ async function main() {
   await seedContent()
   await seedLauncherUpdate()
   console.log('Directus CMS model is ready.')
+}
+
+async function ensureStaticToken() {
+  await directus('/users/me')
+
+  if (directusToken === DIRECTUS_TOKEN) return
+
+  await directus('/users/me', {
+    method: 'PATCH',
+    body: JSON.stringify({ token: DIRECTUS_TOKEN }),
+  })
+  console.log('admin static token configured')
 }
 
 function textField(field, note, required = false) {
@@ -138,8 +155,7 @@ function fileField(field, note) {
   return {
     field,
     type: 'uuid',
-    special: ['file'],
-    meta: { interface: 'file', special: ['file'], note, width: 'half' },
+    meta: { interface: 'file', note, width: 'half' },
   }
 }
 
@@ -187,9 +203,11 @@ async function ensureFileRelation(collection, field) {
   if (
     relations.data?.some(
       (relation) =>
-        (relation.collection_many ?? relation.many_collection) === collection &&
-        (relation.field_many ?? relation.many_field) === field &&
-        (relation.collection_one ?? relation.one_collection) === 'directus_files',
+        (relation.collection ?? relation.collection_many ?? relation.many_collection) ===
+          collection &&
+        (relation.field ?? relation.field_many ?? relation.many_field) === field &&
+        (relation.related_collection ?? relation.collection_one ?? relation.one_collection) ===
+          'directus_files',
     )
   ) {
     return
@@ -199,9 +217,14 @@ async function ensureFileRelation(collection, field) {
     await directus('/relations', {
       method: 'POST',
       body: JSON.stringify({
-        collection_many: collection,
-        field_many: field,
-        collection_one: 'directus_files',
+        collection,
+        field,
+        related_collection: 'directus_files',
+        meta: {
+          many_collection: collection,
+          many_field: field,
+          one_collection: 'directus_files',
+        },
       }),
     })
     console.log(`relation created: ${collection}.${field} -> directus_files`)
@@ -311,20 +334,19 @@ async function exists(path) {
     await directus(path)
     return true
   } catch (error) {
-    if (error.status === 404) return false
+    if (error.status === 404 || error.status === 403) return false
     throw error
   }
 }
 
 async function directus(path, init = {}) {
-  const response = await fetch(`${DIRECTUS_URL}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${DIRECTUS_TOKEN}`,
-      'Content-Type': 'application/json',
-      ...init.headers,
-    },
-  })
+  let response = await directusFetch(path, init)
+
+  if ((response.status === 401 || response.status === 403) && !triedAdminLogin) {
+    directusToken = await login()
+    triedAdminLogin = true
+    response = await directusFetch(path, init)
+  }
 
   if (!response.ok) {
     const error = new Error(await response.text())
@@ -334,6 +356,39 @@ async function directus(path, init = {}) {
 
   if (response.status === 204) return null
   return response.json()
+}
+
+async function directusFetch(path, init = {}) {
+  return fetch(`${DIRECTUS_URL}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${directusToken}`,
+      'Content-Type': 'application/json',
+      ...init.headers,
+    },
+  })
+}
+
+async function login() {
+  const response = await fetch(`${DIRECTUS_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: DIRECTUS_ADMIN_EMAIL,
+      password: DIRECTUS_ADMIN_PASSWORD,
+    }),
+  })
+
+  if (!response.ok) {
+    const error = new Error(await response.text())
+    error.status = response.status
+    throw error
+  }
+
+  const body = await response.json()
+  const token = body.data?.access_token
+  if (!token) throw new Error('Directus login did not return an access token')
+  return token
 }
 
 main().catch((error) => {

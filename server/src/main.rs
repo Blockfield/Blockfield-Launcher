@@ -75,7 +75,18 @@ impl AppConfig {
 struct AppState {
     config: AppConfig,
     client: Client,
-    manifest: RwLock<Option<ModpackManifest>>,
+    manifest: RwLock<Option<CachedManifest>>,
+}
+
+#[derive(PartialEq, Eq)]
+enum ManifestSourceKind {
+    Cms,
+    Fallback,
+}
+
+struct CachedManifest {
+    manifest: ModpackManifest,
+    source: ManifestSourceKind,
 }
 
 #[derive(Clone)]
@@ -86,6 +97,7 @@ struct ReleaseMetadata {
     java: Option<JavaInfo>,
     forge: Option<ForgeInfo>,
     source: Option<ReleaseSource>,
+    from_cms: bool,
 }
 
 #[derive(Clone)]
@@ -190,6 +202,7 @@ impl CmsRelease {
             java: java.or_else(|| java_from_env(config)),
             forge: forge.or_else(|| forge_from_env(config)),
             source,
+            from_cms: true,
         }
     }
 }
@@ -224,10 +237,18 @@ impl CmsLauncherUpdate {
     }
 }
 
-async fn regenerate_from(config: &AppConfig, client: &Client) -> Result<ModpackManifest, String> {
+async fn regenerate_from(config: &AppConfig, client: &Client) -> Result<CachedManifest, String> {
     let release = fetch_release(config, client).await?;
     prepare_payload(config, client, &release).await?;
-    build_manifest(config, &release)
+    let manifest = build_manifest(config, &release)?;
+    Ok(CachedManifest {
+        manifest,
+        source: if release.from_cms {
+            ManifestSourceKind::Cms
+        } else {
+            ManifestSourceKind::Fallback
+        },
+    })
 }
 
 async fn fetch_release(config: &AppConfig, client: &Client) -> Result<ReleaseMetadata, String> {
@@ -270,6 +291,7 @@ fn fallback_release(config: &AppConfig) -> ReleaseMetadata {
         java: java_from_env(config),
         forge: forge_from_env(config),
         source: None,
+        from_cms: false,
     }
 }
 
@@ -401,11 +423,35 @@ fn extract_zips(files_dir: &Path, extracted_dir: &Path) -> Result<(), String> {
 }
 
 fn reset_dir(dir: &Path) -> Result<(), String> {
-    if dir.exists() {
-        std::fs::remove_dir_all(dir)
-            .map_err(|e| format!("Failed to clear {}: {e}", dir.display()))?;
+    if !dir.exists() {
+        return std::fs::create_dir_all(dir)
+            .map_err(|e| format!("Failed to create {}: {e}", dir.display()));
     }
-    std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))
+
+    if !dir.is_dir() {
+        std::fs::remove_file(dir).map_err(|e| format!("Failed to clear {}: {e}", dir.display()))?;
+        return std::fs::create_dir_all(dir)
+            .map_err(|e| format!("Failed to create {}: {e}", dir.display()));
+    }
+
+    for entry in
+        std::fs::read_dir(dir).map_err(|e| format!("Failed to read {}: {e}", dir.display()))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read {} entry: {e}", dir.display()))?;
+        let path = entry.path();
+        if entry
+            .file_type()
+            .map_err(|e| format!("Failed to inspect {}: {e}", path.display()))?
+            .is_dir()
+        {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        }
+        .map_err(|e| format!("Failed to clear {}: {e}", path.display()))?;
+    }
+
+    Ok(())
 }
 
 fn extract_zip_archive(zip_path: &Path, extracted_dir: &Path) -> Result<(), String> {
@@ -526,7 +572,15 @@ fn percent_encode_path(path: &str) -> String {
 }
 
 async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
-    let needs_regen = state.manifest.read().await.is_none();
+    let needs_regen = {
+        let manifest = state.manifest.read().await;
+        match manifest.as_ref() {
+            None => true,
+            Some(cached) => {
+                state.config.directus_url.is_some() && cached.source == ManifestSourceKind::Fallback
+            }
+        }
+    };
     if needs_regen {
         match regenerate_from(&state.config, &state.client).await {
             Ok(manifest) => *state.manifest.write().await = Some(manifest),
@@ -541,7 +595,7 @@ async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
     }
 
     match state.manifest.read().await.as_ref() {
-        Some(manifest) => json_bytes_response(manifest),
+        Some(cached) => json_bytes_response(&cached.manifest),
         None => (StatusCode::INTERNAL_SERVER_ERROR, "No manifest available").into_response(),
     }
 }
@@ -601,8 +655,8 @@ async fn serve_file(
 async fn handle_reload(State(state): State<Arc<AppState>>) -> Response {
     match regenerate_from(&state.config, &state.client).await {
         Ok(manifest) => {
-            let file_count = manifest.files.len();
-            let total_mb = manifest.total_size as f64 / 1_048_576.0;
+            let file_count = manifest.manifest.files.len();
+            let total_mb = manifest.manifest.total_size as f64 / 1_048_576.0;
             *state.manifest.write().await = Some(manifest);
             (
                 StatusCode::OK,
@@ -849,8 +903,8 @@ async fn main() {
         Ok(manifest) => {
             println!(
                 "Startup OK: {} files, {:.1} MB",
-                manifest.files.len(),
-                manifest.total_size as f64 / 1_048_576.0
+                manifest.manifest.files.len(),
+                manifest.manifest.total_size as f64 / 1_048_576.0
             );
             Some(manifest)
         }
@@ -912,5 +966,21 @@ mod tests {
             parse_prune(Some(json!("mods/old.jar\nconfig/*"))).unwrap(),
             vec!["mods/old.jar", "config/*"]
         );
+    }
+
+    #[test]
+    fn reset_dir_keeps_root() {
+        let root =
+            std::env::temp_dir().join(format!("blockfield-reset-dir-{}", std::process::id()));
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(root.join("file.txt"), "x").unwrap();
+        std::fs::write(nested.join("file.txt"), "x").unwrap();
+
+        reset_dir(&root).unwrap();
+
+        assert!(root.is_dir());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

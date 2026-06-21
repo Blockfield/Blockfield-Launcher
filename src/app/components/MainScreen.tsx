@@ -18,7 +18,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
 import { useI18n, type TKey } from '../i18n'
-import { MODPACK_VERSION, OPERATION_NAME, SERVER_IP } from '../constants'
+import { OPERATION_NAME, SERVER_IP } from '../constants'
 import { listenDownloadProgress, listenLauncherStatus } from '../../lib/events'
 import type { DownloadProgress, VersionCheckResult } from '../../lib/api'
 import { contentText, useLauncherContent } from '../../lib/content'
@@ -59,7 +59,7 @@ const FEED: FallbackFeedEntry[] = [
     date: '06.07',
     titleKey: 'main.feed.patch.title',
     bodyKey: 'main.feed.patch.body',
-    vars: { v: MODPACK_VERSION },
+    vars: { v: '...' },
   },
   {
     tagKey: 'main.tag.event',
@@ -241,7 +241,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           tag: t(entry.tagKey),
           tone: entry.tone,
           date: entry.date,
-          title: t(entry.titleKey, entry.vars),
+          title: t(entry.titleKey, entry.vars ? { ...entry.vars, v: latestVersion } : undefined),
           body: t(entry.bodyKey),
         }))
 

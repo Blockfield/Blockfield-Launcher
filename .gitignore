@@ -9,6 +9,7 @@ target/
 # Server — modpack files (large binaries, not in VCS)
 server/files/
 server/extracted/
+server/directus/
 
 # IDE
 .vscode/

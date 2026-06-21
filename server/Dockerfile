@@ -1,5 +1,5 @@
 # ── Build stage ──────────────────────────────────────────────
-FROM rust:1.84-slim-bookworm AS builder
+FROM rust:1.88-slim-bookworm AS builder
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
@@ -19,7 +19,7 @@ RUN cargo build --release -p blockfield-server && \
 # ── Runtime stage ────────────────────────────────────────────
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates curl tini && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/blockfield-server /usr/local/bin/blockfield-server
 
@@ -37,4 +37,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:3000/health || exit 1
 
+ENTRYPOINT ["tini", "--"]
 CMD ["blockfield-server"]

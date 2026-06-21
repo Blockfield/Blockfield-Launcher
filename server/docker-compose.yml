@@ -20,15 +20,16 @@ services:
     restart: unless-stopped
 
   blockfield-api:
-    build: ..
-    dockerfile: server/Dockerfile
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
     depends_on:
       - directus
     ports:
       - "3000:3000"
     volumes:
       - ./files:/data/files          # Drop new ZIPs here, POST /api/launcher/v1/reload
-      - ./extracted:/data/extracted  # Auto-populated from ZIP on startup/reload
+      - extracted:/data/extracted    # Auto-populated cache from ZIP on startup/reload
     environment:
       - BASE_URL=https://play.blockfield.gg
       - MODPACK_VERSION=0.1.43
@@ -36,3 +37,6 @@ services:
       - DIRECTUS_URL=http://directus:8055
       - DIRECTUS_TOKEN=${DIRECTUS_TOKEN:-blockfield-dev-token}
     restart: unless-stopped
+
+volumes:
+  extracted:

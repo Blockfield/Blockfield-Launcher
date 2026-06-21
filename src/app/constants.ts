@@ -1,5 +1,4 @@
 export const LAUNCHER_VERSION = '0.4.2'
-export const MODPACK_VERSION = '0.1.42'
 export const SERVER_IP = 'play.blockfield.gg:25565'
 export const SERVER_REGION = 'EU-WEST · 28ms'
 export const BRAND = 'BLOCKFIELD'
