@@ -279,11 +279,7 @@ const MODPACK_FIELDS: &[FieldDef] = &[
     FieldDef { field: "forge_url", field_type: "string" },
     FieldDef { field: "forge_sha256", field_type: "string" },
     FieldDef { field: "forge_size", field_type: "integer" },
-    FieldDef { field: "modpack_zip", field_type: "file" },
-    FieldDef { field: "build_zip", field_type: "file" },
-    FieldDef { field: "build_file", field_type: "file" },
-    FieldDef { field: "zip_file", field_type: "file" },
-    FieldDef { field: "file", field_type: "file" },
+    FieldDef { field: "modpack_zip", field_type: "uuid" },
     FieldDef { field: "zip_url", field_type: "string" },
     FieldDef { field: "build_url", field_type: "string" },
 ];
