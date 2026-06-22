@@ -65,7 +65,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           release_notes="Dev build for ${GITHUB_SHA}"
-          mapfile -t files < <(find src-tauri/target/release/bundle target/release/bundle -type f 2>/dev/null || true)
+          mapfile -t files < <(find target/release/bundle -maxdepth 2 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) | sort)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No Tauri bundles found."
             exit 1
@@ -85,6 +85,10 @@ jobs:
             -F prerelease=true \
             -F make_latest=false \
             --silent
+
+          gh release view dev --json assets --jq '.assets[].name' | while read -r asset; do
+            gh release delete-asset dev "$asset" -y
+          done
 
           gh release upload dev "${files[@]}" --clobber
 
