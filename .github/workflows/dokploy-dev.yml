@@ -94,8 +94,8 @@ jobs:
 
           gh release upload develop @files --clobber
 
-  build-push-deploy:
-    name: Build, push images, deploy
+  backend:
+    name: Build & deploy backend
     runs-on: ubuntu-latest
     environment: dev
 
@@ -113,8 +113,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Backend Docker metadata
-        id: backend-meta
+      - name: Docker metadata
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.BACKEND_IMAGE_NAME }}
@@ -122,20 +122,49 @@ jobs:
             type=raw,value=develop
             type=sha,format=short,prefix=develop-
 
-      - name: Build and push backend image
+      - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./server/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ steps.backend-meta.outputs.tags }}
-          labels: ${{ steps.backend-meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
-      - name: Filament Docker metadata
-        id: filament-meta
+      - name: Deploy
+        env:
+          DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_BACKEND_WEBHOOK_URL }}
+        run: |
+          if [ -z "$DOKPLOY_WEBHOOK_URL" ]; then
+            echo "DOKPLOY_BACKEND_WEBHOOK_URL secret is not configured; skipping deploy."
+          else
+            curl --fail --show-error --silent "$DOKPLOY_WEBHOOK_URL"
+          fi
+
+  filament:
+    name: Build & deploy Filament
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.FILAMENT_IMAGE_NAME }}
@@ -143,34 +172,24 @@ jobs:
             type=raw,value=develop
             type=sha,format=short,prefix=develop-
 
-      - name: Build and push Filament image
+      - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: ./server/admin
           file: ./server/admin/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ steps.filament-meta.outputs.tags }}
-          labels: ${{ steps.filament-meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=filament
           cache-to: type=gha,mode=max,scope=filament
 
-      - name: Trigger Dokploy backend deploy
+      - name: Deploy
         env:
-          DOKPLOY_BACKEND_WEBHOOK_URL: ${{ secrets.DOKPLOY_BACKEND_WEBHOOK_URL }}
+          DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_FILAMENT_WEBHOOK_URL }}
         run: |
-          if [ -z "$DOKPLOY_BACKEND_WEBHOOK_URL" ]; then
-            echo "DOKPLOY_BACKEND_WEBHOOK_URL secret is not configured; skipping backend deploy."
-          else
-            curl --fail --show-error --silent "$DOKPLOY_BACKEND_WEBHOOK_URL"
-          fi
-
-      - name: Trigger Dokploy Filament deploy
-        env:
-          DOKPLOY_FILAMENT_WEBHOOK_URL: ${{ secrets.DOKPLOY_FILAMENT_WEBHOOK_URL }}
-        run: |
-          if [ -z "$DOKPLOY_FILAMENT_WEBHOOK_URL" ]; then
-            echo "DOKPLOY_FILAMENT_WEBHOOK_URL secret is not configured; skipping Filament deploy."
+          if [ -z "$DOKPLOY_WEBHOOK_URL" ]; then
+            echo "DOKPLOY_FILAMENT_WEBHOOK_URL secret is not configured; skipping deploy."
           else
             curl --fail --show-error --silent "$DOKPLOY_FILAMENT_WEBHOOK_URL"
           fi
