@@ -1,4 +1,4 @@
-name: Dokploy Dev Backend
+name: Dokploy Dev
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: dokploy-dev-backend-${{ github.ref }}
+  group: dokploy-dev-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -14,7 +14,8 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/netherg-io/blockfield-launcher-backend
+  BACKEND_IMAGE_NAME: ghcr.io/netherg-io/blockfield-launcher-backend
+  FILAMENT_IMAGE_NAME: ghcr.io/netherg-io/blockfield-launcher-filament
 
 jobs:
   tauri-release:
@@ -94,8 +95,8 @@ jobs:
           gh release upload dev @files --clobber
 
   build-push-deploy:
-    name: Build, push, deploy
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    name: Build, push images, deploy
+    runs-on: ubuntu-latest
     environment: dev
 
     steps:
@@ -112,26 +113,47 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata
-        id: meta
+      - name: Backend Docker metadata
+        id: backend-meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ env.BACKEND_IMAGE_NAME }}
           tags: |
             type=raw,value=dev
             type=sha,format=short,prefix=dev-
 
-      - name: Build and push image
+      - name: Build and push backend image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./server/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.backend-meta.outputs.tags }}
+          labels: ${{ steps.backend-meta.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Filament Docker metadata
+        id: filament-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.FILAMENT_IMAGE_NAME }}
+          tags: |
+            type=raw,value=dev
+            type=sha,format=short,prefix=dev-
+
+      - name: Build and push Filament image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server/admin
+          file: ./server/admin/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.filament-meta.outputs.tags }}
+          labels: ${{ steps.filament-meta.outputs.labels }}
+          cache-from: type=gha,scope=filament
+          cache-to: type=gha,mode=max,scope=filament
 
       - name: Trigger Dokploy deployment
         env:

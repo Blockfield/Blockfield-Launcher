@@ -1,22 +1,17 @@
 services:
-  directus:
-    image: ${DIRECTUS_IMAGE:-directus/directus:latest}
+  filament:
+    build:
+      context: ./admin
     ports:
       - "8055:8055"
     volumes:
-      - ./directus/database:/directus/database
-      - ./directus/uploads:/directus/uploads
-      - ./directus/extensions:/directus/extensions
+      - filament-data:/data
     environment:
-      KEY: ${DIRECTUS_KEY:-replace-with-random-value}
-      SECRET: ${DIRECTUS_SECRET:-replace-with-random-value}
-      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@localhost}
-      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-d1r3ctu5}
-      ADMIN_TOKEN: ${DIRECTUS_ADMIN_TOKEN:-blockfield-dev-token}
-      DB_CLIENT: sqlite3
-      DB_FILENAME: /directus/database/data.db
-      PUBLIC_URL: ${DIRECTUS_PUBLIC_URL:-http://localhost:8055}
-      WEBSOCKETS_ENABLED: "true"
+      APP_URL: ${FILAMENT_APP_URL:-http://localhost:8055}
+      APP_KEY: ${FILAMENT_APP_KEY:-}
+      CMS_TOKEN: ${CMS_TOKEN:-blockfield-dev-token}
+      FILAMENT_ADMIN_EMAIL: ${FILAMENT_ADMIN_EMAIL:-admin@example.com}
+      FILAMENT_ADMIN_PASSWORD: ${FILAMENT_ADMIN_PASSWORD:-admin}
     restart: unless-stopped
 
   blockfield-api:
@@ -24,7 +19,8 @@ services:
       context: ..
       dockerfile: server/Dockerfile
     depends_on:
-      - directus
+      filament:
+        condition: service_healthy
     ports:
       - "3000:3000"
     volumes:
@@ -44,9 +40,14 @@ services:
       - FALLBACK_SERVER_IP=${FALLBACK_SERVER_IP:-play.blockfield.gg:25565}
       - FALLBACK_LAUNCHER_VERSION=${FALLBACK_LAUNCHER_VERSION:-0.4.2}
       - FALLBACK_UPDATE_URL=${FALLBACK_UPDATE_URL:-https://play.blockfield.gg/downloads/blockfield-launcher_0.1.0_x64-setup.exe}
-      - DIRECTUS_URL=http://directus:8055
-      - DIRECTUS_TOKEN=${DIRECTUS_TOKEN:-blockfield-dev-token}
+      - CMS_URL=http://filament:8055/api
+      - CMS_TOKEN=${CMS_TOKEN:-blockfield-dev-token}
+      - CMS_REQUIRED=${CMS_REQUIRED:-false}
+      - CMS_MODPACK_COLLECTION=${CMS_MODPACK_COLLECTION:-modpack_releases}
+      - CMS_CONTENT_COLLECTION=${CMS_CONTENT_COLLECTION:-launcher_content}
+      - CMS_UPDATE_COLLECTION=${CMS_UPDATE_COLLECTION:-launcher_updates}
     restart: unless-stopped
 
 volumes:
+  filament-data:
   extracted:

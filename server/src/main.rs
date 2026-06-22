@@ -37,9 +37,9 @@ struct AppConfig {
     forge_version: Option<String>,
     forge_sha256: Option<String>,
     forge_size: Option<u64>,
-    directus_url: Option<String>,
-    directus_token: Option<String>,
-    directus_required: bool,
+    cms_url: Option<String>,
+    cms_token: Option<String>,
+    cms_required: bool,
     modpack_collection: String,
     content_collection: String,
     launcher_update_collection: String,
@@ -73,15 +73,12 @@ impl AppConfig {
             forge_version: env_opt("FORGE_VERSION"),
             forge_sha256: env_opt("FORGE_SHA256"),
             forge_size: env_u64("FORGE_SIZE"),
-            directus_url: env_opt("DIRECTUS_URL").map(|url| url.trim_end_matches('/').to_string()),
-            directus_token: env_opt("DIRECTUS_TOKEN"),
-            directus_required: env_string("DIRECTUS_REQUIRED", "false") == "true",
-            modpack_collection: env_string("DIRECTUS_MODPACK_COLLECTION", "modpack_releases"),
-            content_collection: env_string("DIRECTUS_CONTENT_COLLECTION", "launcher_content"),
-            launcher_update_collection: env_string(
-                "DIRECTUS_UPDATE_COLLECTION",
-                "launcher_updates",
-            ),
+            cms_url: env_opt("CMS_URL").map(|url| url.trim_end_matches('/').to_string()),
+            cms_token: env_opt("CMS_TOKEN"),
+            cms_required: env_string("CMS_REQUIRED", "false") == "true",
+            modpack_collection: env_string("CMS_MODPACK_COLLECTION", "modpack_releases"),
+            content_collection: env_string("CMS_CONTENT_COLLECTION", "launcher_content"),
+            launcher_update_collection: env_string("CMS_UPDATE_COLLECTION", "launcher_updates"),
             fallback_brand: env_string("FALLBACK_BRAND", "BLOCKFIELD"),
             fallback_brand_subtitle: env_string("FALLBACK_BRAND_SUBTITLE", "TACTICAL OPS"),
             fallback_chrome_title: env_string("FALLBACK_CHROME_TITLE", "BLOCKFIELD LAUNCHER"),
@@ -126,23 +123,23 @@ struct ReleaseMetadata {
 
 #[derive(Clone)]
 enum ReleaseSource {
-    DirectusAsset(String),
+    CmsAsset(String),
     Url(String),
 }
 
 #[derive(Deserialize)]
-struct DirectusList<T> {
+struct CmsList<T> {
     data: Vec<T>,
 }
 
 #[derive(Clone, Deserialize)]
 #[serde(untagged)]
-enum DirectusFileField {
+enum CmsFileField {
     Id(String),
     Object { id: String },
 }
 
-impl DirectusFileField {
+impl CmsFileField {
     fn id(&self) -> &str {
         match self {
             Self::Id(id) => id,
@@ -177,11 +174,11 @@ struct CmsRelease {
     forge_sha256: Option<String>,
     #[serde(alias = "forgeSize")]
     forge_size: Option<u64>,
-    modpack_zip: Option<DirectusFileField>,
-    build_zip: Option<DirectusFileField>,
-    build_file: Option<DirectusFileField>,
-    zip_file: Option<DirectusFileField>,
-    file: Option<DirectusFileField>,
+    modpack_zip: Option<CmsFileField>,
+    build_zip: Option<CmsFileField>,
+    build_file: Option<CmsFileField>,
+    zip_file: Option<CmsFileField>,
+    file: Option<CmsFileField>,
     zip_url: Option<String>,
     build_url: Option<String>,
 }
@@ -212,7 +209,7 @@ impl CmsRelease {
             .or(self.zip_file)
             .or(self.file);
         let source = file
-            .map(|file| ReleaseSource::DirectusAsset(file.id().to_string()))
+            .map(|file| ReleaseSource::CmsAsset(file.id().to_string()))
             .or_else(|| self.zip_url.or(self.build_url).map(ReleaseSource::Url));
 
         ReleaseMetadata {
@@ -261,246 +258,6 @@ impl CmsLauncherUpdate {
     }
 }
 
-struct FieldDef {
-    field: &'static str,
-    field_type: &'static str,
-}
-
-const MODPACK_FIELDS: &[FieldDef] = &[
-    FieldDef {
-        field: "version",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "minecraft_version",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "prune",
-        field_type: "json",
-    },
-    FieldDef {
-        field: "java_version",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "java_platform",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "java_url",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "java_sha256",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "java_size",
-        field_type: "integer",
-    },
-    FieldDef {
-        field: "forge_version",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "forge_url",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "forge_sha256",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "forge_size",
-        field_type: "integer",
-    },
-    FieldDef {
-        field: "modpack_zip",
-        field_type: "uuid",
-    },
-    FieldDef {
-        field: "zip_url",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "build_url",
-        field_type: "string",
-    },
-];
-
-const UPDATE_FIELDS: &[FieldDef] = &[
-    FieldDef {
-        field: "version",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "notes",
-        field_type: "text",
-    },
-    FieldDef {
-        field: "pub_date",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "platforms",
-        field_type: "json",
-    },
-    FieldDef {
-        field: "windows_url",
-        field_type: "string",
-    },
-    FieldDef {
-        field: "windows_signature",
-        field_type: "string",
-    },
-];
-
-// launcher_content: no predefined fields — user adds via admin UI
-
-async fn ensure_directus_collections(config: &AppConfig, client: &Client) {
-    let Some(base) = &config.directus_url else {
-        return;
-    };
-    let Some(token) = &config.directus_token else {
-        return;
-    };
-
-    // Step 1: list existing collections
-    let existing: Vec<String> = match list_directus_items(client, base, token, "collections").await
-    {
-        Some(items) => items
-            .into_iter()
-            .filter_map(|v| v["collection"].as_str().map(String::from))
-            .collect(),
-        None => return,
-    };
-
-    let needed: &[(&str, &[FieldDef])] = &[
-        (&config.modpack_collection, MODPACK_FIELDS),
-        (&config.content_collection, &[]),
-        (&config.launcher_update_collection, UPDATE_FIELDS),
-    ];
-
-    for (name, field_defs) in needed {
-        // Ensure collection exists
-        if !existing.iter().any(|c| c == name) {
-            let url = format!("{base}/collections");
-            match client
-                .post(&url)
-                .bearer_auth(token)
-                .json(&json!({"collection": name, "schema": {}}))
-                .send()
-                .await
-            {
-                Ok(r) if r.status().is_success() => {
-                    println!("Directus: collection '{name}' created");
-                }
-                Ok(r) => {
-                    let status = r.status();
-                    let body = r.text().await.unwrap_or_default();
-                    eprintln!("Directus: cannot create '{name}' ({status}): {body}");
-                    continue; // can't create fields without collection
-                }
-                Err(e) => {
-                    eprintln!("Directus: create collection error for '{name}': {e}");
-                    continue;
-                }
-            }
-        }
-
-        // Ensure fields exist (skip if no fields defined)
-        ensure_fields(config, client, name, field_defs).await;
-    }
-}
-
-async fn list_directus_items(
-    client: &Client,
-    base: &str,
-    token: &str,
-    endpoint: &str,
-) -> Option<Vec<Value>> {
-    let url = format!("{base}/{endpoint}?limit=-1");
-    match client.get(&url).bearer_auth(token).send().await {
-        Ok(resp) if resp.status().is_success() => match resp.json::<DirectusList<Value>>().await {
-            Ok(list) => Some(list.data),
-            Err(e) => {
-                eprintln!("Directus: failed to parse {endpoint} list: {e}");
-                None
-            }
-        },
-        Ok(resp) => {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            eprintln!("Directus: cannot list {endpoint} ({status}): {body}");
-            None
-        }
-        Err(e) => {
-            eprintln!("Directus: list {endpoint} error: {e}");
-            None
-        }
-    }
-}
-
-async fn ensure_fields(config: &AppConfig, client: &Client, collection: &str, needed: &[FieldDef]) {
-    if needed.is_empty() {
-        return;
-    }
-
-    let Some(base) = &config.directus_url else {
-        return;
-    };
-    let Some(token) = &config.directus_token else {
-        return;
-    };
-
-    // List existing fields
-    let existing: Vec<String> =
-        match list_directus_items(client, base, token, &format!("fields/{collection}")).await {
-            Some(items) => items
-                .into_iter()
-                .filter_map(|v| v["field"].as_str().map(String::from))
-                .collect(),
-            None => return,
-        };
-
-    for def in needed {
-        if existing.iter().any(|f| f == def.field) {
-            continue; // field already exists — never touch
-        }
-
-        let url = format!("{base}/fields/{collection}");
-        match client
-            .post(&url)
-            .bearer_auth(token)
-            .json(&json!({"field": def.field, "type": def.field_type}))
-            .send()
-            .await
-        {
-            Ok(r) if r.status().is_success() => {
-                println!(
-                    "Directus: field '{collection}.{field}' ({ftype}) created",
-                    field = def.field,
-                    ftype = def.field_type
-                );
-            }
-            Ok(r) => {
-                let status = r.status();
-                let body = r.text().await.unwrap_or_default();
-                eprintln!(
-                    "Directus: cannot create field '{collection}.{field}' ({status}): {body}",
-                    field = def.field
-                );
-                // ponytail: don't abort on field-level errors, try next field
-            }
-            Err(e) => eprintln!(
-                "Directus: create field error for '{collection}.{field}': {e}",
-                field = def.field
-            ),
-        }
-    }
-}
-
 async fn regenerate_from(config: &AppConfig, client: &Client) -> Result<CachedManifest, String> {
     let release = fetch_release(config, client).await?;
     prepare_payload(config, client, &release).await?;
@@ -519,9 +276,9 @@ async fn fetch_release(config: &AppConfig, client: &Client) -> Result<ReleaseMet
     match fetch_cms_release(config, client).await {
         Ok(Some(release)) => Ok(release),
         Ok(None) => Ok(fallback_release(config)),
-        Err(e) if config.directus_required => Err(e),
+        Err(e) if config.cms_required => Err(e),
         Err(e) => {
-            eprintln!("Directus release fallback: {e}");
+            eprintln!("CMS release fallback: {e}");
             Ok(fallback_release(config))
         }
     }
@@ -531,7 +288,7 @@ async fn fetch_cms_release(
     config: &AppConfig,
     client: &Client,
 ) -> Result<Option<ReleaseMetadata>, String> {
-    if config.directus_url.is_none() {
+    if config.cms_url.is_none() {
         return Ok(None);
     }
 
@@ -540,7 +297,7 @@ async fn fetch_cms_release(
         "items/{}?sort=-id&limit=1&fields=*",
         config.modpack_collection
     );
-    let response: DirectusList<CmsRelease> = directus_get_json(config, client, &query).await?;
+    let response: CmsList<CmsRelease> = cms_get_json(config, client, &query).await?;
     Ok(response
         .data
         .into_iter()
@@ -585,15 +342,15 @@ async fn prepare_payload(
     release: &ReleaseMetadata,
 ) -> Result<(), String> {
     match &release.source {
-        Some(ReleaseSource::DirectusAsset(id)) => {
-            let url = directus_asset_url(config, id)?;
-            let zip_path = directus_cache_path(config, &release.version);
-            download_file(client, &url, config.directus_token.as_deref(), &zip_path).await?;
+        Some(ReleaseSource::CmsAsset(id)) => {
+            let url = cms_asset_url(config, id)?;
+            let zip_path = cms_cache_path(config, &release.version);
+            download_file(client, &url, config.cms_token.as_deref(), &zip_path).await?;
             reset_dir(&config.extracted_dir)?;
             extract_zip_archive(&zip_path, &config.extracted_dir)
         }
         Some(ReleaseSource::Url(url)) => {
-            let zip_path = directus_cache_path(config, &release.version);
+            let zip_path = cms_cache_path(config, &release.version);
             download_file(client, url, None, &zip_path).await?;
             reset_dir(&config.extracted_dir)?;
             extract_zip_archive(&zip_path, &config.extracted_dir)
@@ -643,18 +400,18 @@ async fn download_file(
         .map_err(|e| format!("Failed to flush {}: {e}", dest.display()))
 }
 
-fn directus_cache_path(config: &AppConfig, version: &str) -> PathBuf {
+fn cms_cache_path(config: &AppConfig, version: &str) -> PathBuf {
     config
         .files_dir
-        .join(".directus-cache")
+        .join(".cms-cache")
         .join(format!("{}.zip", safe_file_part(version)))
 }
 
-fn directus_asset_url(config: &AppConfig, id: &str) -> Result<String, String> {
+fn cms_asset_url(config: &AppConfig, id: &str) -> Result<String, String> {
     let base = config
-        .directus_url
+        .cms_url
         .as_ref()
-        .ok_or_else(|| "DIRECTUS_URL is not configured".to_string())?;
+        .ok_or_else(|| "CMS_URL is not configured".to_string())?;
     Ok(format!("{base}/assets/{id}"))
 }
 
@@ -842,7 +599,7 @@ async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
         match manifest.as_ref() {
             None => true,
             Some(cached) => {
-                state.config.directus_url.is_some() && cached.source == ManifestSourceKind::Fallback
+                state.config.cms_url.is_some() && cached.source == ManifestSourceKind::Fallback
             }
         }
     };
@@ -964,11 +721,11 @@ async fn serve_update(State(state): State<Arc<AppState>>) -> Response {
     let value = match fetch_cms_update(&state.config, &state.client).await {
         Ok(Some(value)) => value,
         Ok(None) => fallback_update_json(&state.config),
-        Err(e) if state.config.directus_required => {
+        Err(e) if state.config.cms_required => {
             return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
         }
         Err(e) => {
-            eprintln!("Directus update fallback: {e}");
+            eprintln!("CMS update fallback: {e}");
             fallback_update_json(&state.config)
         }
     };
@@ -976,7 +733,7 @@ async fn serve_update(State(state): State<Arc<AppState>>) -> Response {
 }
 
 async fn fetch_cms_update(config: &AppConfig, client: &Client) -> Result<Option<Value>, String> {
-    if config.directus_url.is_none() {
+    if config.cms_url.is_none() {
         return Ok(None);
     }
 
@@ -984,8 +741,7 @@ async fn fetch_cms_update(config: &AppConfig, client: &Client) -> Result<Option<
         "items/{}?sort=-id&limit=1&fields=*",
         config.launcher_update_collection
     );
-    let response: DirectusList<CmsLauncherUpdate> =
-        directus_get_json(config, client, &query).await?;
+    let response: CmsList<CmsLauncherUpdate> = cms_get_json(config, client, &query).await?;
     Ok(response
         .data
         .into_iter()
@@ -997,11 +753,11 @@ async fn serve_content(State(state): State<Arc<AppState>>) -> Response {
     let value = match fetch_cms_content(&state.config, &state.client).await {
         Ok(Some(value)) => value,
         Ok(None) => fallback_content_json(&state.config),
-        Err(e) if state.config.directus_required => {
+        Err(e) if state.config.cms_required => {
             return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
         }
         Err(e) => {
-            eprintln!("Directus content fallback: {e}");
+            eprintln!("CMS content fallback: {e}");
             fallback_content_json(&state.config)
         }
     };
@@ -1009,7 +765,7 @@ async fn serve_content(State(state): State<Arc<AppState>>) -> Response {
 }
 
 async fn fetch_cms_content(config: &AppConfig, client: &Client) -> Result<Option<Value>, String> {
-    if config.directus_url.is_none() {
+    if config.cms_url.is_none() {
         return Ok(None);
     }
 
@@ -1017,39 +773,39 @@ async fn fetch_cms_content(config: &AppConfig, client: &Client) -> Result<Option
         "items/{}?sort=-id&limit=1&fields=*",
         config.content_collection
     );
-    let response: DirectusList<Value> = directus_get_json(config, client, &query).await?;
+    let response: CmsList<Value> = cms_get_json(config, client, &query).await?;
     Ok(response.data.into_iter().next())
 }
 
-async fn directus_get_json<T: DeserializeOwned>(
+async fn cms_get_json<T: DeserializeOwned>(
     config: &AppConfig,
     client: &Client,
     path: &str,
 ) -> Result<T, String> {
     let base = config
-        .directus_url
+        .cms_url
         .as_ref()
-        .ok_or_else(|| "DIRECTUS_URL is not configured".to_string())?;
+        .ok_or_else(|| "CMS_URL is not configured".to_string())?;
     let url = format!("{base}/{}", path.trim_start_matches('/'));
     let mut request = client.get(&url);
-    if let Some(token) = config.directus_token.as_ref() {
+    if let Some(token) = config.cms_token.as_ref() {
         request = request.bearer_auth(token);
     }
 
     let response = request
         .send()
         .await
-        .map_err(|e| format!("Directus request failed: {e}"))?;
+        .map_err(|e| format!("CMS request failed: {e}"))?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Directus returned {status}: {body}"));
+        return Err(format!("CMS returned {status}: {body}"));
     }
 
     response
         .json()
         .await
-        .map_err(|e| format!("Directus JSON parse failed: {e}"))
+        .map_err(|e| format!("CMS JSON parse failed: {e}"))
 }
 
 async fn health() -> &'static str {
@@ -1183,11 +939,9 @@ async fn main() {
     println!("  Files dir:   {}", config.files_dir.display());
     println!("  Extracted:   {}", config.extracted_dir.display());
     println!(
-        "  Directus:    {}",
-        config.directus_url.as_deref().unwrap_or("disabled")
+        "  CMS:         {}",
+        config.cms_url.as_deref().unwrap_or("disabled")
     );
-
-    ensure_directus_collections(&config, &client).await;
 
     let manifest = match regenerate_from(&config, &client).await {
         Ok(manifest) => {
