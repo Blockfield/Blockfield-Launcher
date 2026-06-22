@@ -63,7 +63,8 @@ function timestamp(): string {
 }
 
 type LogEntry = { ts: string; tone: 'ok' | 'info' | 'dim' | 'warn'; msg: string }
-type SpeedSample = { key: string; bytes: number; time: number }
+type SpeedSample = { bytes: number; time: number }
+const SPEED_UPDATE_MS = 750
 
 const INITIAL_STEPS: Array<{ label: TKey; status: StepStatus }> = [
   { label: 'update.step.verify', status: 'pending' },
@@ -96,6 +97,7 @@ export function UpdateScreen() {
   const [manifestVersion, setManifestVersion] = useState('')
   const [launching, setLaunching] = useState(false)
   const [steps, setSteps] = useState<Array<{ label: TKey; status: StepStatus }>>(freshSteps)
+  const [runToken, setRunToken] = useState(0)
 
   const unlistenRef = useRef<UnlistenFn | null>(null)
   const unlistenStatusRef = useRef<UnlistenFn | null>(null)
@@ -127,14 +129,22 @@ export function UpdateScreen() {
     setDownloadedBytes(p.totalBytesDownloaded)
 
     const now = performance.now()
-    const key = `${p.fileIndex}:${p.filePath}`
     const previous = speedSampleRef.current
-    let bytesPerSec = p.speedBytesPerSec
-    if (previous?.key === key && p.bytesDownloaded > previous.bytes && now > previous.time) {
-      bytesPerSec = ((p.bytesDownloaded - previous.bytes) * 1000) / (now - previous.time)
+    const finished = p.totalBytesAll > 0 && p.totalBytesDownloaded >= p.totalBytesAll
+    if (!previous) {
+      speedSampleRef.current = { bytes: p.totalBytesDownloaded, time: now }
+      setSpeed(p.speedBytesPerSec > 0 ? formatSpeed(p.speedBytesPerSec) : '—')
+      return
     }
-    speedSampleRef.current = { key, bytes: p.bytesDownloaded, time: now }
-    setSpeed(bytesPerSec > 0 ? formatSpeed(bytesPerSec) : '—')
+
+    if (!finished && now - previous.time < SPEED_UPDATE_MS) return
+
+    const bytesPerSec =
+      now > previous.time
+        ? ((p.totalBytesDownloaded - previous.bytes) * 1000) / (now - previous.time)
+        : p.speedBytesPerSec
+    speedSampleRef.current = { bytes: p.totalBytesDownloaded, time: now }
+    setSpeed(bytesPerSec > 0 && !finished ? formatSpeed(bytesPerSec) : '—')
   }, [])
 
   const applyBackendStatus = useCallback(
@@ -329,7 +339,7 @@ export function UpdateScreen() {
       unlistenRef.current?.()
       unlistenStatusRef.current?.()
     }
-  }, [addLog, applyBackendStatus, applyProgress, resetSpeed, setStep])
+  }, [addLog, applyBackendStatus, applyProgress, resetSpeed, runToken, setStep])
 
   const handleRetry = useCallback(() => {
     cancelledRef.current = false
@@ -345,8 +355,7 @@ export function UpdateScreen() {
     setPhase('checking')
     resetSpeed()
     setSteps(freshSteps())
-    // Re-trigger the effect — a key trick is to remount, but for simplicity we reload
-    window.location.reload()
+    setRunToken((value) => value + 1)
   }, [resetSpeed])
 
   const handleCancel = useCallback(async () => {
@@ -409,7 +418,7 @@ export function UpdateScreen() {
   }
   const transferring = phase === 'downloading' || phase === 'launching'
   const mirrorStatus = transferring
-    ? t('update.throughput')
+    ? speed
     : mirrorOnline === null
       ? t('main.checking')
       : mirrorOnline
