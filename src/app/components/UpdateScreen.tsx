@@ -125,6 +125,7 @@ export function UpdateScreen() {
       setTotalBytes(p.totalBytesAll)
     }
     setFileIdx(p.fileIndex)
+    if (p.fileCount > 0) setFileCount(p.fileCount)
     if (p.filePath) setCurrentFile(p.filePath)
     setDownloadedBytes(p.totalBytesDownloaded)
 
