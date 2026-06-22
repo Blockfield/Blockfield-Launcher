@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path as AxumPath, State},
-    http::StatusCode,
+    http::{header, Extensions, HeaderMap, StatusCode, Version},
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
@@ -17,7 +17,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{io::AsyncWriteExt, sync::RwLock};
-use tower_http::cors::CorsLayer;
+use tower_http::{compression::CompressionLayer, cors::CorsLayer};
 
 struct AppConfig {
     base_url: String,
@@ -827,7 +827,7 @@ async fn serve_file(
     match tokio::fs::read(&resolved).await {
         Ok(data) => (
             StatusCode::OK,
-            [("content-type", "application/octet-stream")],
+            [(header::CONTENT_TYPE, file_content_type(&resolved))],
             data,
         )
             .into_response(),
@@ -837,6 +837,29 @@ async fn serve_file(
         )
             .into_response(),
     }
+}
+
+fn file_content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()).unwrap_or("") {
+        "json" | "mcmeta" => "application/json",
+        "cfg" | "properties" | "toml" | "txt" | "yaml" | "yml" => "text/plain",
+        _ => "application/octet-stream",
+    }
+}
+
+fn should_gzip(
+    status: StatusCode,
+    _version: Version,
+    headers: &HeaderMap,
+    _extensions: &Extensions,
+) -> bool {
+    status.is_success()
+        && headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|content_type| {
+                content_type.starts_with("application/json") || content_type.starts_with("text/")
+            })
 }
 
 async fn handle_reload(State(state): State<Arc<AppState>>) -> Response {
@@ -1117,6 +1140,11 @@ async fn main() {
         .route(&format!("/{prefix}/reload"), post(handle_reload))
         .route(&format!("/{prefix}/update.json"), get(serve_update))
         .route(&format!("/{prefix}/content.json"), get(serve_content))
+        .layer(
+            CompressionLayer::new()
+                .gzip(true)
+                .compress_when(should_gzip),
+        )
         .layer(CorsLayer::permissive())
         .with_state(state.clone());
 
@@ -1155,6 +1183,18 @@ mod tests {
         assert_eq!(
             parse_prune(Some(json!("mods/old.jar\nconfig/*"))).unwrap(),
             vec!["mods/old.jar", "config/*"]
+        );
+    }
+
+    #[test]
+    fn marks_only_text_assets_as_compressible() {
+        assert_eq!(
+            file_content_type(Path::new("assets/index.json")),
+            "application/json"
+        );
+        assert_eq!(
+            file_content_type(Path::new("mods/big.jar")),
+            "application/octet-stream"
         );
     }
 

@@ -1,4 +1,5 @@
 use crate::manifest::ModpackManifest;
+use futures_util::StreamExt;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -18,6 +19,19 @@ pub struct DownloadProgressPayload {
     pub total_bytes_downloaded: u64,
     pub total_bytes_all: u64,
     pub speed_bytes_per_sec: u64,
+}
+
+// ponytail: fixed small fan-out; make it configurable only if the mirror starts rate-limiting.
+const PARALLEL_FILE_DOWNLOADS: usize = 6;
+
+struct DownloadJob {
+    url: String,
+    dest: PathBuf,
+    file_path: String,
+    file_size: u64,
+    file_index: usize,
+    file_count: usize,
+    sha256: String,
 }
 
 /// Streaming download engine with progress event emission.
@@ -119,6 +133,7 @@ impl Downloader {
         let file_count = manifest.files.len();
         let mut total_downloaded: u64 = 0;
         let mut new_installed: std::collections::HashMap<String, String> = installed_sha256.clone();
+        let mut downloads = Vec::new();
 
         for (i, entry) in manifest.files.iter().enumerate() {
             if self.is_cancelled().await {
@@ -167,31 +182,19 @@ impl Downloader {
                 }
             }
 
-            // Download the file
-            self.download_one(
-                &entry.url,
-                &dest,
-                &entry.path,
-                entry.size,
-                i + 1,
+            downloads.push(DownloadJob {
+                url: entry.url.clone(),
+                dest,
+                file_path: entry.path.clone(),
+                file_size: entry.size,
+                file_index: i + 1,
                 file_count,
-                &mut total_downloaded,
-                0, // unused — download_one uses atomic grand_total
-            )
-            .await?;
-
-            // Verify SHA256 after download
-            let actual_hash = Self::sha256_file(&dest)?;
-            if actual_hash != entry.sha256 {
-                let _ = std::fs::remove_file(&dest);
-                return Err(DownloadError::Other(format!(
-                    "SHA256 mismatch for {}: expected {}, got {}",
-                    entry.path, entry.sha256, actual_hash
-                )));
-            }
-
+                sha256: entry.sha256.clone(),
+            });
             new_installed.insert(entry.path.clone(), entry.sha256.clone());
         }
+
+        total_downloaded += self.download_jobs(downloads).await?;
 
         // Write the updated installed manifest
         let installed = crate::manifest::InstalledManifest {
@@ -214,6 +217,42 @@ impl Downloader {
         self.emit_progress("", file_count, file_count, 0, 0, cumulative, grand, 0);
 
         Ok(())
+    }
+
+    async fn download_jobs(&self, jobs: Vec<DownloadJob>) -> Result<u64, DownloadError> {
+        let mut downloads = futures_util::stream::iter(jobs)
+            .map(|job| async move {
+                let mut downloaded = 0;
+                self.download_one(
+                    &job.url,
+                    &job.dest,
+                    &job.file_path,
+                    job.file_size,
+                    job.file_index,
+                    job.file_count,
+                    &mut downloaded,
+                    0,
+                )
+                .await?;
+
+                let actual_hash = Self::sha256_file(&job.dest)?;
+                if actual_hash != job.sha256 {
+                    let _ = std::fs::remove_file(&job.dest);
+                    return Err(DownloadError::Other(format!(
+                        "SHA256 mismatch for {}: expected {}, got {}",
+                        job.file_path, job.sha256, actual_hash
+                    )));
+                }
+
+                Ok(downloaded)
+            })
+            .buffer_unordered(PARALLEL_FILE_DOWNLOADS);
+
+        let mut total_downloaded = 0;
+        while let Some(result) = downloads.next().await {
+            total_downloaded += result?;
+        }
+        Ok(total_downloaded)
     }
 
     /// Download a single file with streaming, emitting progress events.
@@ -244,7 +283,6 @@ impl Downloader {
         let mut file_bytes: u64 = 0;
         let start = Instant::now();
 
-        use futures_util::StreamExt;
         while let Some(chunk) = stream.next().await {
             if self.is_cancelled().await {
                 let _ = std::fs::remove_file(dest);
