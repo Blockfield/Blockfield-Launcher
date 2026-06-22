@@ -20,6 +20,8 @@ jobs:
   tauri-release:
     name: Build Tauri release
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -58,14 +60,33 @@ jobs:
       - name: Build Tauri release
         run: pnpm tauri:build
 
-      - name: Upload Tauri bundles
-        uses: actions/upload-artifact@v4
-        with:
-          name: tauri-linux-release
-          path: |
-            src-tauri/target/release/bundle/**
-            target/release/bundle/**
-          if-no-files-found: error
+      - name: Publish dev release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          release_notes="Dev build for ${GITHUB_SHA}"
+          mapfile -t files < <(find src-tauri/target/release/bundle target/release/bundle -type f 2>/dev/null || true)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Tauri bundles found."
+            exit 1
+          fi
+
+          if gh release view dev >/dev/null 2>&1; then
+            gh release edit dev --title dev --notes "$release_notes" --prerelease
+          else
+            gh release create dev --title dev --notes "$release_notes" --prerelease --target "${GITHUB_SHA}" --latest=false
+          fi
+
+          release_id="$(gh release view dev --json databaseId --jq .databaseId)"
+          gh api -X PATCH "repos/{owner}/{repo}/releases/${release_id}" \
+            -f tag_name=dev \
+            -f name=dev \
+            -f body="$release_notes" \
+            -F prerelease=true \
+            -F make_latest=false \
+            --silent
+
+          gh release upload dev "${files[@]}" --clobber
 
   build-push-deploy:
     name: Build, push, deploy
