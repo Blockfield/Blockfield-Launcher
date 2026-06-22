@@ -121,7 +121,7 @@ export function UpdateScreen() {
   const applyProgress = useCallback((p: DownloadProgress) => {
     if (p.totalBytesAll > 0) {
       const pct = (p.totalBytesDownloaded / p.totalBytesAll) * 100
-      setProgress(Math.min(100, pct))
+      setProgress((prev) => Math.max(prev, Math.min(100, pct)))
       setTotalBytes(p.totalBytesAll)
     }
     setFileIdx(p.fileIndex)
