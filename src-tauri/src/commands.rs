@@ -2,7 +2,7 @@ use crate::config::LauncherConfig;
 use crate::download::Downloader;
 use crate::manifest::{InstalledManifest, ModpackManifest, VersionCheckResult};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -257,10 +257,8 @@ pub async fn download_modpack(
         let java_ver_path = PathBuf::from(&config.game_dir)
             .join("java")
             .join(".version");
-        let need_java = match std::fs::read_to_string(&java_ver_path) {
-            Ok(v) if v.trim() == java.version => false,
-            _ => true,
-        };
+        let need_java =
+            !matches!(std::fs::read_to_string(&java_ver_path), Ok(v) if v.trim() == java.version);
         if need_java {
             grand_total += java.size;
         }
@@ -291,10 +289,8 @@ pub async fn download_modpack(
     if let Some(ref java) = manifest.java {
         let java_dir = PathBuf::from(&config.game_dir).join("java");
         let java_ver_path = java_dir.join(".version");
-        let need_java = match std::fs::read_to_string(&java_ver_path) {
-            Ok(v) if v.trim() == java.version => false,
-            _ => true,
-        };
+        let need_java =
+            !matches!(std::fs::read_to_string(&java_ver_path), Ok(v) if v.trim() == java.version);
 
         if need_java {
             log::info!("Downloading Java {} for {}", java.version, java.platform);
@@ -681,7 +677,7 @@ fn api_base_url() -> String {
 }
 
 /// Extract a ZIP archive to a target directory.
-fn extract_archive(archive_path: &PathBuf, dest_dir: &PathBuf) -> Result<(), String> {
+fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
     let file =
         std::fs::File::open(archive_path).map_err(|e| format!("Failed to open archive: {e}"))?;
     let mut archive =

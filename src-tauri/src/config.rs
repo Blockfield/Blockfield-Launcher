@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Launcher configuration persisted in Tauri's app data directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,12 +64,12 @@ fn default_game_dir() -> String {
 }
 
 /// Path to the launcher config file inside the app data directory.
-pub fn config_path(app_data_dir: &PathBuf) -> PathBuf {
+pub fn config_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join("launcher-config.json")
 }
 
 /// Load the launcher config from disk, or return defaults.
-pub fn load_config(app_data_dir: &PathBuf) -> LauncherConfig {
+pub fn load_config(app_data_dir: &Path) -> LauncherConfig {
     let path = config_path(app_data_dir);
     match std::fs::read_to_string(&path) {
         Ok(json) => serde_json::from_str(&json).unwrap_or_else(|e| {

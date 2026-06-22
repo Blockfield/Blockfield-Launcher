@@ -203,7 +203,7 @@ impl Downloader {
         };
         installed
             .save(&game_dir.to_string_lossy())
-            .map_err(|e| DownloadError::Other(e))?;
+            .map_err(DownloadError::Other)?;
 
         log::info!(
             "Download complete: {} files, {} bytes",
@@ -258,6 +258,7 @@ impl Downloader {
     /// Download a single file with streaming, emitting progress events.
     /// Progress uses the Downloader's atomic `cumulative_downloaded` and `grand_total`
     /// so the frontend sees one continuous progress bar across all download phases.
+    #[allow(clippy::too_many_arguments)]
     pub async fn download_one(
         &self,
         url: &str,
@@ -319,6 +320,7 @@ impl Downloader {
     }
 
     /// Emit a progress event to the frontend.
+    #[allow(clippy::too_many_arguments)]
     fn emit_progress(
         &self,
         file_path: &str,
