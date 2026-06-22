@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-  blockfield_launcher_lib::run();
+    blockfield_launcher_lib::run();
 }

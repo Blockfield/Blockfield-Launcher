@@ -267,37 +267,104 @@ struct FieldDef {
 }
 
 const MODPACK_FIELDS: &[FieldDef] = &[
-    FieldDef { field: "version", field_type: "string" },
-    FieldDef { field: "minecraft_version", field_type: "string" },
-    FieldDef { field: "prune", field_type: "json" },
-    FieldDef { field: "java_version", field_type: "string" },
-    FieldDef { field: "java_platform", field_type: "string" },
-    FieldDef { field: "java_url", field_type: "string" },
-    FieldDef { field: "java_sha256", field_type: "string" },
-    FieldDef { field: "java_size", field_type: "integer" },
-    FieldDef { field: "forge_version", field_type: "string" },
-    FieldDef { field: "forge_url", field_type: "string" },
-    FieldDef { field: "forge_sha256", field_type: "string" },
-    FieldDef { field: "forge_size", field_type: "integer" },
-    FieldDef { field: "modpack_zip", field_type: "uuid" },
-    FieldDef { field: "zip_url", field_type: "string" },
-    FieldDef { field: "build_url", field_type: "string" },
+    FieldDef {
+        field: "version",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "minecraft_version",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "prune",
+        field_type: "json",
+    },
+    FieldDef {
+        field: "java_version",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "java_platform",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "java_url",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "java_sha256",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "java_size",
+        field_type: "integer",
+    },
+    FieldDef {
+        field: "forge_version",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "forge_url",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "forge_sha256",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "forge_size",
+        field_type: "integer",
+    },
+    FieldDef {
+        field: "modpack_zip",
+        field_type: "uuid",
+    },
+    FieldDef {
+        field: "zip_url",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "build_url",
+        field_type: "string",
+    },
 ];
 
 const UPDATE_FIELDS: &[FieldDef] = &[
-    FieldDef { field: "version", field_type: "string" },
-    FieldDef { field: "notes", field_type: "text" },
-    FieldDef { field: "pub_date", field_type: "string" },
-    FieldDef { field: "platforms", field_type: "json" },
-    FieldDef { field: "windows_url", field_type: "string" },
-    FieldDef { field: "windows_signature", field_type: "string" },
+    FieldDef {
+        field: "version",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "notes",
+        field_type: "text",
+    },
+    FieldDef {
+        field: "pub_date",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "platforms",
+        field_type: "json",
+    },
+    FieldDef {
+        field: "windows_url",
+        field_type: "string",
+    },
+    FieldDef {
+        field: "windows_signature",
+        field_type: "string",
+    },
 ];
 
 // launcher_content: no predefined fields — user adds via admin UI
 
 async fn ensure_directus_collections(config: &AppConfig, client: &Client) {
-    let Some(base) = &config.directus_url else { return };
-    let Some(token) = &config.directus_token else { return };
+    let Some(base) = &config.directus_url else {
+        return;
+    };
+    let Some(token) = &config.directus_token else {
+        return;
+    };
 
     // Step 1: list existing collections
     let existing: Vec<String> = match list_directus_items(client, base, token, "collections").await
@@ -380,18 +447,22 @@ async fn ensure_fields(config: &AppConfig, client: &Client, collection: &str, ne
         return;
     }
 
-    let Some(base) = &config.directus_url else { return };
-    let Some(token) = &config.directus_token else { return };
+    let Some(base) = &config.directus_url else {
+        return;
+    };
+    let Some(token) = &config.directus_token else {
+        return;
+    };
 
     // List existing fields
-    let existing: Vec<String> = match list_directus_items(client, base, token, &format!("fields/{collection}")).await
-    {
-        Some(items) => items
-            .into_iter()
-            .filter_map(|v| v["field"].as_str().map(String::from))
-            .collect(),
-        None => return,
-    };
+    let existing: Vec<String> =
+        match list_directus_items(client, base, token, &format!("fields/{collection}")).await {
+            Some(items) => items
+                .into_iter()
+                .filter_map(|v| v["field"].as_str().map(String::from))
+                .collect(),
+            None => return,
+        };
 
     for def in needed {
         if existing.iter().any(|f| f == def.field) {
@@ -407,12 +478,19 @@ async fn ensure_fields(config: &AppConfig, client: &Client, collection: &str, ne
             .await
         {
             Ok(r) if r.status().is_success() => {
-                println!("Directus: field '{collection}.{field}' ({ftype}) created", field = def.field, ftype = def.field_type);
+                println!(
+                    "Directus: field '{collection}.{field}' ({ftype}) created",
+                    field = def.field,
+                    ftype = def.field_type
+                );
             }
             Ok(r) => {
                 let status = r.status();
                 let body = r.text().await.unwrap_or_default();
-                eprintln!("Directus: cannot create field '{collection}.{field}' ({status}): {body}", field = def.field);
+                eprintln!(
+                    "Directus: cannot create field '{collection}.{field}' ({status}): {body}",
+                    field = def.field
+                );
                 // ponytail: don't abort on field-level errors, try next field
             }
             Err(e) => eprintln!(

@@ -30,15 +30,24 @@ impl Default for LauncherConfig {
 }
 
 fn env_string(key: &str, default: &str) -> String {
-    std::env::var(key).ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| default.to_string())
+    std::env::var(key)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| default.to_string())
 }
 
 fn env_u32(key: &str, default: u32) -> u32 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn env_bool(key: &str, default: bool) -> bool {
-    std::env::var(key).ok().map(|v| v == "true" || v == "1").unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(default)
 }
 
 /// Platform-appropriate default game directory.
@@ -63,12 +72,10 @@ pub fn config_path(app_data_dir: &PathBuf) -> PathBuf {
 pub fn load_config(app_data_dir: &PathBuf) -> LauncherConfig {
     let path = config_path(app_data_dir);
     match std::fs::read_to_string(&path) {
-        Ok(json) => {
-            serde_json::from_str(&json).unwrap_or_else(|e| {
-                log::warn!("Failed to parse launcher config, using defaults: {e}");
-                LauncherConfig::default()
-            })
-        }
+        Ok(json) => serde_json::from_str(&json).unwrap_or_else(|e| {
+            log::warn!("Failed to parse launcher config, using defaults: {e}");
+            LauncherConfig::default()
+        }),
         Err(e) => {
             log::info!("No existing launcher config ({e}), using defaults");
             LauncherConfig::default()
@@ -81,8 +88,8 @@ pub fn save_config(app_data_dir: &PathBuf, config: &LauncherConfig) -> Result<()
     std::fs::create_dir_all(app_data_dir)
         .map_err(|e| format!("Failed to create app data dir: {e}"))?;
     let path = config_path(app_data_dir);
-    let json =
-        serde_json::to_string_pretty(config).map_err(|e| format!("Failed to serialize config: {e}"))?;
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize config: {e}"))?;
     std::fs::write(&path, json).map_err(|e| format!("Failed to write config: {e}"))?;
     log::info!("Launcher config saved to {}", path.display());
     Ok(())

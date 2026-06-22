@@ -311,14 +311,7 @@ impl Downloader {
             let grand = self.grand_total.load(Ordering::Relaxed);
 
             self.emit_progress(
-                file_path,
-                file_index,
-                file_count,
-                file_bytes,
-                file_size,
-                cumulative,
-                grand,
-                speed,
+                file_path, file_index, file_count, file_bytes, file_size, cumulative, grand, speed,
             );
         }
 

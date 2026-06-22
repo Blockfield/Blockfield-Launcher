@@ -11,7 +11,9 @@ fn version_manifest_url() -> &'static str {
         std::env::var("BLOCKFIELD_MOJANG_MANIFEST_URL")
             .ok()
             .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json".to_string())
+            .unwrap_or_else(|| {
+                "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json".to_string()
+            })
             .into_boxed_str(),
     )
 }
@@ -576,9 +578,7 @@ fn build_classpath(
         })
         .collect();
     if let Some(forge_json) = forge_json {
-        let forge_version_id = forge_json["id"]
-            .as_str()
-            .unwrap_or_default();
+        let forge_version_id = forge_json["id"].as_str().unwrap_or_default();
         paths.extend(
             forge_processed_jars(game_dir, forge_version_id)
                 .into_iter()
