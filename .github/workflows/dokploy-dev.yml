@@ -18,19 +18,14 @@ env:
 
 jobs:
   tauri-release:
-    name: Build Tauri release
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    name: Build Windows Tauri release
+    runs-on: windows-latest
     permissions:
       contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install Linux Tauri dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -63,34 +58,40 @@ jobs:
       - name: Publish dev release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
         run: |
-          release_notes="Dev build for ${GITHUB_SHA}"
-          mapfile -t files < <(find target/release/bundle -maxdepth 2 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) | sort)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "No Tauri bundles found."
+          $releaseNotes = "Dev Windows build for $env:GITHUB_SHA"
+          $files = @(
+            Get-ChildItem -Path target/release/bundle, src-tauri/target/release/bundle -Recurse -File -Filter *.exe -ErrorAction SilentlyContinue |
+              Sort-Object FullName |
+              Select-Object -ExpandProperty FullName
+          )
+          if ($files.Count -eq 0) {
+            Write-Error "No Windows Tauri .exe bundles found."
             exit 1
-          fi
+          }
 
-          if gh release view dev >/dev/null 2>&1; then
-            gh release edit dev --title dev --notes "$release_notes" --prerelease
-          else
-            gh release create dev --title dev --notes "$release_notes" --prerelease --target "${GITHUB_SHA}" --latest=false
-          fi
+          gh release view dev *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit dev --title dev --notes $releaseNotes --prerelease
+          } else {
+            gh release create dev --title dev --notes $releaseNotes --prerelease --target $env:GITHUB_SHA --latest=false
+          }
 
-          release_id="$(gh release view dev --json databaseId --jq .databaseId)"
-          gh api -X PATCH "repos/{owner}/{repo}/releases/${release_id}" \
-            -f tag_name=dev \
-            -f name=dev \
-            -f body="$release_notes" \
-            -F prerelease=true \
-            -F make_latest=false \
+          $releaseId = gh release view dev --json databaseId --jq .databaseId
+          gh api -X PATCH "repos/{owner}/{repo}/releases/$releaseId" `
+            -f tag_name=dev `
+            -f name=dev `
+            -f body="$releaseNotes" `
+            -F prerelease=true `
+            -F make_latest=false `
             --silent
 
-          gh release view dev --json assets --jq '.assets[].name' | while read -r asset; do
-            gh release delete-asset dev "$asset" -y
-          done
+          gh release view dev --json assets --jq '.assets[].name' | ForEach-Object {
+            gh release delete-asset dev $_ -y
+          }
 
-          gh release upload dev "${files[@]}" --clobber
+          gh release upload dev @files --clobber
 
   build-push-deploy:
     name: Build, push, deploy
