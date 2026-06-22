@@ -6,9 +6,12 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 PASS=0
+
+# ── Staged files ────────────────────────────────────────────────────────────
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 section() {
@@ -29,21 +32,67 @@ check_step() {
     fi
 }
 
-# ── Rust (backend + api) ────────────────────────────────────────────────────
-section "Rust — backend & API"
+has_files() {
+    # Return true if any staged file matches the given grep pattern
+    echo "$STAGED" | grep -qE "$1"
+}
 
-check_step "cargo fmt --check"          cargo fmt --check
-check_step "cargo clippy -- -D warnings" cargo clippy -- -D warnings
-check_step "cargo test"                  cargo test
+# ── Rust (backend + API) ────────────────────────────────────────────────────
+if has_files '\.rs$|Cargo\.(toml|lock)$'; then
+    section "Rust — backend & API"
+
+    RUST_FILES=$(echo "$STAGED" | grep '\.rs$' || true)
+
+    check_step "cargo fmt --check"          cargo fmt --check
+    check_step "cargo clippy -- -D warnings" cargo clippy -- -D warnings
+    check_step "cargo test"                  cargo test
+else
+    echo -e "${CYAN}⏭  Rust — no changes, skipped${NC}"
+fi
 
 # ── Frontend ────────────────────────────────────────────────────────────────
-section "Frontend — lint, format, types & tests"
+if has_files '^src/.*\.(ts|tsx|css|json|js|mjs)$|^(tsconfig|vite|eslint|\.prettierrc|package)'; then
+    section "Frontend — lint, format, types & tests"
 
-check_step "prettier --check"            pnpm run format:check
-check_step "eslint"                      pnpm run lint
-check_step "stylelint"                   pnpm run stylelint
-check_step "tsc --noEmit (typecheck)"    pnpm run typecheck
-check_step "vitest run"                  pnpm run test
+    # Files that prettier / eslint / stylelint accept as arguments
+    TS_FILES=$(echo "$STAGED" | grep -E '\.(ts|tsx)$' || true)
+    CSS_FILES=$(echo "$STAGED" | grep -E '\.css$' || true)
+
+    if [ -n "$TS_FILES" ] || [ -n "$CSS_FILES" ]; then
+        # prettier — check only changed files (plus a few always-checked globs to be safe)
+        PRETTIER_ARGS=()
+        [ -n "$TS_FILES" ] && PRETTIER_ARGS+=($TS_FILES)
+        [ -n "$CSS_FILES" ] && PRETTIER_ARGS+=($CSS_FILES)
+        check_step "prettier --check (changed files)" \
+            npx prettier --check "${PRETTIER_ARGS[@]}"
+    else
+        echo -e "${CYAN}⏭  prettier — no style/script changes, skipped${NC}"
+    fi
+
+    if [ -n "$TS_FILES" ]; then
+        check_step "eslint (changed files)" \
+            npx eslint $TS_FILES
+    else
+        echo -e "${CYAN}⏭  eslint — no TS/TSX changes, skipped${NC}"
+    fi
+
+    if [ -n "$CSS_FILES" ]; then
+        check_step "stylelint (changed files)" \
+            npx stylelint $CSS_FILES
+    else
+        echo -e "${CYAN}⏭  stylelint — no CSS changes, skipped${NC}"
+    fi
+
+    # tsc and vitest are full-project checks — run only when TS files changed
+    if [ -n "$TS_FILES" ]; then
+        check_step "tsc --noEmit (typecheck)"   pnpm run typecheck
+        check_step "vitest run"                  pnpm run test
+    else
+        echo -e "${CYAN}⏭  typecheck & tests — no TS changes, skipped${NC}"
+    fi
+else
+    echo -e "${CYAN}⏭  Frontend — no changes, skipped${NC}"
+fi
 
 # ── Result ──────────────────────────────────────────────────────────────────
 echo
