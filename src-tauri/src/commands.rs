@@ -537,33 +537,50 @@ pub async fn download_modpack(
         installed.files
     };
 
-    emit_status(&app_handle, "modpack", "Syncing modpack files", true);
-    state
-        .downloader
-        .download_files(&manifest, &config.game_dir, &installed_sha256)
-        .await
-        .map_err(|e| {
-            log::error!("Download failed: {e}");
-            e.to_string()
-        })?;
-    emit_status(&app_handle, "modpack", "Modpack files ready", false);
+    emit_status(
+        &app_handle,
+        "modpack",
+        "Syncing modpack files + preparing runtime",
+        true,
+    );
 
+    let game_dir = PathBuf::from(&config.game_dir);
     let forge_version_id = manifest
         .forge
         .as_ref()
         .map(|forge| crate::minecraft::forge_version_id(&forge.version));
-    emit_status(&app_handle, "runtime", "Preparing Minecraft runtime", true);
-    let result = crate::minecraft::ensure_launch_dependencies(
-        &state.downloader,
-        &PathBuf::from(&config.game_dir),
-        &manifest.minecraft_version,
-        forge_version_id.as_deref(),
-    )
-    .await;
-    if result.is_ok() {
+
+    // Modpack files and Minecraft runtime are independent — run them concurrently.
+    let (modpack_result, runtime_result) = tokio::join!(
+        async {
+            state
+                .downloader
+                .download_files(&manifest, &config.game_dir, &installed_sha256)
+                .await
+                .map_err(|e| {
+                    log::error!("Download failed: {e}");
+                    e.to_string()
+                })
+        },
+        async {
+            crate::minecraft::ensure_launch_dependencies(
+                &state.downloader,
+                &app_handle,
+                &game_dir,
+                &manifest.minecraft_version,
+                forge_version_id.as_deref(),
+            )
+            .await
+        },
+    );
+
+    modpack_result?;
+    emit_status(&app_handle, "modpack", "Modpack files ready", false);
+
+    if runtime_result.is_ok() {
         emit_status(&app_handle, "ready", "Minecraft runtime ready", false);
     }
-    result
+    runtime_result
 }
 
 #[tauri::command]
@@ -664,6 +681,7 @@ pub async fn launch_game(
         );
         crate::minecraft::ensure_launch_dependencies(
             &state.downloader,
+            &app_handle,
             &game_dir_path,
             &minecraft_version,
             forge_version_id.as_deref(),

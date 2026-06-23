@@ -1,8 +1,11 @@
 use crate::download::Downloader;
+use futures_util::StreamExt;
+use serde::Serialize;
 use serde_json::Value;
 use sha2::Digest;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Emitter};
 
 // option_env! bakes values at compile time (CI sets them during build).
 // Falls back to hardcoded defaults for local dev.
@@ -100,15 +103,18 @@ pub fn has_launch_dependencies(
 
 pub async fn ensure_launch_dependencies(
     downloader: &Downloader,
+    app_handle: &AppHandle,
     game_dir: &Path,
     minecraft_version: &str,
     forge_version_id: Option<&str>,
 ) -> Result<(), String> {
     std::fs::create_dir_all(game_dir).map_err(|e| format!("Failed to create game dir: {e}"))?;
 
+    emit(app_handle, "runtime", "Fetching version manifest", false);
     ensure_version_json(game_dir, minecraft_version).await?;
     let vanilla_json = read_json_file(&version_json_path(game_dir, minecraft_version))?;
 
+    emit(app_handle, "runtime", "Downloading Minecraft client", true);
     ensure_client_jar(downloader, game_dir, minecraft_version, &vanilla_json).await?;
 
     let mut jsons = vec![vanilla_json.clone()];
@@ -135,25 +141,52 @@ pub async fn ensure_launch_dependencies(
     libraries = dedupe_artifacts(libraries);
     native_libraries = dedupe_artifacts(native_libraries);
 
-    download_artifacts(
-        downloader,
-        &game_dir.join("libraries"),
-        "libraries",
-        &libraries,
-    )
-    .await?;
-    download_artifacts(
-        downloader,
-        &game_dir.join("libraries"),
-        "native libraries",
-        &native_libraries,
-    )
-    .await?;
+    // Libraries + assets are independent — run them concurrently.
+    emit(
+        app_handle,
+        "runtime",
+        &format!("Downloading {} libraries + game assets", libraries.len()),
+        true,
+    );
 
-    extract_native_libraries(game_dir, minecraft_version, &native_libraries)?;
-    ensure_assets(downloader, game_dir, &vanilla_json).await?;
+    let libs_dir = game_dir.join("libraries");
+    let vanilla = &vanilla_json;
+
+    let (lib_result, asset_result) = tokio::join!(
+        async {
+            download_artifacts(downloader, &libs_dir, "libraries", &libraries).await?;
+
+            if !native_libraries.is_empty() {
+                download_artifacts(downloader, &libs_dir, "native libraries", &native_libraries)
+                    .await?;
+                extract_native_libraries(game_dir, minecraft_version, &native_libraries)?;
+            }
+            Ok::<_, String>(())
+        },
+        async { ensure_assets(downloader, game_dir, vanilla).await },
+    );
+
+    lib_result?;
+    asset_result?;
 
     Ok(())
+}
+
+fn emit(app_handle: &AppHandle, phase: &str, message: &str, cancelable: bool) {
+    #[derive(Serialize, Clone)]
+    struct Payload<'a> {
+        phase: &'a str,
+        message: &'a str,
+        cancelable: bool,
+    }
+    let _ = app_handle.emit(
+        "launcher://status",
+        Payload {
+            phase,
+            message,
+            cancelable,
+        },
+    );
 }
 
 pub fn build_launch_args(
@@ -334,56 +367,70 @@ async fn download_artifacts(
     label: &str,
     artifacts: &[Artifact],
 ) -> Result<(), String> {
-    let missing: Vec<Artifact> = artifacts
+    let missing: Vec<(usize, Artifact)> = artifacts
         .iter()
-        .filter(|artifact| artifact_needs_download(root, artifact))
-        .cloned()
+        .enumerate()
+        .filter(|(_, a)| artifact_needs_download(root, a))
+        .map(|(i, a)| (i, a.clone()))
         .collect();
 
     if missing.is_empty() {
         return Ok(());
     }
 
-    let total_bytes = missing.iter().map(|artifact| artifact.size).sum();
-    // Add this batch's total to the Downloader's atomic grand total
-    // so the frontend sees consistent total-bytes-all across all phases.
+    let total_bytes: u64 = missing.iter().map(|(_, a)| a.size).sum();
     downloader.add_to_grand_total(total_bytes);
-    let mut downloaded = 0;
     let file_count = missing.len();
+    let root = root.to_path_buf();
+    let label = label.to_string();
 
-    for (index, artifact) in missing.iter().enumerate() {
-        let dest = root.join(&artifact.path);
-        let file_label = format!("{label}/{}", artifact.path);
-        downloader
-            .download_one(
-                &artifact.url,
-                &dest,
-                &file_label,
-                artifact.size,
-                index + 1,
-                file_count,
-                &mut downloaded,
-                total_bytes,
-            )
-            .await
-            .map_err(|e| format!("Failed to download {file_label}: {e}"))?;
+    // ponytail: same parallel pattern as download_jobs in download.rs.
+    // 6 concurrent downloads matches the modpack download fan-out.
+    const PARALLEL: usize = 6;
 
-        if artifact.size > 0 {
-            let actual_size = dest
-                .metadata()
-                .map_err(|e| format!("Failed to stat {}: {e}", dest.display()))?
-                .len();
-            if actual_size != artifact.size {
-                let _ = std::fs::remove_file(&dest);
-                return Err(format!(
-                    "Size mismatch for {file_label}: expected {}, got {}",
-                    artifact.size, actual_size
-                ));
+    let results: Vec<Result<(), String>> = futures_util::stream::iter(missing)
+        .map(|(index, artifact)| {
+            let root = root.clone();
+            let label = label.clone();
+            async move {
+                let mut downloaded: u64 = 0;
+                let dest = root.join(&artifact.path);
+                let file_label = format!("{}/{}", label, artifact.path);
+                downloader
+                    .download_one(
+                        &artifact.url,
+                        &dest,
+                        &file_label,
+                        artifact.size,
+                        index + 1,
+                        file_count,
+                        &mut downloaded,
+                        total_bytes,
+                    )
+                    .await
+                    .map_err(|e| format!("Failed to download {}: {}", file_label, e))?;
+
+                if artifact.size > 0 {
+                    let actual_size = dest
+                        .metadata()
+                        .map_err(|e| format!("Failed to stat {}: {}", dest.display(), e))?
+                        .len();
+                    if actual_size != artifact.size {
+                        let _ = std::fs::remove_file(&dest);
+                        return Err(format!(
+                            "Size mismatch for {}: expected {}, got {}",
+                            file_label, artifact.size, actual_size
+                        ));
+                    }
+                }
+                Ok(())
             }
-        }
-    }
+        })
+        .buffer_unordered(PARALLEL)
+        .collect()
+        .await;
 
-    Ok(())
+    results.into_iter().collect()
 }
 
 fn artifact_needs_download(root: &Path, artifact: &Artifact) -> bool {
