@@ -9,6 +9,7 @@ use App\Models\Translation;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 
 class DatabaseSeeder extends Seeder
 {
@@ -52,7 +53,7 @@ class DatabaseSeeder extends Seeder
             ],
         );
 
-        if (FeatureCard::count() === 0) {
+        if (Schema::hasTable('feature_cards') && FeatureCard::count() === 0) {
             FeatureCard::insert([
                 ['icon' => 'flag', 'title' => 'CAPTURE POINTS', 'desc' => 'Dynamic objective control across multiple sectors.', 'sort_order' => 0, 'created_at' => now(), 'updated_at' => now()],
                 ['icon' => 'swords', 'title' => '6 CLASSES', 'desc' => 'Assault, Recon, Engineer, Medic, Support, Pilot.', 'sort_order' => 1, 'created_at' => now(), 'updated_at' => now()],
@@ -61,13 +62,13 @@ class DatabaseSeeder extends Seeder
             ]);
         }
 
-        if (NewsFeedEntry::count() === 0) {
+        if (Schema::hasTable('news_feed_entries') && NewsFeedEntry::count() === 0) {
             NewsFeedEntry::insert([
                 ['tag' => 'PATCH', 'tone' => 'amber', 'date' => '06.07', 'title' => '0.1.43 - Vehicle Balance', 'body' => 'New modpack release is available.', 'sort_order' => 0, 'created_at' => now(), 'updated_at' => now()],
             ]);
         }
 
-        if (Translation::count() === 0) {
+        if (Schema::hasTable('translations') && Translation::count() === 0) {
             Translation::insert([
                 // ru
                 ['locale' => 'ru', 'key' => 'nav.deploy', 'value' => 'БОЙ', 'created_at' => now(), 'updated_at' => now()],

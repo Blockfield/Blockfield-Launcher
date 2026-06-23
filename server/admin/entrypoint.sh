@@ -28,6 +28,14 @@ CMS_TOKEN=${CMS_TOKEN:-}
 EOF
 
 php artisan migrate --force
+
+# ponytail: if DB has stale migration history (tables missing but recorded as run),
+# fall back to fresh migration. SQLite3 CLI may not be available; php -r is.
+if ! php -r "echo (new PDO('sqlite:' . (getenv('DB_DATABASE') ?: '/data/database.sqlite')))->query('SELECT count(*) FROM sqlite_master WHERE type=\"table\" AND name=\"feature_cards\"')->fetchColumn();" 2>/dev/null | grep -q 1; then
+  echo "=> Tables missing — running fresh migration"
+  php artisan migrate:fresh --force
+fi
+
 php artisan db:seed --force
 php artisan optimize:clear >/dev/null
 
