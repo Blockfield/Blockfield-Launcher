@@ -2,7 +2,10 @@
 
 namespace Database\Seeders;
 
+use App\Models\FeatureCard;
 use App\Models\LauncherContent;
+use App\Models\NewsFeedEntry;
+use App\Models\Translation;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
@@ -20,7 +23,7 @@ class DatabaseSeeder extends Seeder
         );
 
         LauncherContent::firstOrCreate(
-            ['status' => 'published'],
+            [],
             [
                 'brand' => 'BLOCKFIELD',
                 'brand_subtitle' => 'TACTICAL OPS',
@@ -46,18 +49,31 @@ class DatabaseSeeder extends Seeder
                 'network_status' => 'NETWORK NOMINAL',
                 'update_description' => 'Synchronizing modpack assets with the primary deployment server. Do not close the launcher until the operation completes.',
                 'settings_preferences' => '/ LAUNCHER PREFERENCES',
-                'translations' => ['en' => [], 'ru' => [], 'uk' => []],
-                'features' => [
-                    ['icon' => 'flag', 'title' => 'CAPTURE POINTS', 'desc' => 'Dynamic objective control across multiple sectors.'],
-                    ['icon' => 'swords', 'title' => '6 CLASSES', 'desc' => 'Assault, Recon, Engineer, Medic, Support, Pilot.'],
-                    ['icon' => 'truck', 'title' => 'ARMORED VEHICLES', 'desc' => 'Tanks, APCs, light recon and air transport.'],
-                    ['icon' => 'crosshair', 'title' => 'TACTICAL BATTLES', 'desc' => 'Squad-based 64v64 persistent warfare.'],
-                ],
-                'feed' => [
-                    ['tag' => 'PATCH', 'tone' => 'amber', 'date' => '06.07', 'title' => '0.1.43 - Vehicle Balance', 'body' => 'New modpack release is available.'],
-                ],
             ],
         );
 
+        if (FeatureCard::count() === 0) {
+            FeatureCard::insert([
+                ['icon' => 'flag', 'title' => 'CAPTURE POINTS', 'desc' => 'Dynamic objective control across multiple sectors.', 'sort_order' => 0, 'created_at' => now(), 'updated_at' => now()],
+                ['icon' => 'swords', 'title' => '6 CLASSES', 'desc' => 'Assault, Recon, Engineer, Medic, Support, Pilot.', 'sort_order' => 1, 'created_at' => now(), 'updated_at' => now()],
+                ['icon' => 'truck', 'title' => 'ARMORED VEHICLES', 'desc' => 'Tanks, APCs, light recon and air transport.', 'sort_order' => 2, 'created_at' => now(), 'updated_at' => now()],
+                ['icon' => 'crosshair', 'title' => 'TACTICAL BATTLES', 'desc' => 'Squad-based 64v64 persistent warfare.', 'sort_order' => 3, 'created_at' => now(), 'updated_at' => now()],
+            ]);
+        }
+
+        if (NewsFeedEntry::count() === 0) {
+            NewsFeedEntry::insert([
+                ['tag' => 'PATCH', 'tone' => 'amber', 'date' => '06.07', 'title' => '0.1.43 - Vehicle Balance', 'body' => 'New modpack release is available.', 'sort_order' => 0, 'created_at' => now(), 'updated_at' => now()],
+            ]);
+        }
+
+        if (Translation::count() === 0) {
+            Translation::insert([
+                // ru
+                ['locale' => 'ru', 'key' => 'nav.deploy', 'value' => 'БОЙ', 'created_at' => now(), 'updated_at' => now()],
+                // uk
+                ['locale' => 'uk', 'key' => 'nav.deploy', 'value' => 'БІЙ', 'created_at' => now(), 'updated_at' => now()],
+            ]);
+        }
     }
 }

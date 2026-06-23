@@ -2,8 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\FeatureCard;
 use App\Models\LauncherContent;
 use App\Models\ModpackRelease;
+use App\Models\NewsFeedEntry;
+use App\Models\Translation;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,7 +19,7 @@ class CmsApiController extends Controller
     public function items(Request $request, string $collection): JsonResponse
     {
         $model = $this->modelFor($collection);
-        $query = $model::query()->where('status', 'published');
+        $query = $model::query();
         $sort = (string) $request->query('sort', '-id');
         $direction = str_starts_with($sort, '-') ? 'desc' : 'asc';
         $column = ltrim($sort, '-') ?: 'id';
@@ -30,7 +33,37 @@ class CmsApiController extends Controller
             $query->limit($limit);
         }
 
-        return response()->json(['data' => $query->get()]);
+        $records = $query->get();
+
+        // ponytail: stitch related data for launcher_content so the Rust server sees the same JSON shape
+        if ($collection === 'launcher_content') {
+            $features = FeatureCard::orderBy('sort_order')->get()
+                ->map(fn ($card) => ['icon' => $card->icon, 'title' => $card->title, 'desc' => $card->desc])
+                ->toArray();
+
+            $feed = NewsFeedEntry::orderBy('sort_order')->get()
+                ->map(fn ($entry) => [
+                    'tag' => $entry->tag,
+                    'tone' => $entry->tone,
+                    'date' => $entry->date,
+                    'title' => $entry->title,
+                    'body' => $entry->body,
+                ])
+                ->toArray();
+
+            $translations = Translation::all()
+                ->groupBy('locale')
+                ->map(fn ($group) => $group->pluck('value', 'key'))
+                ->toArray();
+
+            foreach ($records as $record) {
+                $record->features = $features;
+                $record->feed = $feed;
+                $record->translations = $translations;
+            }
+        }
+
+        return response()->json(['data' => $records]);
     }
 
     public function storeItem(Request $request, string $collection): JsonResponse

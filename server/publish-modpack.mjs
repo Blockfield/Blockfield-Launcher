@@ -40,7 +40,6 @@ async function createRelease(fileId, version, minecraftVersion) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      status: 'published',
       version,
       minecraft_version: minecraftVersion,
       modpack_zip: fileId,

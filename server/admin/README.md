@@ -7,7 +7,7 @@ Port: `8055`
 
 ## Collections
 
-The API server reads only rows where `status` is `published`.
+The API server reads all rows (no publish/draft status — everything is live).
 
 ### `modpack_releases`
 
@@ -23,12 +23,19 @@ Optional:
 
 ### `launcher_content`
 
-Visible launcher copy, translations, feature cards, and news feed.
+Singleton record — launcher copy text (brand, server info, etc.). The `items/launcher_content` endpoint automatically stitches in data from the related collections below.
 
-JSON fields:
-- `translations` — `{ "en": { "nav.deploy": "DEPLOY" }, "ru": { "nav.deploy": "БОЙ" } }`
-- `features` — `{ "icon": "flag|swords|truck|crosshair", "title": "...", "desc": "..." }`
-- `feed` — `{ "tag": "PATCH", "tone": "amber|green|sand", "date": "06.07", "title": "...", "body": "..." }`
+### `feature_cards`
+
+Separate collection, each record: `icon`, `title`, `desc`, `sort_order`.
+
+### `news_feed_entries`
+
+Separate collection, each record: `tag` (PATCH|EVENT|OPS), `tone` (amber|green|sand), `date`, `title`, `body`, `sort_order`.
+
+### `translations`
+
+Separate collection, each record: `locale` (en|ru|uk), `key`, `value`. Unique on `(locale, key)`. Served as a nested object by the launcher_content endpoint.
 
 ## Environment variables
 

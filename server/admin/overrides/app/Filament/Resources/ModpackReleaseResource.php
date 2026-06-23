@@ -18,10 +18,6 @@ class ModpackReleaseResource extends Resource
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            Forms\Components\Select::make('status')
-                ->options(['draft' => 'Draft', 'published' => 'Published'])
-                ->default('draft')
-                ->required(),
             Forms\Components\TextInput::make('version')->required()->maxLength(255),
             Forms\Components\TextInput::make('minecraft_version')
                 ->default('1.20.1')
@@ -48,7 +44,6 @@ class ModpackReleaseResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('version')->searchable()->sortable(),
                 Tables\Columns\TextColumn::make('minecraft_version')->sortable(),
-                Tables\Columns\TextColumn::make('status')->badge()->sortable(),
                 Tables\Columns\TextColumn::make('created_at')->dateTime()->sortable(),
             ])
             ->defaultSort('id', 'desc')

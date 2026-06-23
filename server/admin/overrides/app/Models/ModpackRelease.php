@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Model;
 class ModpackRelease extends Model
 {
     protected $fillable = [
-        'status',
         'version',
         'minecraft_version',
         'modpack_zip',

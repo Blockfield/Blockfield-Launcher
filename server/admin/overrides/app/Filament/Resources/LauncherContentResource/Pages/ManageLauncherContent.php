@@ -13,7 +13,7 @@ class ManageLauncherContent extends EditRecord
     // ponytail: singleton — always resolve the one content record, ignoring the URL param
     public function mount($record = ''): void
     {
-        $this->record = LauncherContent::first() ?? LauncherContent::create(['status' => 'draft']);
+        $this->record = LauncherContent::first() ?? LauncherContent::create([]);
         $this->fillForm();
     }
 

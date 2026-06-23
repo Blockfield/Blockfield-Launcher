@@ -9,7 +9,6 @@ class LauncherContent extends Model
     protected $table = 'launcher_content';
 
     protected $fillable = [
-        'status',
         'brand',
         'brand_subtitle',
         'chrome_title',
@@ -34,17 +33,5 @@ class LauncherContent extends Model
         'network_status',
         'update_description',
         'settings_preferences',
-        'translations',
-        'features',
-        'feed',
     ];
-
-    protected function casts(): array
-    {
-        return [
-            'translations' => 'array',
-            'features' => 'array',
-            'feed' => 'array',
-        ];
-    }
 }
