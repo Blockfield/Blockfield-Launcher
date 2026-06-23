@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\FeatureCardResource\Pages;
 use App\Models\FeatureCard;
+use BackedEnum;
 use Filament\Actions;
 use Filament\Forms;
 use Filament\Resources\Resource;
@@ -15,7 +16,7 @@ class FeatureCardResource extends Resource
 {
     protected static ?string $model = FeatureCard::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-flag';
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-flag';
 
     protected static ?string $navigationLabel = 'Feature Cards';
 

@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\NewsFeedEntryResource\Pages;
 use App\Models\NewsFeedEntry;
+use BackedEnum;
 use Filament\Actions;
 use Filament\Forms;
 use Filament\Resources\Resource;
@@ -15,7 +16,7 @@ class NewsFeedEntryResource extends Resource
 {
     protected static ?string $model = NewsFeedEntry::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-newspaper';
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-newspaper';
 
     protected static ?string $navigationLabel = 'News Feed';
 
