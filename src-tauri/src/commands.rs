@@ -44,6 +44,73 @@ fn emit_status(
     }
 }
 
+fn java_exe_name() -> &'static str {
+    if cfg!(windows) {
+        "java.exe"
+    } else {
+        "java"
+    }
+}
+
+fn bundled_java_path(game_dir: impl AsRef<Path>) -> Option<PathBuf> {
+    let java_dir = game_dir.as_ref().join("java");
+    let direct = java_dir.join("bin").join(java_exe_name());
+    if direct.exists() {
+        return Some(direct);
+    }
+
+    find_bin_java(&java_dir)
+}
+
+fn find_bin_java(dir: &Path) -> Option<PathBuf> {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if is_bin_java(&path) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn is_bin_java(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case(java_exe_name()))
+        && path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("bin"))
+}
+
+fn java_runtime_ready(game_dir: &Path, version: &str) -> bool {
+    let java_ver_path = game_dir.join("java").join(".version");
+    matches!(std::fs::read_to_string(&java_ver_path), Ok(v) if v.trim() == version)
+        && bundled_java_path(game_dir).is_some()
+}
+
+fn resolved_java_path(config: &LauncherConfig) -> String {
+    let configured = config.java_path.trim();
+    if !configured.is_empty() {
+        let path = PathBuf::from(configured);
+        if path.exists() {
+            return path.to_string_lossy().to_string();
+        }
+    }
+
+    bundled_java_path(&config.game_dir)
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| "java".to_string())
+}
+
 // ── Settings commands ──────────────────────────────────────────
 
 #[tauri::command]
@@ -51,12 +118,7 @@ pub fn load_settings(state: State<'_, LauncherAppState>) -> Result<LauncherConfi
     let mut config = state.config.blocking_read().clone();
     // Auto-detect bundled Java if path is empty
     if config.java_path.is_empty() {
-        let java_exe = if cfg!(windows) { "java.exe" } else { "java" };
-        let bundled = PathBuf::from(&config.game_dir)
-            .join("java")
-            .join("bin")
-            .join(java_exe);
-        if bundled.exists() {
+        if let Some(bundled) = bundled_java_path(&config.game_dir) {
             config.java_path = bundled.to_string_lossy().to_string();
         }
     }
@@ -101,6 +163,7 @@ pub async fn check_modpack_version(
         })?;
 
     let config = state.config.read().await.clone();
+    let game_dir = PathBuf::from(&config.game_dir);
     let manifest_path =
         std::path::PathBuf::from(&config.game_dir).join(".blockfield-manifest.json");
     let manifest_exists = manifest_path.exists();
@@ -158,33 +221,18 @@ pub async fn check_modpack_version(
     // Check Java version if required
     let java_info = manifest.java.clone();
     let java_ok = if let Some(ref java) = java_info {
-        let java_ver_path = std::path::PathBuf::from(&config.game_dir)
-            .join("java")
-            .join(".version");
-        match std::fs::read_to_string(&java_ver_path) {
-            Ok(v) if v.trim() == java.version => {
-                log::info!("[check_modpack_version] Java OK: {}", v.trim());
-                true
-            }
-            Ok(v) => {
-                log::info!(
-                    "[check_modpack_version] Java mismatch: have {}, need {}",
-                    v.trim(),
-                    java.version
-                );
-                false
-            }
-            Err(_) => {
-                log::info!("[check_modpack_version] Java not installed");
-                false
-            }
+        if java_runtime_ready(&game_dir, &java.version) {
+            log::info!("[check_modpack_version] Java OK: {}", java.version);
+            true
+        } else {
+            log::info!("[check_modpack_version] Java not ready");
+            false
         }
     } else {
         true // No Java requirement
     };
 
     // Check Forge installation
-    let game_dir = PathBuf::from(&config.game_dir);
     let forge_ok = if let Some(ref forge) = manifest.forge {
         let forge_version_id = crate::minecraft::forge_version_id(&forge.version);
         let forge_json = game_dir
@@ -254,11 +302,7 @@ pub async fn download_modpack(
     let mut grand_total: u64 = 0;
     // Java
     if let Some(ref java) = manifest.java {
-        let java_ver_path = PathBuf::from(&config.game_dir)
-            .join("java")
-            .join(".version");
-        let need_java =
-            !matches!(std::fs::read_to_string(&java_ver_path), Ok(v) if v.trim() == java.version);
+        let need_java = !java_runtime_ready(Path::new(&config.game_dir), &java.version);
         if need_java {
             grand_total += java.size;
         }
@@ -289,8 +333,7 @@ pub async fn download_modpack(
     if let Some(ref java) = manifest.java {
         let java_dir = PathBuf::from(&config.game_dir).join("java");
         let java_ver_path = java_dir.join(".version");
-        let need_java =
-            !matches!(std::fs::read_to_string(&java_ver_path), Ok(v) if v.trim() == java.version);
+        let need_java = !java_runtime_ready(Path::new(&config.game_dir), &java.version);
 
         if need_java {
             log::info!("Downloading Java {} for {}", java.version, java.platform);
@@ -336,21 +379,17 @@ pub async fn download_modpack(
             emit_status(&app_handle, "java", "Extracting Java runtime", false);
             extract_archive(&archive_path, &java_dir)?;
             let _ = std::fs::remove_file(&archive_path);
+            let java_exe = bundled_java_path(&config.game_dir).ok_or_else(|| {
+                "Java runtime extracted but java executable was not found".to_string()
+            })?;
             std::fs::write(&java_ver_path, &java.version)
                 .map_err(|e| format!("Failed to write java version: {e}"))?;
-
-            let java_exe =
-                java_dir
-                    .join("bin")
-                    .join(if cfg!(windows) { "java.exe" } else { "java" });
-            if java_exe.exists() {
-                let java_path_str = java_exe.to_string_lossy().to_string();
-                let mut cfg = state.config.write().await;
-                cfg.java_path = java_path_str.clone();
-                config.java_path = java_path_str.clone();
-                let _ = crate::config::save_config(&state.app_data_dir, &cfg);
-                log::info!("Java installed, path saved: {java_path_str}");
-            }
+            let java_path_str = java_exe.to_string_lossy().to_string();
+            let mut cfg = state.config.write().await;
+            cfg.java_path = java_path_str.clone();
+            config.java_path = java_path_str.clone();
+            let _ = crate::config::save_config(&state.app_data_dir, &cfg);
+            log::info!("Java installed, path saved: {java_path_str}");
             emit_status(&app_handle, "java", "Java runtime ready", false);
         } else {
             emit_status(&app_handle, "java", "Java runtime ready", false);
@@ -420,16 +459,7 @@ pub async fn download_modpack(
                 .map_err(|e| format!("Failed to create launcher profile: {e}"))?;
             }
 
-            let java_bin = if cfg!(windows) { "java.exe" } else { "java" };
-            let java = PathBuf::from(&config.game_dir)
-                .join("java")
-                .join("bin")
-                .join(java_bin);
-            let java = if java.exists() {
-                java.to_string_lossy().to_string()
-            } else {
-                "java".to_string()
-            };
+            let java = resolved_java_path(&config);
 
             use tauri_plugin_shell::ShellExt;
             let output = app_handle
@@ -572,20 +602,7 @@ pub async fn launch_game(
     let config = state.config.read().await.clone();
     let manifest = state.manifest.read().await.clone();
 
-    // Resolve Java path: configured > auto-detected in game_dir > system "java"
-    let java_exe_name = if cfg!(windows) { "java.exe" } else { "java" };
-    let bundled_java = PathBuf::from(&config.game_dir)
-        .join("java")
-        .join("bin")
-        .join(java_exe_name);
-
-    let java = if !config.java_path.is_empty() {
-        config.java_path.clone()
-    } else if bundled_java.exists() {
-        bundled_java.to_string_lossy().to_string()
-    } else {
-        "java".to_string()
-    };
+    let java = resolved_java_path(&config);
 
     let ram_mb = config.ram_mb;
     let game_dir = config.game_dir.clone();
@@ -723,4 +740,31 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
         dest_dir.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_java_path_finds_nested_bin_java() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("blockfield-java-test-{}-{id}", std::process::id()));
+        let exe = root
+            .join("java")
+            .join("jdk-21")
+            .join("bin")
+            .join(java_exe_name());
+
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"").unwrap();
+
+        assert_eq!(bundled_java_path(&root), Some(exe));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
