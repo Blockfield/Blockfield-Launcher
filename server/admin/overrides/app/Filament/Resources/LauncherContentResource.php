@@ -4,12 +4,9 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\LauncherContentResource\Pages;
 use App\Models\LauncherContent;
-use Filament\Actions;
 use Filament\Forms;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
-use Filament\Tables;
-use Filament\Tables\Table;
 
 class LauncherContentResource extends Resource
 {
@@ -50,22 +47,6 @@ class LauncherContentResource extends Resource
             self::jsonTextarea('features', 'Feature cards JSON'),
             self::jsonTextarea('feed', 'News feed JSON'),
         ])->columns(3);
-    }
-
-    public static function table(Table $table): Table
-    {
-        return $table
-            ->columns([
-                Tables\Columns\TextColumn::make('brand')->searchable()->sortable(),
-                Tables\Columns\TextColumn::make('operation_name')->searchable()->sortable(),
-                Tables\Columns\TextColumn::make('status')->badge()->sortable(),
-                Tables\Columns\TextColumn::make('updated_at')->dateTime()->sortable(),
-            ])
-            ->defaultSort('id', 'desc')
-            ->recordActions([
-                Actions\EditAction::make(),
-                Actions\DeleteAction::make(),
-            ]);
     }
 
     public static function getPages(): array
