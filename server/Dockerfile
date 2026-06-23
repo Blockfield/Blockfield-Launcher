@@ -18,8 +18,7 @@ RUN mkdir -p shared/src server/src src-tauri/src && \
     echo '' > src-tauri/src/lib.rs
 
 # Build only dependencies (this layer is cached until Cargo.toml/lock changes)
-RUN cargo build --release -p blockfield-server && \
-    rm -rf target/release/deps/blockfield* target/release/blockfield-server*
+RUN cargo build --release -p blockfield-server
 
 # ── Now copy real source and build the binary ──
 COPY shared/src/ shared/src/
