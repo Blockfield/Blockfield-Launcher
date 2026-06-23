@@ -19,6 +19,12 @@ use std::{
 use tokio::{io::AsyncWriteExt, sync::RwLock};
 use tower_http::{compression::CompressionLayer, cors::CorsLayer};
 
+const DEFAULT_JAVA_VERSION: &str = "17";
+const DEFAULT_JAVA_PLATFORM: &str = "windows-x64";
+const DEFAULT_JAVA_URL: &str =
+    "https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jre/hotspot/normal/eclipse";
+const DEFAULT_JAVA_SIZE: u64 = 43_775_068;
+
 struct AppConfig {
     base_url: String,
     files_dir: PathBuf,
@@ -67,11 +73,11 @@ impl AppConfig {
             bind_host: env_string("BIND_HOST", "0.0.0.0"),
             port: env_string("PORT", "3000").parse().unwrap_or(3000),
             api_prefix: env_string("API_PREFIX", "api/launcher/v1"),
-            java_version: env_opt("JAVA_VERSION"),
-            java_platform: env_opt("JAVA_PLATFORM"),
-            java_url: env_opt("JAVA_URL"),
-            java_sha256: env_opt("JAVA_SHA256"),
-            java_size: env_u64("JAVA_SIZE"),
+            java_version: Some(env_string("JAVA_VERSION", DEFAULT_JAVA_VERSION)),
+            java_platform: Some(env_string("JAVA_PLATFORM", DEFAULT_JAVA_PLATFORM)),
+            java_url: Some(env_string("JAVA_URL", DEFAULT_JAVA_URL)),
+            java_sha256: Some(env_string("JAVA_SHA256", "")),
+            java_size: Some(env_u64("JAVA_SIZE").unwrap_or(DEFAULT_JAVA_SIZE)),
             forge_url: env_opt("FORGE_URL"),
             forge_version: env_opt("FORGE_VERSION"),
             forge_sha256: env_opt("FORGE_SHA256"),
@@ -979,6 +985,84 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            base_url: "http://localhost:3000".to_string(),
+            files_dir: PathBuf::new(),
+            extracted_dir: PathBuf::new(),
+            modpack_version: "0.1.0".to_string(),
+            minecraft_version: "1.20.1".to_string(),
+            bind_host: "127.0.0.1".to_string(),
+            port: 3000,
+            api_prefix: "api/launcher/v1".to_string(),
+            java_version: Some(DEFAULT_JAVA_VERSION.to_string()),
+            java_platform: Some(DEFAULT_JAVA_PLATFORM.to_string()),
+            java_url: Some(DEFAULT_JAVA_URL.to_string()),
+            java_sha256: Some(String::new()),
+            java_size: Some(DEFAULT_JAVA_SIZE),
+            forge_url: None,
+            forge_version: None,
+            forge_sha256: None,
+            forge_size: None,
+            cms_url: None,
+            cms_token: None,
+            cms_required: false,
+            modpack_collection: "modpack_releases".to_string(),
+            content_collection: "launcher_content".to_string(),
+            github_repo: None,
+            github_update_tag: "develop".to_string(),
+            github_token: None,
+            fallback_brand: "BLOCKFIELD".to_string(),
+            fallback_brand_subtitle: "TACTICAL OPS".to_string(),
+            fallback_chrome_title: "BLOCKFIELD LAUNCHER".to_string(),
+            fallback_operation_name: "IRON FRONT".to_string(),
+            fallback_server_ip: "play.blockfield.gg:25565".to_string(),
+            fallback_launcher_version: "0.4.2".to_string(),
+            fallback_update_url: "https://example.com/update.exe".to_string(),
+        }
+    }
+
+    #[test]
+    fn fallback_release_includes_java_runtime() {
+        let release = fallback_release(&test_config());
+        let java = release.java.unwrap();
+
+        assert_eq!(java.version, DEFAULT_JAVA_VERSION);
+        assert_eq!(java.platform, DEFAULT_JAVA_PLATFORM);
+        assert_eq!(java.url, DEFAULT_JAVA_URL);
+        assert_eq!(java.size, DEFAULT_JAVA_SIZE);
+    }
+
+    #[test]
+    fn cms_release_without_java_uses_default_java_runtime() {
+        let release = CmsRelease {
+            version: Some("0.1.0".to_string()),
+            minecraft_version: Some("1.20.1".to_string()),
+            prune: None,
+            java: None,
+            forge: None,
+            java_version: None,
+            java_platform: None,
+            java_url: None,
+            java_sha256: None,
+            java_size: None,
+            forge_version: None,
+            forge_url: None,
+            forge_sha256: None,
+            forge_size: None,
+            modpack_zip: None,
+            build_zip: None,
+            build_file: None,
+            zip_file: None,
+            file: None,
+            zip_url: None,
+            build_url: None,
+        }
+        .into_metadata(&test_config());
+
+        assert_eq!(release.java.unwrap().url, DEFAULT_JAVA_URL);
+    }
 
     #[test]
     fn rejects_zip_path_traversal() {

@@ -111,6 +111,16 @@ fn resolved_java_path(config: &LauncherConfig) -> String {
         .unwrap_or_else(|| "java".to_string())
 }
 
+fn system_java_available() -> bool {
+    std::process::Command::new("java")
+        .arg("-version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+}
+
 // ── Settings commands ──────────────────────────────────────────
 
 #[tauri::command]
@@ -603,6 +613,14 @@ pub async fn launch_game(
     let manifest = state.manifest.read().await.clone();
 
     let java = resolved_java_path(&config);
+    if java == "java" && !system_java_available() {
+        let hint = if manifest.as_ref().and_then(|m| m.java.as_ref()).is_some() {
+            "Java runtime is not installed. Open Updates to install it or select java.exe in Settings."
+        } else {
+            "Java runtime is not installed, and the deployment manifest does not provide a Java download."
+        };
+        return Err(hint.to_string());
+    }
 
     let ram_mb = config.ram_mb;
     let game_dir = config.game_dir.clone();
