@@ -21,6 +21,7 @@ jobs:
   tauri-release:
     name: Build Windows Tauri release
     runs-on: blacksmith-4vcpu-windows-2025
+    environment: dev
     permissions:
       contents: write
 
