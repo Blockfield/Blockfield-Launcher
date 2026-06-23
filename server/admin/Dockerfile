@@ -4,6 +4,9 @@ RUN apt-get update && apt-get install -y git unzip zip \
     && install-php-extensions intl pdo_sqlite zip opcache \
     && rm -rf /var/lib/apt/lists/*
 
+RUN echo "upload_max_filesize=2G\npost_max_size=2G\nmax_execution_time=300\nmax_input_time=300" \
+    > /usr/local/etc/php/conf.d/uploads.ini
+
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app

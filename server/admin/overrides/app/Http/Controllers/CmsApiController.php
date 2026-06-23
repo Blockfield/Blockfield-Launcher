@@ -45,7 +45,7 @@ class CmsApiController extends Controller
 
     public function storeFile(Request $request): JsonResponse
     {
-        $request->validate(['file' => ['required', 'file']]);
+        $request->validate(['file' => ['required', 'file', 'mimes:zip', 'max:2097152']]);
 
         $file = $request->file('file');
         $name = Str::uuid().'.'.($file->getClientOriginalExtension() ?: 'zip');

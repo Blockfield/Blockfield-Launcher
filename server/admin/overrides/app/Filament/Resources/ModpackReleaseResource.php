@@ -29,7 +29,9 @@ class ModpackReleaseResource extends Resource
                 ->maxLength(255),
             Forms\Components\FileUpload::make('modpack_zip')
                 ->label('Modpack ZIP')
-                ->directory('modpacks'),
+                ->directory('modpacks')
+                ->acceptedFileTypes(['application/zip', 'application/x-zip-compressed', 'application/x-zip'])
+                ->maxSize(2_000_000),
             Forms\Components\TextInput::make('zip_url')
                 ->label('External ZIP URL')
                 ->url()
