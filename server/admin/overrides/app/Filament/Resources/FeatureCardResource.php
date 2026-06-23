@@ -15,7 +15,7 @@ class FeatureCardResource extends Resource
 {
     protected static ?string $model = FeatureCard::class;
 
-    protected static $navigationIcon = 'heroicon-o-flag';
+    protected static ?string $navigationIcon = 'heroicon-o-flag';
 
     protected static ?string $navigationLabel = 'Feature Cards';
 

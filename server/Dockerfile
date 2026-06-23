@@ -4,14 +4,26 @@ FROM rust:1.88-slim-bookworm AS builder
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
+
+# ── Cargo dependency cache — copy only manifests, build deps first ──
 COPY Cargo.toml Cargo.lock ./
-COPY shared/ shared/
-COPY server/ server/
-COPY src-tauri/Cargo.toml src-tauri/Cargo.toml
-# Create dummy source files so cargo can resolve the workspace
-RUN mkdir -p src-tauri/src && \
+COPY shared/Cargo.toml shared/
+COPY server/Cargo.toml server/
+COPY src-tauri/Cargo.toml src-tauri/
+
+RUN mkdir -p shared/src server/src src-tauri/src && \
+    echo 'pub fn dummy() {}' > shared/src/lib.rs && \
+    echo 'fn main() {}' > server/src/main.rs && \
     echo 'fn main() {}' > src-tauri/src/main.rs && \
     echo '' > src-tauri/src/lib.rs
+
+# Build only dependencies (this layer is cached until Cargo.toml/lock changes)
+RUN cargo build --release -p blockfield-server && \
+    rm -rf target/release/deps/blockfield* target/release/blockfield-server*
+
+# ── Now copy real source and build the binary ──
+COPY shared/src/ shared/src/
+COPY server/src/ server/src/
 
 RUN cargo build --release -p blockfield-server && \
     cp target/release/blockfield-server /usr/local/bin/

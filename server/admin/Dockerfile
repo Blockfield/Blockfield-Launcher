@@ -1,3 +1,5 @@
+# ponytail: pin by digest to avoid cache invalidation on upstream rebuilds.
+# Run `docker pull dunglas/frankenphp:1-php8.3-bookworm` locally and copy the Digest: line here.
 FROM dunglas/frankenphp:1-php8.3-bookworm
 
 RUN apt-get update && apt-get install -y git unzip zip \
@@ -11,12 +13,13 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 
-RUN rm -rf /app/* /app/.[!.]* /app/..?*
-
-RUN composer create-project laravel/laravel:"^12.0" . --no-interaction --prefer-dist \
+# ── Composer dependency cache — only re-runs when base image or this RUN line changes ──
+RUN rm -rf /app/* /app/.[!.]* /app/..?* \
+    && composer create-project laravel/laravel:"^12.0" . --no-interaction --prefer-dist \
     && composer require filament/filament:"^5.0" --no-interaction \
     && php artisan filament:install --panels --no-interaction
 
+# Overrides and finalization — this layer invalidates on source changes, but deps stay cached
 COPY overrides/ ./
 COPY entrypoint.sh /usr/local/bin/blockfield-filament
 

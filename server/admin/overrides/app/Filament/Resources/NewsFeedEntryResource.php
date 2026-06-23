@@ -15,7 +15,7 @@ class NewsFeedEntryResource extends Resource
 {
     protected static ?string $model = NewsFeedEntry::class;
 
-    protected static $navigationIcon = 'heroicon-o-newspaper';
+    protected static ?string $navigationIcon = 'heroicon-o-newspaper';
 
     protected static ?string $navigationLabel = 'News Feed';
 
