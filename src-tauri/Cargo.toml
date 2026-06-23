@@ -32,7 +32,7 @@ sha2 = "0.10"
 zip = "4"
 directories = "6"
 thiserror = "2"
-tokio = { version = "1", features = ["sync", "time", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["sync", "time", "macros"] }
 futures-util = "0.3"
 dotenvy = "0.15"
 blockfield-shared = { path = "../shared" }
