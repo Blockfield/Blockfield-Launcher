@@ -136,27 +136,19 @@ jobs:
           Write-Host "Generated update.json:"
           Get-Content update.json
 
-          gh release view develop *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release edit develop --title develop --notes $releaseNotes --prerelease
-          } else {
-            gh release create develop --title develop --notes $releaseNotes --prerelease --target $env:GITHUB_SHA --latest=false
-          }
+          # Force develop tag to current commit — gh release edit doesn't move the tag
+          git tag -f develop $env:GITHUB_SHA
+          git push origin develop -f
 
-          $releaseId = gh release view develop --json databaseId --jq .databaseId
-          gh api -X PATCH "repos/{owner}/{repo}/releases/$releaseId" `
-            -f tag_name=develop `
-            -f name=develop `
-            -f body="$releaseNotes" `
-            -F prerelease=true `
-            -F make_latest=false `
-            --silent
-
-          gh release view develop --json assets --jq '.assets[].name' | ForEach-Object {
-            gh release delete-asset develop $_ -y
-          }
-
-          gh release upload develop $($installer.FullName) update.json --clobber
+          # Always delete and recreate so the release points to the new commit
+          gh release delete develop -y 2>$null
+          gh release create develop `
+            --title develop `
+            --notes $releaseNotes `
+            --prerelease `
+            --target $env:GITHUB_SHA `
+            --latest=false `
+            $($installer.FullName) update.json
 
   backend:
     name: Build & deploy backend
