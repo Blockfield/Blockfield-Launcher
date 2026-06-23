@@ -21,12 +21,6 @@ Optional:
 - `java` — JSON: `{ "version", "platform", "url", "sha256", "size" }`
 - `forge` — JSON: `{ "version", "url", "sha256", "size" }`
 
-### `launcher_updates`
-
-- `version`, `notes`, `pub_date`
-- `windows_url`, `windows_signature`
-- `platforms` — JSON for Tauri updater response
-
 ### `launcher_content`
 
 Visible launcher copy, translations, feature cards, and news feed.

@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\LauncherContent;
-use App\Models\LauncherUpdate;
 use App\Models\ModpackRelease;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -78,7 +77,6 @@ class CmsApiController extends Controller
     {
         return match ($collection) {
             'modpack_releases' => ModpackRelease::class,
-            'launcher_updates' => LauncherUpdate::class,
             'launcher_content' => LauncherContent::class,
             default => abort(404),
         };

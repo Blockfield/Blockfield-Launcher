@@ -42,7 +42,6 @@ struct AppConfig {
     cms_required: bool,
     modpack_collection: String,
     content_collection: String,
-    launcher_update_collection: String,
     // GitHub Releases — launcher update source
     github_repo: Option<String>,
     github_update_tag: String,
@@ -82,7 +81,6 @@ impl AppConfig {
             cms_required: env_string("CMS_REQUIRED", "false") == "true",
             modpack_collection: env_string("CMS_MODPACK_COLLECTION", "modpack_releases"),
             content_collection: env_string("CMS_CONTENT_COLLECTION", "launcher_content"),
-            launcher_update_collection: env_string("CMS_UPDATE_COLLECTION", "launcher_updates"),
             github_repo: env_opt("GITHUB_REPO"),
             github_update_tag: env_string("GITHUB_UPDATE_TAG", "develop"),
             github_token: env_opt("GITHUB_TOKEN"),
@@ -232,36 +230,6 @@ impl CmsRelease {
             source,
             from_cms: true,
         }
-    }
-}
-
-#[derive(Deserialize)]
-struct CmsLauncherUpdate {
-    version: Option<String>,
-    notes: Option<String>,
-    pub_date: Option<String>,
-    platforms: Option<Value>,
-    windows_url: Option<String>,
-    windows_signature: Option<String>,
-}
-
-impl CmsLauncherUpdate {
-    fn into_json(self) -> Value {
-        let platforms = self.platforms.unwrap_or_else(|| {
-            json!({
-                "windows-x86_64": {
-                    "url": self.windows_url.unwrap_or_default(),
-                    "signature": self.windows_signature.unwrap_or_default()
-                }
-            })
-        });
-
-        json!({
-            "version": self.version.unwrap_or_else(|| "0.1.0".to_string()),
-            "notes": self.notes.unwrap_or_else(|| "No launcher update available.".to_string()),
-            "pub_date": self.pub_date.unwrap_or_else(|| "2026-06-18T00:00:00Z".to_string()),
-            "platforms": platforms
-        })
     }
 }
 
@@ -727,9 +695,6 @@ async fn handle_reload(State(state): State<Arc<AppState>>) -> Response {
 async fn serve_update(State(state): State<Arc<AppState>>) -> Response {
     let value = match fetch_github_update(&state.config, &state.client).await {
         Ok(Some(value)) => value,
-        Ok(None) if state.config.cms_required => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "no update.json found").into_response();
-        }
         Ok(None) | Err(_) => fallback_update_json(&state.config),
     };
     json_value_response(value)
@@ -738,10 +703,7 @@ async fn serve_update(State(state): State<Arc<AppState>>) -> Response {
 async fn fetch_github_update(config: &AppConfig, client: &Client) -> Result<Option<Value>, String> {
     let repo = match config.github_repo.as_ref() {
         Some(r) => r,
-        None => {
-            // ponytail: fall back to CMS if GITHUB_REPO not configured (backward compat)
-            return fetch_cms_update(config, client).await;
-        }
+        None => return Ok(None),
     };
     let tag = &config.github_update_tag;
 
@@ -771,23 +733,6 @@ async fn fetch_github_update(config: &AppConfig, client: &Client) -> Result<Opti
         .await
         .map(Some)
         .map_err(|e| format!("GitHub update parse failed: {e}"))
-}
-
-async fn fetch_cms_update(config: &AppConfig, client: &Client) -> Result<Option<Value>, String> {
-    if config.cms_url.is_none() {
-        return Ok(None);
-    }
-
-    let query = format!(
-        "items/{}?sort=-id&limit=1&fields=*",
-        config.launcher_update_collection
-    );
-    let response: CmsList<CmsLauncherUpdate> = cms_get_json(config, client, &query).await?;
-    Ok(response
-        .data
-        .into_iter()
-        .next()
-        .map(CmsLauncherUpdate::into_json))
 }
 
 async fn serve_content(State(state): State<Arc<AppState>>) -> Response {

@@ -21,18 +21,6 @@ return new class extends Migration
             $table->timestamps();
         });
 
-        Schema::create('launcher_updates', function (Blueprint $table): void {
-            $table->id();
-            $table->string('status')->default('draft')->index();
-            $table->string('version');
-            $table->text('notes')->nullable();
-            $table->string('pub_date')->nullable();
-            $table->string('windows_url')->nullable();
-            $table->text('windows_signature')->nullable();
-            $table->json('platforms')->nullable();
-            $table->timestamps();
-        });
-
         Schema::create('launcher_content', function (Blueprint $table): void {
             $table->id();
             $table->string('status')->default('draft')->index();
@@ -70,7 +58,6 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('launcher_content');
-        Schema::dropIfExists('launcher_updates');
         Schema::dropIfExists('modpack_releases');
     }
 };

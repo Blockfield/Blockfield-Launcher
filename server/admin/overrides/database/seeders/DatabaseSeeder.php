@@ -3,7 +3,6 @@
 namespace Database\Seeders;
 
 use App\Models\LauncherContent;
-use App\Models\LauncherUpdate;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
@@ -60,15 +59,5 @@ class DatabaseSeeder extends Seeder
             ],
         );
 
-        LauncherUpdate::firstOrCreate(
-            ['status' => 'published'],
-            [
-                'version' => '0.1.0',
-                'notes' => 'No launcher update available.',
-                'pub_date' => '2026-06-18T00:00:00Z',
-                'windows_url' => 'https://play.blockfield.gg/downloads/blockfield-launcher_0.1.0_x64-setup.exe',
-                'windows_signature' => '',
-            ],
-        );
     }
 }
