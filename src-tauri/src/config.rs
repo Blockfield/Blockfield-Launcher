@@ -19,21 +19,25 @@ pub struct LauncherConfig {
 
 impl Default for LauncherConfig {
     fn default() -> Self {
-        // option_env! bakes values at compile time (CI sets them during build).
-        // Falls back to hardcoded defaults for local dev.
+        // Runtime first (dotenvy for local dev), then compile-time (CI build), then hardcoded.
         Self {
             game_dir: default_game_dir(),
             java_path: String::new(),
-            ram_mb: option_env!("BLOCKFIELD_DEFAULT_RAM_MB")
+            ram_mb: std::env::var("BLOCKFIELD_DEFAULT_RAM_MB")
+                .ok()
                 .and_then(|v| v.parse().ok())
+                .or_else(|| option_env!("BLOCKFIELD_DEFAULT_RAM_MB").and_then(|v| v.parse().ok()))
                 .unwrap_or(8192),
-            auto_update: option_env!("BLOCKFIELD_AUTO_UPDATE")
+            auto_update: std::env::var("BLOCKFIELD_AUTO_UPDATE")
+                .ok()
                 .map(|v| v == "true" || v == "1")
+                .or_else(|| option_env!("BLOCKFIELD_AUTO_UPDATE").map(|v| v == "true" || v == "1"))
                 .unwrap_or(true),
-            lang: option_env!("BLOCKFIELD_DEFAULT_LANG")
+            lang: std::env::var("BLOCKFIELD_DEFAULT_LANG")
+                .ok()
                 .filter(|v| !v.trim().is_empty())
-                .unwrap_or("en")
-                .to_string(),
+                .or_else(|| option_env!("BLOCKFIELD_DEFAULT_LANG").map(String::from))
+                .unwrap_or_else(|| "en".to_string()),
         }
     }
 }

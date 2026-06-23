@@ -7,30 +7,39 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 
-// option_env! bakes values at compile time (CI sets them during build).
-// Falls back to hardcoded defaults for local dev.
-fn version_manifest_url() -> &'static str {
-    option_env!("BLOCKFIELD_MOJANG_MANIFEST_URL")
+// Runtime first (dotenvy for local dev), then compile-time (CI build), then hardcoded.
+fn version_manifest_url() -> String {
+    std::env::var("BLOCKFIELD_MOJANG_MANIFEST_URL")
+        .ok()
         .filter(|v| !v.trim().is_empty())
-        .unwrap_or("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
+        .or_else(|| option_env!("BLOCKFIELD_MOJANG_MANIFEST_URL").map(String::from))
+        .unwrap_or_else(|| {
+            "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json".to_string()
+        })
 }
 
-fn asset_base_url() -> &'static str {
-    option_env!("BLOCKFIELD_MOJANG_ASSET_BASE_URL")
+fn asset_base_url() -> String {
+    std::env::var("BLOCKFIELD_MOJANG_ASSET_BASE_URL")
+        .ok()
         .filter(|v| !v.trim().is_empty())
-        .unwrap_or("https://resources.download.minecraft.net")
+        .or_else(|| option_env!("BLOCKFIELD_MOJANG_ASSET_BASE_URL").map(String::from))
+        .unwrap_or_else(|| "https://resources.download.minecraft.net".to_string())
 }
 
-fn launcher_name() -> &'static str {
-    option_env!("BLOCKFIELD_LAUNCHER_NAME")
+fn launcher_name() -> String {
+    std::env::var("BLOCKFIELD_LAUNCHER_NAME")
+        .ok()
         .filter(|v| !v.trim().is_empty())
-        .unwrap_or("BlockfieldLauncher")
+        .or_else(|| option_env!("BLOCKFIELD_LAUNCHER_NAME").map(String::from))
+        .unwrap_or_else(|| "BlockfieldLauncher".to_string())
 }
 
-fn offline_username() -> &'static str {
-    option_env!("BLOCKFIELD_OFFLINE_USERNAME")
+fn offline_username() -> String {
+    std::env::var("BLOCKFIELD_OFFLINE_USERNAME")
+        .ok()
         .filter(|v| !v.trim().is_empty())
-        .unwrap_or("Blockfield")
+        .or_else(|| option_env!("BLOCKFIELD_OFFLINE_USERNAME").map(String::from))
+        .unwrap_or_else(|| "Blockfield".to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -257,7 +266,7 @@ async fn ensure_version_json(game_dir: &Path, minecraft_version: &str) -> Result
         return Ok(());
     }
 
-    let manifest = fetch_json(version_manifest_url()).await?;
+    let manifest = fetch_json(&version_manifest_url()).await?;
     let url = manifest["versions"]
         .as_array()
         .and_then(|versions| {
@@ -715,10 +724,11 @@ fn launch_vars(
     let natives_dir = natives_dir(Path::new(&game_dir), minecraft_version)
         .to_string_lossy()
         .to_string();
-    let username = option_env!("BLOCKFIELD_PLAYER_NAME")
+    let username = std::env::var("BLOCKFIELD_PLAYER_NAME")
+        .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| offline_username())
-        .to_string();
+        .or_else(|| option_env!("BLOCKFIELD_PLAYER_NAME").map(String::from))
+        .unwrap_or_else(offline_username);
 
     HashMap::from([
         ("auth_player_name".to_string(), username.clone()),

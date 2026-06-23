@@ -661,10 +661,11 @@ pub async fn launch_game(
                 .and_then(|id| id.split_once("-forge-").map(|(mc, _)| mc.to_string()))
         })
         .unwrap_or_else(|| {
-            option_env!("BLOCKFIELD_MINECRAFT_VERSION")
+            std::env::var("BLOCKFIELD_MINECRAFT_VERSION")
+                .ok()
                 .filter(|v| !v.trim().is_empty())
-                .unwrap_or("1.20.1")
-                .to_string()
+                .or_else(|| option_env!("BLOCKFIELD_MINECRAFT_VERSION").map(String::from))
+                .unwrap_or_else(|| "1.20.1".to_string())
         });
 
     log::info!("Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}");
@@ -723,9 +724,12 @@ pub async fn launch_game(
 
 /// Base URL for the launcher API.
 fn api_base_url() -> String {
-    let url = option_env!("VITE_BLOCKFIELD_API_URL")
-        .unwrap_or("http://localhost:3000/api/launcher/v1")
-        .to_string();
+    // Runtime first (dotenvy for local dev), then compile-time (CI build),
+    // then hardcoded fallback.
+    let url = std::env::var("VITE_BLOCKFIELD_API_URL")
+        .ok()
+        .or_else(|| option_env!("VITE_BLOCKFIELD_API_URL").map(String::from))
+        .unwrap_or_else(|| "http://localhost:3000/api/launcher/v1".to_string());
     log::info!("[api_base_url] VITE_BLOCKFIELD_API_URL={url}");
     url
 }
