@@ -24,7 +24,11 @@ RUN cargo build --release -p blockfield-server
 COPY shared/src/ shared/src/
 COPY server/src/ server/src/
 
-RUN cargo build --release -p blockfield-server && \
+# ponytail: touch after COPY — Docker layer cache can leave mtime of
+# source files older than cargo artifacts from the cached dummy build,
+# so cargo skips recompilation. Explicitly freshen timestamps.
+RUN touch shared/src/lib.rs server/src/main.rs && \
+    cargo build --release -p blockfield-server && \
     cp target/release/blockfield-server /usr/local/bin/
 
 # ── Runtime stage ────────────────────────────────────────────
