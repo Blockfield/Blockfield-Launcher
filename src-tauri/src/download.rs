@@ -143,41 +143,39 @@ impl Downloader {
 
             let dest = game_dir.join(&entry.path);
 
-            // Skip files that already match the expected hash (unchanged)
-            if let Some(existing_hash) = installed_sha256.get(&entry.path) {
-                if existing_hash == &entry.sha256 && dest.exists() {
-                    match Self::sha256_file(&dest) {
-                        Ok(actual_hash) if actual_hash == entry.sha256 => {
-                            log::info!("Skipping unchanged file: {}", entry.path);
-                            total_downloaded += entry.size;
-                            // Advance the atomic cumulative counter for skipped files too
-                            self.cumulative_downloaded
-                                .fetch_add(entry.size, Ordering::Relaxed);
-                            let cumulative = self.cumulative_downloaded.load(Ordering::Relaxed);
-                            let grand = self.grand_total.load(Ordering::Relaxed);
-                            self.emit_progress(
-                                &entry.path,
-                                i + 1,
-                                file_count,
-                                entry.size,
-                                entry.size,
-                                cumulative,
-                                grand,
-                                0,
-                            );
-                            continue;
-                        }
-                        Ok(actual_hash) => {
-                            log::info!(
-                                "Redownloading changed file: {} (expected {}, got {})",
-                                entry.path,
-                                entry.sha256,
-                                actual_hash
-                            );
-                        }
-                        Err(e) => {
-                            log::info!("Redownloading unreadable file: {} ({e})", entry.path);
-                        }
+            // Check existing file on disk regardless of installed manifest.
+            // Handles reinstalls, manifest loss, and partial downloads.
+            if dest.exists() {
+                match Self::sha256_file(&dest) {
+                    Ok(actual_hash) if actual_hash == entry.sha256 => {
+                        log::info!("Skipping unchanged file: {}", entry.path);
+                        total_downloaded += entry.size;
+                        self.cumulative_downloaded
+                            .fetch_add(entry.size, Ordering::Relaxed);
+                        let cumulative = self.cumulative_downloaded.load(Ordering::Relaxed);
+                        let grand = self.grand_total.load(Ordering::Relaxed);
+                        self.emit_progress(
+                            &entry.path,
+                            i + 1,
+                            file_count,
+                            entry.size,
+                            entry.size,
+                            cumulative,
+                            grand,
+                            0,
+                        );
+                        continue;
+                    }
+                    Ok(actual_hash) => {
+                        log::info!(
+                            "Redownloading changed file: {} (expected {}, got {})",
+                            entry.path,
+                            entry.sha256,
+                            actual_hash
+                        );
+                    }
+                    Err(e) => {
+                        log::info!("Redownloading unreadable file: {} ({e})", entry.path);
                     }
                 }
             }

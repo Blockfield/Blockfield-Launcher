@@ -25,12 +25,12 @@ const DEFAULT_JAVA_URL: &str =
     "https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jre/hotspot/normal/eclipse";
 const DEFAULT_JAVA_SIZE: u64 = 43_775_068;
 
-const DEFAULT_FORGE_VERSION: &str = "1.20.1-47.3.0";
+const DEFAULT_FORGE_VERSION: &str = "1.20.1-47.4.10";
 const DEFAULT_FORGE_URL: &str =
-    "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.3.0/forge-1.20.1-47.3.0-installer.jar";
+    "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.4.10/forge-1.20.1-47.4.10-installer.jar";
 const DEFAULT_FORGE_SHA256: &str =
-    "6018abce95cc058768e365865fd7cf3bd31b5c553231daf885dc385fcd6d875a";
-const DEFAULT_FORGE_SIZE: u64 = 6_021_040;
+    "1912760b4cb6b803d8a826de603c9076b1da71ec2765e9a1f8c1ca78f65278e3";
+const DEFAULT_FORGE_SIZE: u64 = 6_078_070;
 
 struct AppConfig {
     base_url: String,
