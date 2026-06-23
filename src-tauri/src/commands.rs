@@ -46,7 +46,7 @@ fn emit_status(
 
 fn java_exe_name() -> &'static str {
     if cfg!(windows) {
-        "java.exe"
+        "javaw.exe"
     } else {
         "java"
     }
@@ -100,7 +100,13 @@ fn java_runtime_ready(game_dir: &Path, version: &str) -> bool {
 fn resolved_java_path(config: &LauncherConfig) -> String {
     let configured = config.java_path.trim();
     if !configured.is_empty() {
-        let path = PathBuf::from(configured);
+        let mut path = PathBuf::from(configured);
+        if !path.exists() {
+            // User pointed at java.exe — try javaw.exe next to it
+            if let Some(javaw) = try_javaw(&path) {
+                path = javaw;
+            }
+        }
         if path.exists() {
             return path.to_string_lossy().to_string();
         }
@@ -108,7 +114,23 @@ fn resolved_java_path(config: &LauncherConfig) -> String {
 
     bundled_java_path(&config.game_dir)
         .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_else(|| "java".to_string())
+        .unwrap_or_else(|| java_exe_name().to_string())
+}
+
+/// If `path` ends with `java.exe`, return `javaw.exe` in the same directory.
+fn try_javaw(path: &Path) -> Option<PathBuf> {
+    if cfg!(windows)
+        && path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case("java.exe"))
+    {
+        let javaw = path.with_file_name("javaw.exe");
+        if javaw.exists() {
+            return Some(javaw);
+        }
+    }
+    None
 }
 
 fn system_java_available() -> bool {
