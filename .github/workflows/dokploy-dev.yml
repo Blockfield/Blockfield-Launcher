@@ -127,7 +127,7 @@ jobs:
             gh release delete-asset develop $_ -y
           }
 
-          gh release upload develop $installer.FullName, update.json --clobber
+          gh release upload develop $($installer.FullName) update.json --clobber
 
   backend:
     name: Build & deploy backend
