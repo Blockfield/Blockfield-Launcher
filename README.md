@@ -58,11 +58,17 @@ Use a Dokploy Docker Compose app from this Git repository.
 
 Recommended app settings:
 
+- Branch: `dev`
 - Compose file: `server/docker-compose.yml`
 - Public API service: `blockfield-api`, container port `3000`
 - Public admin service: `filament`, container port `8055`
 - API domain example: `https://play.blockfield.gg`
 - Admin domain example: `https://admin.blockfield.gg`
+
+The current compose stack builds both deployable server images from source:
+
+- `filament` builds from `server/admin/Dockerfile` with context `server/admin`;
+- `blockfield-api` builds from `server/Dockerfile` with repository-root context.
 
 The compose stack creates:
 
@@ -71,6 +77,26 @@ The compose stack creates:
 - `server/files:/data/files` for fallback local ZIPs and the API CMS download cache.
 
 Do not delete `filament-data` during redeploys unless you intentionally want to reset the CMS.
+
+### Current compose caveat
+
+`server/docker-compose.yml` currently starts `blockfield-api` with:
+
+```yaml
+depends_on:
+  filament:
+    condition: service_healthy
+```
+
+The current `filament` service does not define a healthcheck in `server/docker-compose.yml`, and `server/admin/Dockerfile` does not define a Docker `HEALTHCHECK` instruction.
+
+If your Compose runtime refuses to start because of this, either add a `filament` healthcheck or change the dependency to:
+
+```yaml
+depends_on:
+  filament:
+    condition: service_started
+```
 
 ### Required environment variables
 
@@ -114,13 +140,14 @@ printf 'CMS_TOKEN=%s\n' "$(openssl rand -hex 32)"
 
 1. Create a Dokploy project.
 2. Add a Docker Compose app from this repository.
-3. Set the compose path to `server/docker-compose.yml`.
-4. Add the environment variables above.
-5. Attach the API domain to `blockfield-api:3000`.
-6. Attach the admin domain to `filament:8055`.
-7. Deploy the app.
-8. Open `https://admin.blockfield.gg/admin` and sign in with `FILAMENT_ADMIN_EMAIL` / `FILAMENT_ADMIN_PASSWORD`.
-9. Check the API:
+3. Set the branch to `dev`.
+4. Set the compose path to `server/docker-compose.yml`.
+5. Add the environment variables above.
+6. Attach the API domain to `blockfield-api:3000`.
+7. Attach the admin domain to `filament:8055`.
+8. Deploy the app.
+9. Open `https://admin.blockfield.gg/admin` and sign in with `FILAMENT_ADMIN_EMAIL` / `FILAMENT_ADMIN_PASSWORD`.
+10. Check the API:
 
 ```sh
 curl -f https://play.blockfield.gg/health
@@ -149,26 +176,60 @@ curl -X POST https://play.blockfield.gg/api/launcher/v1/reload
 
 ## GitHub Actions deployment
 
-`.github/workflows/dokploy-dev.yml` runs on pushes to `dev`.
+`.github/workflows/dokploy-dev.yml` runs on pushes to `dev` and on manual `workflow_dispatch`.
 
-It builds and pushes two GHCR images:
+The workflow has three jobs:
 
-- `ghcr.io/netherg-io/blockfield-launcher-backend:dev`
-- `ghcr.io/netherg-io/blockfield-launcher-filament:dev`
+- `tauri-release`: builds the Windows Tauri release on `windows-latest`;
+- `backend`: builds and pushes the Rust API Docker image;
+- `filament`: builds and pushes the Filament Docker image.
 
-It also builds the Windows Tauri dev release and triggers Dokploy with `DOKPLOY_WEBHOOK_URL` when that secret is configured.
+The Windows Tauri dev build is published to the GitHub release/tag named `develop`, not `dev`.
 
-Required GitHub secret:
+The backend image is pushed to GHCR with these tags:
 
-```dotenv
-DOKPLOY_WEBHOOK_URL=https://dokploy.example.com/api/deploy/...
+```text
+ghcr.io/netherg-io/blockfield-launcher-backend:develop
+ghcr.io/netherg-io/blockfield-launcher-backend:develop-<short-sha>
 ```
 
-The compose deployment can still build directly from the repository. The pushed images are useful when Dokploy is configured to deploy prebuilt images or when you want CI to fail before Dokploy pulls the latest code.
+The Filament image is pushed to GHCR with these tags:
+
+```text
+ghcr.io/netherg-io/blockfield-launcher-filament:develop
+ghcr.io/netherg-io/blockfield-launcher-filament:develop-<short-sha>
+```
+
+Required GitHub environment/secrets for webhook deployment:
+
+```dotenv
+DOKPLOY_BACKEND_WEBHOOK_URL=https://dokploy.example.com/api/deploy/...
+DOKPLOY_FILAMENT_WEBHOOK_URL=https://dokploy.example.com/api/deploy/...
+```
+
+If either secret is missing, the corresponding job prints a skip message and does not trigger Dokploy for that part.
+
+The compose deployment can still build directly from the repository. The pushed GHCR images are useful if Dokploy is configured to deploy prebuilt images or if you want GitHub Actions to fail before Dokploy pulls the latest code.
+
+## Runtime facts
+
+The API exposes:
+
+- `GET /health`
+- `GET /api/launcher/v1/content.json`
+- `GET /api/launcher/v1/manifest.json`
+- `GET /api/launcher/v1/update.json`
+- `GET /api/launcher/v1/files/{path}`
+- `POST /api/launcher/v1/reload`
+
+The API reads `BASE_URL` to generate file URLs in `manifest.json`. Keep it equal to the public API origin, for example `https://play.blockfield.gg`.
+
+The API uses `CMS_TOKEN` as a bearer token when reading from Filament. Filament returns `401` for `/api/items/*`, `/api/files`, and `/api/assets/*` when the bearer token does not match.
 
 ## Troubleshooting
 
 - `502` or unavailable API just after deploy: wait for the API to extract the current modpack ZIP, then check `blockfield-api` logs.
+- Compose fails around `service_healthy`: add a Filament healthcheck or change the dependency to `condition: service_started`.
 - Admin login resets after each deploy: set a stable `FILAMENT_APP_KEY` and keep the `filament-data` volume.
 - API starts with fallback content: check `CMS_URL`, `CMS_TOKEN`, and Filament logs. In production, set `CMS_REQUIRED=true` to fail fast instead.
 - `401` from `/api/items/*`: the bearer token does not match `CMS_TOKEN`.
