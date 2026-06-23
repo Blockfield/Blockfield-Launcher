@@ -4,48 +4,30 @@ use sha2::Digest;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-// ponytail: lazy-init from env, one fn per const — single-line lookup
+// option_env! bakes values at compile time (CI sets them during build).
+// Falls back to hardcoded defaults for local dev.
 fn version_manifest_url() -> &'static str {
-    // Leak the env string to get a &'static str — the const was &'static anyway
-    Box::leak(
-        std::env::var("BLOCKFIELD_MOJANG_MANIFEST_URL")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| {
-                "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json".to_string()
-            })
-            .into_boxed_str(),
-    )
+    option_env!("BLOCKFIELD_MOJANG_MANIFEST_URL")
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
 }
 
 fn asset_base_url() -> &'static str {
-    Box::leak(
-        std::env::var("BLOCKFIELD_MOJANG_ASSET_BASE_URL")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| "https://resources.download.minecraft.net".to_string())
-            .into_boxed_str(),
-    )
+    option_env!("BLOCKFIELD_MOJANG_ASSET_BASE_URL")
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or("https://resources.download.minecraft.net")
 }
 
 fn launcher_name() -> &'static str {
-    Box::leak(
-        std::env::var("BLOCKFIELD_LAUNCHER_NAME")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| "BlockfieldLauncher".to_string())
-            .into_boxed_str(),
-    )
+    option_env!("BLOCKFIELD_LAUNCHER_NAME")
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or("BlockfieldLauncher")
 }
 
 fn offline_username() -> &'static str {
-    Box::leak(
-        std::env::var("BLOCKFIELD_OFFLINE_USERNAME")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| "Blockfield".to_string())
-            .into_boxed_str(),
-    )
+    option_env!("BLOCKFIELD_OFFLINE_USERNAME")
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or("Blockfield")
 }
 
 #[derive(Debug, Clone)]
@@ -686,10 +668,10 @@ fn launch_vars(
     let natives_dir = natives_dir(Path::new(&game_dir), minecraft_version)
         .to_string_lossy()
         .to_string();
-    let username = std::env::var("BLOCKFIELD_PLAYER_NAME")
-        .ok()
+    let username = option_env!("BLOCKFIELD_PLAYER_NAME")
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| offline_username().to_string());
+        .unwrap_or_else(|| offline_username())
+        .to_string();
 
     HashMap::from([
         ("auth_player_name".to_string(), username.clone()),

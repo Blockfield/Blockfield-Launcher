@@ -19,35 +19,23 @@ pub struct LauncherConfig {
 
 impl Default for LauncherConfig {
     fn default() -> Self {
+        // option_env! bakes values at compile time (CI sets them during build).
+        // Falls back to hardcoded defaults for local dev.
         Self {
             game_dir: default_game_dir(),
             java_path: String::new(),
-            ram_mb: env_u32("BLOCKFIELD_DEFAULT_RAM_MB", 8192),
-            auto_update: env_bool("BLOCKFIELD_AUTO_UPDATE", true),
-            lang: env_string("BLOCKFIELD_DEFAULT_LANG", "en"),
+            ram_mb: option_env!("BLOCKFIELD_DEFAULT_RAM_MB")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(8192),
+            auto_update: option_env!("BLOCKFIELD_AUTO_UPDATE")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(true),
+            lang: option_env!("BLOCKFIELD_DEFAULT_LANG")
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or("en")
+                .to_string(),
         }
     }
-}
-
-fn env_string(key: &str, default: &str) -> String {
-    std::env::var(key)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| default.to_string())
-}
-
-fn env_u32(key: &str, default: u32) -> u32 {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_bool(key: &str, default: bool) -> bool {
-    std::env::var(key)
-        .ok()
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(default)
 }
 
 /// Platform-appropriate default game directory.

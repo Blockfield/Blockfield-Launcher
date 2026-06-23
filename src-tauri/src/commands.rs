@@ -609,10 +609,10 @@ pub async fn launch_game(
                 .and_then(|id| id.split_once("-forge-").map(|(mc, _)| mc.to_string()))
         })
         .unwrap_or_else(|| {
-            std::env::var("BLOCKFIELD_MINECRAFT_VERSION")
-                .ok()
+            option_env!("BLOCKFIELD_MINECRAFT_VERSION")
                 .filter(|v| !v.trim().is_empty())
-                .unwrap_or_else(|| "1.20.1".to_string())
+                .unwrap_or("1.20.1")
+                .to_string()
         });
 
     log::info!("Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}");
@@ -670,8 +670,9 @@ pub async fn launch_game(
 
 /// Base URL for the launcher API.
 fn api_base_url() -> String {
-    let url = std::env::var("VITE_BLOCKFIELD_API_URL")
-        .unwrap_or_else(|_| "http://localhost:3000/api/launcher/v1".to_string());
+    let url = option_env!("VITE_BLOCKFIELD_API_URL")
+        .unwrap_or("http://localhost:3000/api/launcher/v1")
+        .to_string();
     log::info!("[api_base_url] VITE_BLOCKFIELD_API_URL={url}");
     url
 }
