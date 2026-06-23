@@ -25,6 +25,13 @@ const DEFAULT_JAVA_URL: &str =
     "https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jre/hotspot/normal/eclipse";
 const DEFAULT_JAVA_SIZE: u64 = 43_775_068;
 
+const DEFAULT_FORGE_VERSION: &str = "1.20.1-47.3.0";
+const DEFAULT_FORGE_URL: &str =
+    "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.3.0/forge-1.20.1-47.3.0-installer.jar";
+const DEFAULT_FORGE_SHA256: &str =
+    "6018abce95cc058768e365865fd7cf3bd31b5c553231daf885dc385fcd6d875a";
+const DEFAULT_FORGE_SIZE: u64 = 6_021_040;
+
 struct AppConfig {
     base_url: String,
     files_dir: PathBuf,
@@ -78,10 +85,10 @@ impl AppConfig {
             java_url: Some(env_string("JAVA_URL", DEFAULT_JAVA_URL)),
             java_sha256: Some(env_string("JAVA_SHA256", "")),
             java_size: Some(env_u64("JAVA_SIZE").unwrap_or(DEFAULT_JAVA_SIZE)),
-            forge_url: env_opt("FORGE_URL"),
-            forge_version: env_opt("FORGE_VERSION"),
-            forge_sha256: env_opt("FORGE_SHA256"),
-            forge_size: env_u64("FORGE_SIZE"),
+            forge_version: Some(env_string("FORGE_VERSION", DEFAULT_FORGE_VERSION)),
+            forge_url: Some(env_string("FORGE_URL", DEFAULT_FORGE_URL)),
+            forge_sha256: Some(env_string("FORGE_SHA256", DEFAULT_FORGE_SHA256)),
+            forge_size: Some(env_u64("FORGE_SIZE").unwrap_or(DEFAULT_FORGE_SIZE)),
             cms_url: env_opt("CMS_URL").map(|url| url.trim_end_matches('/').to_string()),
             cms_token: env_opt("CMS_TOKEN"),
             cms_required: env_string("CMS_REQUIRED", "false") == "true",
@@ -1001,10 +1008,10 @@ mod tests {
             java_url: Some(DEFAULT_JAVA_URL.to_string()),
             java_sha256: Some(String::new()),
             java_size: Some(DEFAULT_JAVA_SIZE),
-            forge_url: None,
-            forge_version: None,
-            forge_sha256: None,
-            forge_size: None,
+            forge_version: Some(DEFAULT_FORGE_VERSION.to_string()),
+            forge_url: Some(DEFAULT_FORGE_URL.to_string()),
+            forge_sha256: Some(DEFAULT_FORGE_SHA256.to_string()),
+            forge_size: Some(DEFAULT_FORGE_SIZE),
             cms_url: None,
             cms_token: None,
             cms_required: false,
@@ -1062,6 +1069,17 @@ mod tests {
         .into_metadata(&test_config());
 
         assert_eq!(release.java.unwrap().url, DEFAULT_JAVA_URL);
+    }
+
+    #[test]
+    fn fallback_release_includes_forge() {
+        let release = fallback_release(&test_config());
+        let forge = release.forge.unwrap();
+
+        assert_eq!(forge.version, DEFAULT_FORGE_VERSION);
+        assert_eq!(forge.url, DEFAULT_FORGE_URL);
+        assert_eq!(forge.sha256, DEFAULT_FORGE_SHA256);
+        assert_eq!(forge.size, DEFAULT_FORGE_SIZE);
     }
 
     #[test]
