@@ -6,8 +6,15 @@ rm -rf /app/storage/app
 ln -s /data/storage/app /app/storage/app
 touch /data/database.sqlite
 
+# ── Persist APP_KEY on the volume so it survives restarts ────────────
+#    Other env vars are picked up fresh from Docker on every start.
 if [ -z "${APP_KEY:-}" ]; then
-  export APP_KEY="$(php -r 'echo "base64:".base64_encode(random_bytes(32));')"
+  if [ -f /data/app-key ]; then
+    APP_KEY="$(cat /data/app-key)"
+  else
+    APP_KEY="$(php -r 'echo "base64:".base64_encode(random_bytes(32));')"
+    echo "$APP_KEY" > /data/app-key
+  fi
 fi
 
 cat > .env <<EOF
