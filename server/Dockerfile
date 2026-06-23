@@ -41,6 +41,8 @@ ENV FALLBACK_OPERATION_NAME="IRON FRONT"
 ENV FALLBACK_SERVER_IP=play.blockfield.gg:25565
 ENV FALLBACK_LAUNCHER_VERSION=0.4.2
 ENV FALLBACK_UPDATE_URL=https://play.blockfield.gg/downloads/blockfield-launcher_0.1.0_x64-setup.exe
+ENV GITHUB_REPO=netherg-io/blockfield-launcher
+ENV GITHUB_UPDATE_TAG=develop
 
 EXPOSE 3000
 

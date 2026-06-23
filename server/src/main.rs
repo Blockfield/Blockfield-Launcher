@@ -43,6 +43,10 @@ struct AppConfig {
     modpack_collection: String,
     content_collection: String,
     launcher_update_collection: String,
+    // GitHub Releases — launcher update source
+    github_repo: Option<String>,
+    github_update_tag: String,
+    github_token: Option<String>,
     // Fallback JSON values (used when CMS is unavailable)
     fallback_brand: String,
     fallback_brand_subtitle: String,
@@ -79,6 +83,9 @@ impl AppConfig {
             modpack_collection: env_string("CMS_MODPACK_COLLECTION", "modpack_releases"),
             content_collection: env_string("CMS_CONTENT_COLLECTION", "launcher_content"),
             launcher_update_collection: env_string("CMS_UPDATE_COLLECTION", "launcher_updates"),
+            github_repo: env_opt("GITHUB_REPO"),
+            github_update_tag: env_string("GITHUB_UPDATE_TAG", "develop"),
+            github_token: env_opt("GITHUB_TOKEN"),
             fallback_brand: env_string("FALLBACK_BRAND", "BLOCKFIELD"),
             fallback_brand_subtitle: env_string("FALLBACK_BRAND_SUBTITLE", "TACTICAL OPS"),
             fallback_chrome_title: env_string("FALLBACK_CHROME_TITLE", "BLOCKFIELD LAUNCHER"),
@@ -718,18 +725,52 @@ async fn handle_reload(State(state): State<Arc<AppState>>) -> Response {
 }
 
 async fn serve_update(State(state): State<Arc<AppState>>) -> Response {
-    let value = match fetch_cms_update(&state.config, &state.client).await {
+    let value = match fetch_github_update(&state.config, &state.client).await {
         Ok(Some(value)) => value,
-        Ok(None) => fallback_update_json(&state.config),
-        Err(e) if state.config.cms_required => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
+        Ok(None) if state.config.cms_required => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "no update.json found").into_response();
         }
-        Err(e) => {
-            eprintln!("CMS update fallback: {e}");
-            fallback_update_json(&state.config)
-        }
+        Ok(None) | Err(_) => fallback_update_json(&state.config),
     };
     json_value_response(value)
+}
+
+async fn fetch_github_update(config: &AppConfig, client: &Client) -> Result<Option<Value>, String> {
+    let repo = match config.github_repo.as_ref() {
+        Some(r) => r,
+        None => {
+            // ponytail: fall back to CMS if GITHUB_REPO not configured (backward compat)
+            return fetch_cms_update(config, client).await;
+        }
+    };
+    let tag = &config.github_update_tag;
+
+    let url = format!("https://github.com/{repo}/releases/download/{tag}/update.json");
+
+    let mut request = client
+        .get(&url)
+        .header("User-Agent", "blockfield-launcher-server");
+
+    if let Some(token) = config.github_token.as_ref() {
+        request = request.header("Authorization", format!("Bearer {token}"));
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("GitHub update fetch failed: {e}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        eprintln!("GitHub update returned {status}: {url}");
+        return Ok(None);
+    }
+
+    response
+        .json()
+        .await
+        .map(Some)
+        .map_err(|e| format!("GitHub update parse failed: {e}"))
 }
 
 async fn fetch_cms_update(config: &AppConfig, client: &Client) -> Result<Option<Value>, String> {

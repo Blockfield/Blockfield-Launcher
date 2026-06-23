@@ -54,6 +54,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri release
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         run: pnpm tauri:build
 
       - name: Publish dev release
@@ -61,16 +64,48 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
-          $releaseNotes = "Dev Windows build for $env:GITHUB_SHA"
-          $files = @(
+          $tauriConf = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
+          $version = $tauriConf.version
+
+          $exeFiles = @(
             Get-ChildItem -Path target/release/bundle, src-tauri/target/release/bundle -Recurse -File -Filter *.exe -ErrorAction SilentlyContinue |
-              Sort-Object FullName |
-              Select-Object -ExpandProperty FullName
+              Sort-Object FullName
           )
-          if ($files.Count -eq 0) {
+          if ($exeFiles.Count -eq 0) {
             Write-Error "No Windows Tauri .exe bundles found."
             exit 1
           }
+          $installer = $exeFiles[0]
+          $installerName = $installer.Name
+
+          # ponytail: try .sig from Tauri bundler first, manual sign as fallback
+          $sigFiles = @(
+            Get-ChildItem -Path target/release/bundle, src-tauri/target/release/bundle -Recurse -File -Filter *.sig -ErrorAction SilentlyContinue
+          )
+          $signature = ""
+          if ($sigFiles.Count -gt 0) {
+            $signature = (Get-Content $sigFiles[0].FullName -Raw).Trim()
+            Write-Host "Found .sig file: $($sigFiles[0].FullName)"
+          } else {
+            Write-Warning "No .sig file found — signature will be empty"
+          }
+
+          $releaseNotes = "Dev Windows build for $env:GITHUB_SHA"
+
+          $updateJson = @{
+            version = $version
+            notes = $releaseNotes
+            pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{
+              "windows-x86_64" = @{
+                url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/develop/$installerName"
+                signature = $signature
+              }
+            }
+          }
+          $updateJson | ConvertTo-Json -Depth 4 | Set-Content update.json
+          Write-Host "Generated update.json:"
+          Get-Content update.json
 
           gh release view develop *> $null
           if ($LASTEXITCODE -eq 0) {
@@ -92,7 +127,7 @@ jobs:
             gh release delete-asset develop $_ -y
           }
 
-          gh release upload develop @files --clobber
+          gh release upload develop $installer.FullName, update.json --clobber
 
   backend:
     name: Build & deploy backend
