@@ -15,9 +15,9 @@ import {
 import { invoke } from '@tauri-apps/api/core'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { GlowPanel } from './ui-bits'
-import { LANGUAGES, useI18n, type Lang } from '../i18n'
+import { LANGUAGES, useI18n } from '../i18n'
 import type { LauncherConfig } from '../../lib/api'
-import { contentText, useLauncherContent } from '../../lib/content'
+import { localizedContentText, useLauncherContent } from '../../lib/content'
 
 /** Detect whether we're running inside Tauri. */
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -34,7 +34,13 @@ export function SettingsScreen({ onLogout, username }: { onLogout: () => void; u
   const [loading, setLoading] = useState(true)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const preferences =
-    contentText(content, 'settingsPreferences', 'settings_preferences') ?? t('settings.preferences')
+    localizedContentText(
+      content,
+      lang,
+      'content.settingsPreferences',
+      'settingsPreferences',
+      'settings_preferences',
+    ) ?? t('settings.preferences')
 
   // Load settings on mount
   useEffect(() => {
@@ -49,13 +55,10 @@ export function SettingsScreen({ onLogout, username }: { onLogout: () => void; u
         setJava(cfg.javaPath)
         setRam(Math.max(2, Math.round(cfg.ramMb / 1024)))
         setAutoUpdate(cfg.autoUpdate)
-        if (cfg.lang !== lang && (cfg.lang === 'en' || cfg.lang === 'ru' || cfg.lang === 'uk')) {
-          setLang(cfg.lang as Lang)
-        }
       })
       .catch((e) => console.error('Failed to load settings:', e))
       .finally(() => setLoading(false))
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   const markDirty = useCallback(() => setDirty(true), [])
 
@@ -214,7 +217,7 @@ export function SettingsScreen({ onLogout, username }: { onLogout: () => void; u
                     }}
                     className={`h-9 px-3 text-[10px] tracking-[0.14em] border transition-colors ${
                       lang === l.code
-                        ? 'border-[#F5A524] bg-[#2A2116] text-[#F3E7D0]'
+                        ? 'border-[#F5A524] bg-[#F5A524] text-[#070604]'
                         : 'border-[#2A2116] bg-[#0B0906] text-[#C7AE86] hover:border-[#8A571C]'
                     }`}
                   >
@@ -457,7 +460,7 @@ function RamSlider({ ram, onChange }: { ram: number; onChange: (v: number) => vo
               aria-pressed={active}
               className={`h-7 px-2.5 text-[10px] tracking-[0.14em] font-mono border transition-colors ${
                 active
-                  ? 'border-[#F5A524] bg-[#2A2116] text-[#F3E7D0]'
+                  ? 'border-[#F5A524] bg-[#F5A524] text-[#070604]'
                   : 'border-[#2A2116] bg-[#0B0906] text-[#C7AE86] hover:border-[#8A571C]'
               }`}
             >

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { login, logout, restoreSession } from './auth'
+import { login, logout, register, restoreSession } from './auth'
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>()
@@ -78,5 +78,18 @@ describe('launcher auth session', () => {
     await logout(session)
 
     expect(localStorage.getItem('blockfield.auth')).toBeNull()
+  })
+
+  it('registers an account and persists the returned session', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(true, sessionBody, 201))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await register('operator', 'operator@example.com', 'password', 'password', true)
+
+    expect(localStorage.getItem('blockfield.auth')).toContain('access-token')
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/auth/register'),
+      expect.objectContaining({ method: 'POST' }),
+    )
   })
 })

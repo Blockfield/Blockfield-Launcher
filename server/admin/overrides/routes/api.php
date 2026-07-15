@@ -6,6 +6,7 @@ use App\Http\Middleware\CmsToken;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('launcher/v1/auth')->group(function (): void {
+    Route::post('/register', [LauncherAuthController::class, 'register'])->middleware('throttle:3,1');
     Route::post('/login', [LauncherAuthController::class, 'login'])->middleware('throttle:5,1');
     Route::post('/refresh', [LauncherAuthController::class, 'refresh'])->middleware('throttle:20,1');
     Route::post('/logout', [LauncherAuthController::class, 'logout']);

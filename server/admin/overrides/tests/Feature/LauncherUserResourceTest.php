@@ -77,3 +77,15 @@ test('session revocation action invalidates every active session', function (): 
         'action' => 'sessions_revoked',
     ]);
 });
+
+test('Minecraft UUID is generated when an administrator leaves it empty', function (): void {
+    $user = LauncherUser::create([
+        'username' => 'generated_uuid',
+        'email' => 'generated@example.com',
+        'password' => '12345678',
+        'status' => 'active',
+        'role' => 'player',
+    ]);
+
+    expect($user->minecraft_uuid)->toMatch('/^[0-9a-f-]{36}$/');
+});

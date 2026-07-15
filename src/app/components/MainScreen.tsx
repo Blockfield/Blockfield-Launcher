@@ -26,7 +26,7 @@ import {
   type ServerStatus as ServerStatusData,
   type VersionCheckResult,
 } from '../../lib/api'
-import { contentText, useLauncherContent } from '../../lib/content'
+import { contentText, localizedContentText, useLauncherContent } from '../../lib/content'
 
 type Tone = 'ok' | 'muted' | 'warn'
 
@@ -86,7 +86,7 @@ const FEED: FallbackFeedEntry[] = [
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
 export function MainScreen({ onPlay }: { onPlay: () => void }) {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const content = useLauncherContent()
   const [versionInfo, setVersionInfo] = useState<VersionCheckResult | null>(null)
   const [checking, setChecking] = useState(true)
@@ -166,7 +166,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
         .then(setServerStatus)
         .catch(() => setServerStatus(null))
     refresh()
-    const interval = window.setInterval(refresh, 30_000)
+    const interval = window.setInterval(refresh, 10_000)
     return () => window.clearInterval(interval)
   }, [])
 
@@ -208,22 +208,33 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
         : needsSetup
           ? { value: t('main.updateAvailable'), tone: 'warn' }
           : { value: t('main.upToDate'), tone: 'muted' }
-  const operationName = contentText(content, 'operationName', 'operation_name') ?? OPERATION_NAME
-  const season = contentText(content, 'season') ?? t('main.season')
-  const description = contentText(content, 'description') ?? t('main.description')
-  const serverName = contentText(content, 'serverName', 'server_name') ?? t('main.serverName')
+  const operationName =
+    localizedContentText(
+      content,
+      lang,
+      'content.operationName',
+      'operationName',
+      'operation_name',
+    ) ?? OPERATION_NAME
+  const season = localizedContentText(content, lang, 'content.season', 'season') ?? t('main.season')
+  const description =
+    localizedContentText(content, lang, 'content.description', 'description') ??
+    t('main.description')
+  const serverName =
+    localizedContentText(content, lang, 'content.serverName', 'serverName', 'server_name') ??
+    t('main.serverName')
   const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
   const players = serverStatus?.playersOnline?.toString() ?? '—'
-  const ping = serverStatus?.apiLatencyMs?.toString() ?? '—'
+  const ping = serverStatus?.serverLatencyMs?.toString() ?? '—'
   const region = serverStatus?.regionCode ?? '—'
   const features =
-    content?.features?.flatMap((feature) =>
+    content?.features?.flatMap((feature, index) =>
       feature.title && feature.desc
         ? [
             {
               icon: featureIcon(feature.icon),
-              title: feature.title,
-              desc: feature.desc,
+              title: localizedContentText(content, lang, `feature.${index}.title`) ?? feature.title,
+              desc: localizedContentText(content, lang, `feature.${index}.desc`) ?? feature.desc,
             },
           ]
         : [],
@@ -237,15 +248,15 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           desc: t(feature.desc),
         }))
   const feed =
-    content?.feed?.flatMap((entry) =>
+    content?.feed?.flatMap((entry, index) =>
       entry.title && entry.body
         ? [
             {
-              tag: entry.tag ?? '',
+              tag: localizedContentText(content, lang, `feed.${index}.tag`) ?? entry.tag ?? '',
               tone: feedTone(entry.tone),
               date: entry.date ?? '',
-              title: entry.title,
-              body: entry.body,
+              title: localizedContentText(content, lang, `feed.${index}.title`) ?? entry.title,
+              body: localizedContentText(content, lang, `feed.${index}.body`) ?? entry.body,
             },
           ]
         : [],
@@ -565,18 +576,23 @@ const FEED_TAG_CLASS: Record<FeedTone, string> = {
 
 function FeedItem({ entry }: { entry: FeedEntry }) {
   return (
-    <div className="bg-[#0B0906] p-4 flex flex-col gap-2 hover:bg-[#11100D] transition-colors cursor-pointer">
-      <div className="flex items-start justify-between gap-2">
-        <span
-          className={`shrink-0 text-[9px] tracking-[0.16em] border px-1.5 py-0.5 ${FEED_TAG_CLASS[entry.tone]}`}
-        >
-          {entry.tag}
+    <details className="group bg-[#0B0906] p-4 hover:bg-[#11100D] transition-colors">
+      <summary className="list-none cursor-pointer [&::-webkit-details-marker]:hidden">
+        <div className="flex items-start justify-between gap-2">
+          <span
+            className={`shrink-0 text-[9px] tracking-[0.16em] border px-1.5 py-0.5 ${FEED_TAG_CLASS[entry.tone]}`}
+          >
+            {entry.tag}
+          </span>
+          <span className="text-[10px] tracking-[0.24em] text-[#5E5040]">{entry.date}</span>
+        </div>
+        <span className="mt-2 flex items-center justify-between gap-2 text-[12px] tracking-[0.04em] text-neutral-100">
+          {entry.title}
+          <ChevronRight size={12} className="shrink-0 transition-transform group-open:rotate-90" />
         </span>
-        <span className="text-[10px] tracking-[0.24em] text-[#5E5040]">{entry.date}</span>
-      </div>
-      <span className="text-[12px] tracking-[0.04em] text-neutral-100">{entry.title}</span>
-      <span className="text-[11px] leading-snug text-[#8E7A5E]">{entry.body}</span>
-    </div>
+      </summary>
+      <p className="mt-2 text-[11px] leading-snug text-[#8E7A5E]">{entry.body}</p>
+    </details>
   )
 }
 

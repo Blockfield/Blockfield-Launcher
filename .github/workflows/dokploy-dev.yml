@@ -50,7 +50,7 @@ jobs:
 
   filament-tests:
     name: Filament tests
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t blockfield-filament-test server/admin
@@ -78,7 +78,7 @@ jobs:
 
   secret-scan:
     name: Secret scan
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
         with:
@@ -185,17 +185,15 @@ jobs:
           $installerName = $installer.Name
 
           # ponytail: try .sig from Tauri bundler first, manual sign as fallback
-          $sigFiles = @(
-            Get-ChildItem -Path target/release/bundle, src-tauri/target/release/bundle -Recurse -File -Filter *.sig -ErrorAction SilentlyContinue
-          )
-          if ($sigFiles.Count -eq 0) {
-            throw "No updater .sig file found"
+          $signatureFile = "$($installer.FullName).sig"
+          if (-not (Test-Path -LiteralPath $signatureFile)) {
+            throw "No updater signature found for $installerName"
           }
-          $signature = (Get-Content $sigFiles[0].FullName -Raw).Trim()
+          $signature = (Get-Content -LiteralPath $signatureFile -Raw).Trim()
           if ([string]::IsNullOrWhiteSpace($signature)) {
             throw "Updater signature is empty"
           }
-          Write-Host "Found .sig file: $($sigFiles[0].FullName)"
+          Write-Host "Found matching .sig file: $signatureFile"
 
           $releaseNotes = "Dev Windows build for $env:GITHUB_SHA"
 
@@ -356,7 +354,7 @@ jobs:
 
   filament:
     name: Build & deploy Filament
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     environment: dev
 
     steps:

@@ -35,9 +35,10 @@ class LauncherUserResource extends Resource
                 ->email()->maxLength(255)->unique(ignoreRecord: true)
                 ->dehydrateStateUsing(fn (?string $state): ?string => filled($state) ? Str::lower($state) : null),
             Forms\Components\TextInput::make('minecraft_uuid')
-                ->label('Minecraft UUID')->default(fn (): string => (string) Str::uuid())->required()->uuid()->unique(ignoreRecord: true),
+                ->label('Minecraft UUID')->disabled()
+                ->visible(fn (string $operation): bool => $operation === 'edit'),
             Forms\Components\TextInput::make('password')
-                ->password()->revealable()->minLength(12)
+                ->password()->revealable()->minLength(8)
                 ->required(fn (string $operation): bool => $operation === 'create')
                 ->dehydrated(fn (?string $state): bool => filled($state)),
             Forms\Components\Select::make('status')->options([

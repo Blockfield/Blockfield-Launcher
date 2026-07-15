@@ -17,7 +17,7 @@ import { useI18n, type TKey, type TFunction } from '../i18n'
 import { OPERATION_NAME } from '../constants'
 import { listenDownloadProgress, listenLauncherStatus } from '../../lib/events'
 import type { DownloadProgress, LauncherStatus, VersionCheckResult } from '../../lib/api'
-import { contentText, useLauncherContent } from '../../lib/content'
+import { localizedContentText, useLauncherContent } from '../../lib/content'
 
 type StepStatus = 'done' | 'active' | 'pending'
 type Phase =
@@ -77,7 +77,7 @@ const INITIAL_STEPS: Array<{ label: TKey; status: StepStatus }> = [
 const freshSteps = () => INITIAL_STEPS.map((step) => ({ ...step }))
 
 export function UpdateScreen() {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const content = useLauncherContent()
   const [phase, setPhase] = useState<Phase>('checking')
   const [statusMessage, setStatusMessage] = useState('')
@@ -427,16 +427,29 @@ export function UpdateScreen() {
         : t('update.offline')
   const mirrorStatusClass =
     mirrorOnline === false ? 'text-[#c98b8b]' : transferring ? 'text-[#F5A524]' : 'text-[#82D66B]'
-  const operationName = contentText(content, 'operationName', 'operation_name') ?? OPERATION_NAME
+  const operationName =
+    localizedContentText(
+      content,
+      lang,
+      'content.operationName',
+      'operationName',
+      'operation_name',
+    ) ?? OPERATION_NAME
   const updateDescription =
-    contentText(content, 'updateDescription', 'update_description') ?? t('update.description')
+    localizedContentText(
+      content,
+      lang,
+      'content.updateDescription',
+      'updateDescription',
+      'update_description',
+    ) ?? t('update.description')
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-[#070604]">
+    <div className="relative h-full w-full overflow-y-auto bg-[#070604]">
       <TopoBackdrop />
       <GridBackdrop intensity={0.5} />
 
-      <div className="relative h-full p-5 flex flex-col min-h-0">
+      <div className="relative min-h-[700px] p-5 flex flex-col">
         <OperationBar
           label={t('update.packageSync')}
           status={statusText()}

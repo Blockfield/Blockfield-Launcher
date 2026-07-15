@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { makeT } from '../i18n'
+import { localizedContentText } from '../../lib/content'
 
 describe('makeT', () => {
   it('formats translated placeholders', () => {
@@ -12,5 +13,19 @@ describe('makeT', () => {
         v: '9.9.9',
       }),
     ).toBe('BUILD 9.9.9')
+  })
+
+  it('uses localized CMS content with an English fallback', () => {
+    const content = {
+      operation_name: 'IRON FRONT',
+      translations: { ru: { 'content.operationName': 'ЖЕЛЕЗНЫЙ ФРОНТ' } },
+    }
+
+    expect(localizedContentText(content, 'ru', 'content.operationName', 'operation_name')).toBe(
+      'ЖЕЛЕЗНЫЙ ФРОНТ',
+    )
+    expect(localizedContentText(content, 'uk', 'content.operationName', 'operation_name')).toBe(
+      'IRON FRONT',
+    )
   })
 })

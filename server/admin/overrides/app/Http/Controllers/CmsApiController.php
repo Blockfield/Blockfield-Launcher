@@ -6,7 +6,6 @@ use App\Models\FeatureCard;
 use App\Models\LauncherContent;
 use App\Models\ModpackRelease;
 use App\Models\NewsFeedEntry;
-use App\Models\Translation;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -60,15 +59,10 @@ class CmsApiController extends Controller
                 ])
                 ->toArray();
 
-            $translations = Translation::all()
-                ->groupBy('locale')
-                ->map(fn ($group) => $group->pluck('value', 'key'))
-                ->toArray();
-
             foreach ($records as $record) {
                 $record->features = $features;
                 $record->feed = $feed;
-                $record->translations = $translations;
+                $record->translations ??= [];
             }
         }
 

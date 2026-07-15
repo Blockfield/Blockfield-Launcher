@@ -42,7 +42,7 @@ curl -H "Authorization: Bearer $CMS_TOKEN" "http://localhost:8055/api/items/laun
 curl -f http://localhost:3000/api/launcher/v1/content.json
 ```
 
-The first Filament administrator is created from explicit `FILAMENT_ADMIN_EMAIL` and a password of at least 12 characters. Existing credentials are never overwritten on restart.
+The first Filament administrator is created from explicit `FILAMENT_ADMIN_EMAIL` and a password of at least 8 characters. Existing credentials are never overwritten on restart.
 
 Stop:
 

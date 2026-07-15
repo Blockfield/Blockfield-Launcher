@@ -7,7 +7,7 @@ import { UpdateScreen } from './components/UpdateScreen'
 import { SettingsScreen } from './components/SettingsScreen'
 import { I18nContext, makeT, type Lang } from './i18n'
 import { contentTranslations, useLauncherContent } from '../lib/content'
-import { login, logout, restoreSession, type AuthSession } from '../lib/auth'
+import { login, logout, register, restoreSession, type AuthSession } from '../lib/auth'
 
 type Screen = 'login' | 'main' | 'update' | 'settings'
 
@@ -125,6 +125,22 @@ export default function App() {
     [syncGameIdentity],
   )
 
+  const handleRegister = useCallback(
+    async (
+      username: string,
+      email: string,
+      password: string,
+      passwordConfirmation: string,
+      remember: boolean,
+    ) => {
+      const auth = await register(username, email, password, passwordConfirmation, remember)
+      await syncGameIdentity(auth)
+      setSession(auth)
+      setScreen('main')
+    },
+    [syncGameIdentity],
+  )
+
   const handleLogout = useCallback(async () => {
     const current = session
     setSession(null)
@@ -135,9 +151,9 @@ export default function App() {
 
   return (
     <I18nContext.Provider value={i18n}>
-      <WindowChrome key={lang}>
+      <WindowChrome>
         {restoringSession ? null : screen === 'login' || !session ? (
-          <LoginScreen onSignIn={handleSignIn} />
+          <LoginScreen onSignIn={handleSignIn} onRegister={handleRegister} />
         ) : (
           <Shell
             user={session.user}

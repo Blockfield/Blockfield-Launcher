@@ -22,5 +22,11 @@ class LauncherContent extends Model
         'support_label',
         'update_description',
         'settings_preferences',
+        'translations',
     ];
+
+    protected function casts(): array
+    {
+        return ['translations' => 'array'];
+    }
 }

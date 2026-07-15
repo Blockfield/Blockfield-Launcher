@@ -34,6 +34,34 @@ export async function login(username: string, password: string, remember: boolea
   return session
 }
 
+export async function register(
+  username: string,
+  email: string,
+  password: string,
+  passwordConfirmation: string,
+  remember: boolean,
+) {
+  const response = await fetch(`${API}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username,
+      email,
+      password,
+      password_confirmation: passwordConfirmation,
+      remember,
+      deviceName: navigator.userAgent,
+    }),
+  })
+  if (!response.ok)
+    throw new Error(
+      response.status === 422 ? 'Registration failed.' : 'Authentication service unavailable.',
+    )
+  const session = { ...(await response.json()), remember } as AuthSession
+  saveSession(session)
+  return session
+}
+
 export async function restoreSession(): Promise<AuthSession | null> {
   const session = loadSession()
   if (!session) return null

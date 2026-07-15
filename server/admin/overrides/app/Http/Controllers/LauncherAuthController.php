@@ -12,6 +12,30 @@ use Illuminate\Support\Str;
 
 class LauncherAuthController extends Controller
 {
+    public function register(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'username' => ['required', 'string', 'min:3', 'max:16', 'regex:/^[A-Za-z0-9_]+$/', 'unique:launcher_users,username'],
+            'email' => ['required', 'email', 'max:255', 'unique:launcher_users,email'],
+            'password' => ['required', 'string', 'min:8', 'max:1024', 'confirmed'],
+            'remember' => ['sometimes', 'boolean'],
+            'deviceName' => ['sometimes', 'nullable', 'string', 'max:255'],
+        ]);
+        $user = LauncherUser::create([
+            'username' => $data['username'],
+            'email' => $data['email'],
+            'password' => $data['password'],
+            'status' => 'active',
+            'role' => 'player',
+        ]);
+        $this->audit('registration_succeeded', $user, $request);
+
+        return response()->json(
+            $this->issueSession($user, (bool) ($data['remember'] ?? false), $data['deviceName'] ?? null),
+            201,
+        );
+    }
+
     public function login(Request $request): JsonResponse
     {
         $data = $request->validate([

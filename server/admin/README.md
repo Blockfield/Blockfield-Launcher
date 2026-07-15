@@ -35,9 +35,7 @@ Separate collection, each record: `icon`, `title`, `desc`, `sort_order`.
 
 Separate collection, each record: `tag` (PATCH|EVENT|OPS), `tone` (amber|green|sand), `date`, `title`, `body`, `sort_order`.
 
-### `translations`
-
-Separate collection, each record: `locale` (en|ru|uk), `key`, `value`. Unique on `(locale, key)`. Served as a nested object by the launcher_content endpoint.
+Translations are edited on `Launcher Content`: select `en`, `ru`, or `uk` in the locale dropdown and edit that locale's key/value overrides. Missing keys fall back to the bundled launcher text.
 
 ## Environment variables
 
@@ -82,7 +80,7 @@ docker run --rm -p 8055:8055 \
 ```
 
 Admin: `http://localhost:8055/admin`  
-Set `FILAMENT_ADMIN_EMAIL` and a unique `FILAMENT_ADMIN_PASSWORD` of at least 12 characters before the first start. The application does not provide default credentials and never overwrites an existing administrator password.
+Set `FILAMENT_ADMIN_EMAIL` and a unique `FILAMENT_ADMIN_PASSWORD` of at least 8 characters before the first start. The application does not provide default credentials and never overwrites an existing administrator password.
 
 ## Troubleshooting
 

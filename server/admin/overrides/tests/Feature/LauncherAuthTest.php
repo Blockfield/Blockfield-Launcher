@@ -35,6 +35,18 @@ test('valid login stores only token hashes and returns the account identity', fu
         ->and($session->access_token_hash)->not->toBe($response['accessToken']);
 });
 
+test('registration accepts an eight character password and generates the Minecraft UUID', function (): void {
+    $response = $this->postJson('/api/launcher/v1/auth/register', [
+        'username' => 'new_player',
+        'email' => 'new@example.com',
+        'password' => '12345678',
+        'password_confirmation' => '12345678',
+    ])->assertCreated();
+
+    expect($response['user']['minecraft_uuid'])->toMatch('/^[0-9a-f-]{36}$/');
+    $this->assertDatabaseHas('launcher_users', ['username' => 'new_player', 'role' => 'player']);
+});
+
 test('unknown invalid disabled and banned accounts receive the same error', function (): void {
     launcherUser();
     launcherUser(['username' => 'disabled', 'email' => 'disabled@example.com', 'minecraft_uuid' => (string) Str::uuid(), 'status' => 'disabled']);

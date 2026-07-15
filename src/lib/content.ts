@@ -38,6 +38,18 @@ export function contentTranslations(content: LauncherContent | null, lang: strin
   return byLang
 }
 
+export function localizedContentText(
+  content: LauncherContent | null,
+  lang: string,
+  translationKey: string,
+  ...keys: string[]
+) {
+  const translated = contentTranslations(content, lang)?.[translationKey]
+  return typeof translated === 'string' && translated.trim()
+    ? translated
+    : contentText(content, ...keys)
+}
+
 function loadLauncherContent() {
   if (cached) return Promise.resolve(cached)
   pending ??= fetch(`${API_BASE}/content.json`)

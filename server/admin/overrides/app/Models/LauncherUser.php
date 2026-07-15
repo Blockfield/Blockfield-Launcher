@@ -13,6 +13,13 @@ class LauncherUser extends Model
 
     protected $hidden = ['password'];
 
+    protected static function booted(): void
+    {
+        static::creating(function (LauncherUser $user): void {
+            $user->minecraft_uuid ??= (string) Str::uuid();
+        });
+    }
+
     protected function casts(): array
     {
         return [

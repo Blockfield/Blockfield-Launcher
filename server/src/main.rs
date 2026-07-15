@@ -37,6 +37,32 @@ const DEFAULT_FORGE_SHA256: &str =
 const DEFAULT_FORGE_SIZE: u64 = 6_078_070;
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
+fn is_private_modpack_path(path: &str) -> bool {
+    let path = path.replace('\\', "/").to_ascii_lowercase();
+    matches!(
+        path.as_str(),
+        "options.txt"
+            | "servers.dat"
+            | "servers.dat_old"
+            | "launcher_accounts.json"
+            | "launcher_profiles.json"
+            | "usercache.json"
+            | "usernamecache.json"
+            | "config/voicechat/player-volumes.properties"
+            | "config/voicechat/username-cache.json"
+    ) || [
+        "logs/",
+        "crash-reports/",
+        "screenshots/",
+        "saves/",
+        "xaero/",
+        "xaerowaypoints",
+        "config/worldedit/sessions/",
+    ]
+    .iter()
+    .any(|prefix| path.starts_with(prefix))
+}
+
 struct AppConfig {
     base_url: String,
     files_dir: PathBuf,
@@ -117,8 +143,8 @@ impl AppConfig {
             server_port: env_string("MINECRAFT_SERVER_PORT", "25565")
                 .parse()
                 .unwrap_or(25565),
-            server_region_code: env_string("SERVER_REGION_CODE", "UNKNOWN"),
-            server_location_name: env_string("SERVER_LOCATION_NAME", "Unknown"),
+            server_region_code: env_string("SERVER_REGION_CODE", "UA"),
+            server_location_name: env_string("SERVER_LOCATION_NAME", "Kyiv, Ukraine"),
         }
     }
 }
@@ -738,6 +764,9 @@ fn extract_zip_archive(zip_path: &Path, extracted_dir: &Path) -> Result<(), Stri
         }
 
         let rel_path = safe_zip_entry_path(entry.name())?;
+        if is_private_modpack_path(&rel_path.to_string_lossy()) {
+            continue;
+        }
         let dest = extracted_dir.join(rel_path);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
@@ -791,6 +820,9 @@ fn build_manifest(
             .map_err(|e| format!("Strip prefix error: {e}"))?
             .to_string_lossy()
             .replace('\\', "/");
+        if is_private_modpack_path(&rel_path) {
+            continue;
+        }
 
         let mut file = std::fs::File::open(abs_path)
             .map_err(|e| format!("Failed to read {}: {e}", abs_path.display()))?;
@@ -867,6 +899,9 @@ async fn serve_file(
     headers: HeaderMap,
 ) -> Response {
     let _release_guard = state.release_lock.read().await;
+    if is_private_modpack_path(&path) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let mut safe_path = PathBuf::new();
     for part in path.split('/') {
         if !part.is_empty() && part != "." && part != ".." {
@@ -1134,7 +1169,7 @@ async fn proxy_auth(
     headers: &HeaderMap,
     body: Option<Bytes>,
 ) -> Response {
-    if !matches!(action, "login" | "refresh" | "logout" | "me") {
+    if !matches!(action, "login" | "register" | "refresh" | "logout" | "me") {
         return json_error(StatusCode::NOT_FOUND, "not found");
     }
     let Some(base) = state.config.cms_url.as_ref() else {
@@ -2470,6 +2505,22 @@ mod tests {
     fn encodes_url_path_bytes() {
         assert_eq!(percent_encode_path("mods/a b.jar"), "mods/a%20b.jar");
         assert_eq!(percent_encode_path("mods/[x].jar"), "mods/%5Bx%5D.jar");
+    }
+
+    #[test]
+    fn excludes_player_specific_files_from_modpack_distribution() {
+        for path in [
+            "options.txt",
+            "servers.dat",
+            "XaeroWaypoints_BACKUP240807/server/config.txt",
+            "xaero/world-map/server/config.txt",
+            "config/worldedit/sessions/player.json",
+            "config/voicechat/username-cache.json",
+        ] {
+            assert!(is_private_modpack_path(path), "{path}");
+        }
+        assert!(!is_private_modpack_path("mods/blockfield.jar"));
+        assert!(!is_private_modpack_path("config/blockfield-common.toml"));
     }
 
     #[test]

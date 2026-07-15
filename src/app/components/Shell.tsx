@@ -4,7 +4,7 @@ import { useI18n, type TKey } from '../i18n'
 import { Logo } from './Logo'
 import { StatusDot } from './ui-bits'
 import { BRAND, SERVER_IP } from '../constants'
-import { contentText, useLauncherContent } from '../../lib/content'
+import { contentText, localizedContentText, useLauncherContent } from '../../lib/content'
 import type { AuthUser } from '../../lib/auth'
 import { useLauncherVersion } from '../../lib/version'
 
@@ -29,17 +29,26 @@ export function Shell({
   onLogout: () => void
   children: ReactNode
 }) {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const content = useLauncherContent()
   const launcherVersion = useLauncherVersion()
   const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
   const operatorHandle = user.username
   const operatorInitials = user.username.slice(0, 2).toUpperCase()
   const operatorRank = user.role.toUpperCase()
-  const supportLabel = contentText(content, 'supportLabel', 'support_label') ?? t('shell.support')
+  const supportLabel =
+    localizedContentText(content, lang, 'content.supportLabel', 'supportLabel', 'support_label') ??
+    t('shell.support')
   const networkStatus = 'AUTHENTICATED'
   const brand = contentText(content, 'brand') ?? BRAND
-  const brandSubtitle = contentText(content, 'brandSubtitle', 'brand_subtitle') ?? 'TACTICAL OPS'
+  const brandSubtitle =
+    localizedContentText(
+      content,
+      lang,
+      'content.brandSubtitle',
+      'brandSubtitle',
+      'brand_subtitle',
+    ) ?? 'TACTICAL OPS'
 
   return (
     <div className="relative h-full w-full bg-[#070604] flex flex-col">

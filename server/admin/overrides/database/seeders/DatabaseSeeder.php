@@ -5,7 +5,6 @@ namespace Database\Seeders;
 use App\Models\FeatureCard;
 use App\Models\LauncherContent;
 use App\Models\NewsFeedEntry;
-use App\Models\Translation;
 use App\Models\User;
 use App\Models\LauncherSession;
 use Illuminate\Database\Seeder;
@@ -26,8 +25,8 @@ class DatabaseSeeder extends Seeder
             if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
                 throw new \RuntimeException('FILAMENT_ADMIN_EMAIL is required for initial bootstrap.');
             }
-            if (strlen($password) < 12 || strtolower($password) === 'admin') {
-                throw new \RuntimeException('FILAMENT_ADMIN_PASSWORD must be at least 12 characters.');
+            if (strlen($password) < 8 || strtolower($password) === 'admin') {
+                throw new \RuntimeException('FILAMENT_ADMIN_PASSWORD must be at least 8 characters.');
             }
 
             User::create([
@@ -53,6 +52,10 @@ class DatabaseSeeder extends Seeder
                 'support_label' => 'SUPPORT',
                 'update_description' => 'Synchronizing modpack assets with the primary deployment server. Do not close the launcher until the operation completes.',
                 'settings_preferences' => '/ LAUNCHER PREFERENCES',
+                'translations' => [
+                    'ru' => ['nav.deploy' => 'БОЙ'],
+                    'uk' => ['nav.deploy' => 'БІЙ'],
+                ],
             ],
         );
 
@@ -71,13 +74,5 @@ class DatabaseSeeder extends Seeder
             ]);
         }
 
-        if (Schema::hasTable('translations') && Translation::count() === 0) {
-            Translation::insert([
-                // ru
-                ['locale' => 'ru', 'key' => 'nav.deploy', 'value' => 'БОЙ', 'created_at' => now(), 'updated_at' => now()],
-                // uk
-                ['locale' => 'uk', 'key' => 'nav.deploy', 'value' => 'БІЙ', 'created_at' => now(), 'updated_at' => now()],
-            ]);
-        }
     }
 }
