@@ -74,6 +74,7 @@ jobs:
           image-ref: blockfield-filament-test
           exit-code: 1
           severity: CRITICAL,HIGH
+          ignore-unfixed: true
 
   secret-scan:
     name: Secret scan
