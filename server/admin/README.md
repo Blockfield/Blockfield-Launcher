@@ -2,6 +2,8 @@
 
 Laravel/Filament admin panel for managing Blockfield Launcher content, updates, and modpack releases.
 
+Content locale is selected globally in the top-right admin dropdown. English stores the base records; Russian and Ukrainian fields stay on the same Launcher Content, Feature Card, and News Feed records.
+
 Docker image: `ghcr.io/netherg-io/blockfield-launcher-filament`  
 Port: `8055`
 
@@ -35,7 +37,7 @@ Separate collection, each record: `icon`, `title`, `desc`, `sort_order`.
 
 Separate collection, each record: `tag` (PATCH|EVENT|OPS), `tone` (amber|green|sand), `date`, `title`, `body`, `sort_order`.
 
-Translations are edited on `Launcher Content`: select `en`, `ru`, or `uk` in the locale dropdown and edit that locale's key/value overrides. Missing keys fall back to the bundled launcher text.
+Use the locale dropdown in the top-right corner to edit localized fields across Launcher Content, Feature Cards, and News Feed. Missing localized values fall back to English.
 
 ## Environment variables
 

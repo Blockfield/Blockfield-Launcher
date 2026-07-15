@@ -9,8 +9,9 @@ use App\Models\NewsFeedEntry;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -45,11 +46,13 @@ class CmsApiController extends Controller
 
         // ponytail: stitch related data for launcher_content so the Rust server sees the same JSON shape
         if ($collection === 'launcher_content') {
-            $features = FeatureCard::orderBy('sort_order')->get()
+            $featureRecords = FeatureCard::orderBy('sort_order')->get();
+            $feedRecords = NewsFeedEntry::orderBy('sort_order')->get();
+            $features = $featureRecords
                 ->map(fn ($card) => ['icon' => $card->icon, 'title' => $card->title, 'desc' => $card->desc])
                 ->toArray();
 
-            $feed = NewsFeedEntry::orderBy('sort_order')->get()
+            $feed = $feedRecords
                 ->map(fn ($entry) => [
                     'tag' => $entry->tag,
                     'tone' => $entry->tone,
@@ -62,7 +65,31 @@ class CmsApiController extends Controller
             foreach ($records as $record) {
                 $record->features = $features;
                 $record->feed = $feed;
-                $record->translations ??= [];
+                $translations = [];
+                foreach ($record->translations ?? [] as $locale => $messages) {
+                    if (is_array($messages)) {
+                        $translations[$locale] = Arr::dot($messages);
+                    }
+                }
+                foreach ($featureRecords as $index => $feature) {
+                    foreach ($feature->translations ?? [] as $locale => $messages) {
+                        foreach (['title', 'desc'] as $field) {
+                            if (filled($messages[$field] ?? null)) {
+                                $translations[$locale]["feature.{$index}.{$field}"] = $messages[$field];
+                            }
+                        }
+                    }
+                }
+                foreach ($feedRecords as $index => $entry) {
+                    foreach ($entry->translations ?? [] as $locale => $messages) {
+                        foreach (['tag', 'title', 'body'] as $field) {
+                            if (filled($messages[$field] ?? null)) {
+                                $translations[$locale]["feed.{$index}.{$field}"] = $messages[$field];
+                            }
+                        }
+                    }
+                }
+                $record->translations = $translations;
             }
         }
 

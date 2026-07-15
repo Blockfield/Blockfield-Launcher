@@ -4,6 +4,7 @@ namespace App\Filament\Resources\LauncherContentResource\Pages;
 
 use App\Filament\Resources\LauncherContentResource;
 use App\Models\LauncherContent;
+use App\Support\CmsLocale;
 use App\Support\LauncherContentCache;
 use Filament\Resources\Pages\EditRecord;
 
@@ -21,6 +22,11 @@ class ManageLauncherContent extends EditRecord
     protected function getHeaderActions(): array
     {
         return [];
+    }
+
+    protected function mutateFormDataBeforeSave(array $data): array
+    {
+        return CmsLocale::preserveOtherLocales($data, $this->record->translations);
     }
 
     protected function afterSave(): void

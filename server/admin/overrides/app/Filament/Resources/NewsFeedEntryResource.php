@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\NewsFeedEntryResource\Pages;
 use App\Models\NewsFeedEntry;
+use App\Support\CmsLocale;
 use App\Support\LauncherContentCache;
 use BackedEnum;
 use Filament\Actions;
@@ -24,11 +25,16 @@ class NewsFeedEntryResource extends Resource
 
     public static function form(Schema $schema): Schema
     {
+        $locale = CmsLocale::current();
+
         return $schema->components([
-            Forms\Components\Select::make('tag')
-                ->options(['PATCH' => 'PATCH', 'EVENT' => 'EVENT', 'OPS' => 'OPS'])
-                ->default('PATCH')
-                ->required(),
+            $locale === 'en'
+                ? Forms\Components\Select::make('tag')
+                    ->options(['PATCH' => 'PATCH', 'EVENT' => 'EVENT', 'OPS' => 'OPS'])
+                    ->default('PATCH')
+                    ->required()
+                : Forms\Components\TextInput::make("translations.{$locale}.tag")
+                    ->label('Tag')->maxLength(32),
             Forms\Components\Select::make('tone')
                 ->options(['amber' => 'Amber', 'green' => 'Green', 'sand' => 'Sand'])
                 ->default('amber')
@@ -36,9 +42,11 @@ class NewsFeedEntryResource extends Resource
             Forms\Components\TextInput::make('date')
                 ->maxLength(16)
                 ->hint('e.g. "06.07"'),
-            Forms\Components\TextInput::make('title')
+            Forms\Components\TextInput::make(CmsLocale::field('title', 'title'))
+                ->label('Title')
                 ->maxLength(96),
-            Forms\Components\Textarea::make('body')
+            Forms\Components\Textarea::make(CmsLocale::field('body', 'body'))
+                ->label('Body')
                 ->maxLength(500)
                 ->rows(3)
                 ->columnSpanFull(),
@@ -51,19 +59,40 @@ class NewsFeedEntryResource extends Resource
 
     public static function table(Table $table): Table
     {
+        $locale = CmsLocale::current();
+
         return $table
             ->columns([
-                Tables\Columns\TextColumn::make('tag')->badge()->sortable(),
+                Tables\Columns\TextColumn::make('tag')
+                    ->state(fn (NewsFeedEntry $record): ?string => $locale === 'en'
+                        ? $record->tag
+                        : (data_get($record->translations, "{$locale}.tag") ?: $record->tag))
+                    ->badge()->sortable(),
                 Tables\Columns\TextColumn::make('tone')->badge(),
                 Tables\Columns\TextColumn::make('date')->searchable(),
-                Tables\Columns\TextColumn::make('title')->searchable(),
-                Tables\Columns\TextColumn::make('body')->limit(60),
+                Tables\Columns\TextColumn::make('title')
+                    ->state(fn (NewsFeedEntry $record): ?string => $locale === 'en'
+                        ? $record->title
+                        : (data_get($record->translations, "{$locale}.title") ?: $record->title))
+                    ->searchable(),
+                Tables\Columns\TextColumn::make('body')
+                    ->state(fn (NewsFeedEntry $record): ?string => $locale === 'en'
+                        ? $record->body
+                        : (data_get($record->translations, "{$locale}.body") ?: $record->body))
+                    ->limit(60),
                 Tables\Columns\TextColumn::make('sort_order')->label('Order')->sortable(),
                 Tables\Columns\TextColumn::make('updated_at')->dateTime()->sortable(),
             ])
             ->defaultSort('sort_order')
             ->recordActions([
-                Actions\EditAction::make()->after(fn () => LauncherContentCache::invalidate()),
+                Actions\EditAction::make()
+                    ->mutateDataUsing(
+                        fn (array $data, NewsFeedEntry $record): array => CmsLocale::preserveOtherLocales(
+                            $data,
+                            $record->translations,
+                        ),
+                    )
+                    ->after(fn () => LauncherContentCache::invalidate()),
                 Actions\DeleteAction::make()->after(fn () => LauncherContentCache::invalidate()),
             ]);
     }
