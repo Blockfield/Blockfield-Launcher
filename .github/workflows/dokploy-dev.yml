@@ -31,6 +31,13 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - uses: taiki-e/install-action@v2.83.2
+        with:
+          tool: cargo-audit
+          fallback: none
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
@@ -45,7 +52,6 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: pnpm audit --audit-level high
-      - run: cargo install cargo-audit --locked
       - run: cargo audit
 
   filament-tests:
