@@ -1180,7 +1180,8 @@ async fn proxy_auth(
     };
     let mut request = state
         .client
-        .request(method, format!("{base}/launcher/v1/auth/{action}"));
+        .request(method, format!("{base}/launcher/v1/auth/{action}"))
+        .header(header::ACCEPT, "application/json");
     if let Some(value) = headers.get(header::AUTHORIZATION) {
         request = request.header(header::AUTHORIZATION, value.as_bytes());
     }
@@ -2462,12 +2463,12 @@ mod tests {
     async fn auth_proxy_accepts_empty_logout_body() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
+        let (request_tx, request_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 1024];
             let read = stream.read(&mut request).await.unwrap();
-            assert!(String::from_utf8_lossy(&request[..read])
-                .starts_with("POST /launcher/v1/auth/logout "));
+            request_tx.send(request[..read].to_vec()).unwrap();
             stream
                 .write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}",
@@ -2488,17 +2489,19 @@ mod tests {
             content_cache: Mutex::new(None),
         });
 
-        assert_eq!(
-            proxy_auth_post(
-                State(state),
-                AxumPath("logout".to_string()),
-                HeaderMap::new(),
-                Bytes::new()
-            )
-            .await
-            .status(),
-            StatusCode::OK
-        );
+        let response = proxy_auth_post(
+            State(state),
+            AxumPath("logout".to_string()),
+            HeaderMap::new(),
+            Bytes::new(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let request = String::from_utf8(request_rx.await.unwrap()).unwrap();
+        assert!(request.starts_with("POST /launcher/v1/auth/logout "));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("accept: application/json"));
     }
 
     #[test]
