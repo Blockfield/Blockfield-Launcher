@@ -58,6 +58,8 @@ jobs:
         run: >-
           docker run --rm --entrypoint php
           -e APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          -e APP_ENV=testing
+          -e DB_DATABASE=:memory:
           -e CMS_TOKEN=0123456789abcdef0123456789abcdef
           -e AUTH_SIGNING_KEY=abcdef0123456789abcdef0123456789
           -e RELOAD_TOKEN=reload0123456789abcdef0123456789ab

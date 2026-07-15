@@ -38,8 +38,9 @@ RUN apt-get update && apt-get install -y ca-certificates curl tini && rm -rf /va
 
 COPY --from=builder /usr/local/bin/blockfield-server /usr/local/bin/blockfield-server
 
-# Volumes for modpack files and extracted content
-VOLUME ["/data/files", "/data/extracted"]
+# Keep active, staged, and previous releases on one filesystem. Mounting the
+# active directory itself prevents the atomic directory swap used on publish.
+VOLUME ["/data"]
 
 ENV FILES_DIR=/data/files
 ENV EXTRACTED_DIR=/data/extracted
