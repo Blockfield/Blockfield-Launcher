@@ -21,7 +21,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         FilamentView::registerRenderHook(
-            PanelsRenderHook::USER_MENU_BEFORE,
+            PanelsRenderHook::PAGE_HEADER_ACTIONS_BEFORE,
             fn (): View => view('filament.locale-switcher', [
                 'locale' => CmsLocale::current(),
                 'locales' => CmsLocale::OPTIONS,
