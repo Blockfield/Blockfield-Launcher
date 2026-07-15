@@ -130,20 +130,20 @@ jobs:
       - name: Validate updater signing secrets
         shell: pwsh
         env:
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_PRIVATE_KEY)) {
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
             throw "TAURI_PRIVATE_KEY is required"
           }
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_KEY_PASSWORD)) {
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
             throw "TAURI_KEY_PASSWORD is required"
           }
 
       - name: Build Tauri release
         env:
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           # Frontend (Vite) — VITE_* vars consumed at build time by Vite/Vite
           VITE_BLOCKFIELD_API_URL: ${{ vars.VITE_BLOCKFIELD_API_URL || 'http://localhost:3000/api/launcher/v1' }}
           VITE_BRAND: ${{ vars.VITE_BRAND || 'BLOCKFIELD' }}
