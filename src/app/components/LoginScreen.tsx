@@ -2,23 +2,26 @@ import { useState } from 'react'
 import { ArrowRight, Lock, User } from 'lucide-react'
 import { Logo } from './Logo'
 import { GridBackdrop, TopoBackdrop, CornerTicks } from './Backdrop'
-import { StatusDot } from './ui-bits'
 import { useI18n } from '../i18n'
-import { BRAND, COORDINATES, COPYRIGHT, LAUNCHER_VERSION, SERVER_REGION } from '../constants'
+import { BRAND, COPYRIGHT } from '../constants'
 import { contentText, useLauncherContent } from '../../lib/content'
+import { useLauncherVersion } from '../../lib/version'
 
-export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
+export function LoginScreen({
+  onSignIn,
+}: {
+  onSignIn: (username: string, password: string, remember: boolean) => Promise<void>
+}) {
   const { t } = useI18n()
   const content = useLauncherContent()
   const [remember, setRemember] = useState(true)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
   const brand = contentText(content, 'brand') ?? BRAND
-  const coordinates = contentText(content, 'coordinates') ?? COORDINATES
   const copyright = contentText(content, 'copyright') ?? COPYRIGHT
-  const launcherVersion =
-    contentText(content, 'launcherVersion', 'launcher_version') ?? LAUNCHER_VERSION
-  const serverRegion = contentText(content, 'serverRegion', 'server_region') ?? SERVER_REGION
+  const launcherVersion = useLauncherVersion()
   const sector = contentText(content, 'loginSector', 'login_sector') ?? t('login.sector')
   const slogan = contentText(content, 'loginSlogan', 'login_slogan') ?? t('login.slogan')
 
@@ -29,14 +32,10 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
 
       <div className="absolute left-5 top-5 text-[10px] tracking-[0.16em] text-[#5E5040] flex flex-col gap-2">
         <span>{sector}</span>
-        <span>{coordinates}</span>
       </div>
       <div className="absolute right-5 top-5 text-[10px] tracking-[0.16em] text-[#5E5040] flex flex-col items-end gap-2">
         <span>{t('login.build', { v: launcherVersion })}</span>
-        <span className="flex items-center gap-2">
-          <StatusDot pulse />
-          {t('login.authOnline')}
-        </span>
+        <span className="flex items-center gap-2">{t('login.authRequired')}</span>
       </div>
 
       <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between text-[10px] tracking-[0.16em] text-[#5E5040]">
@@ -100,7 +99,19 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
                 </div>
 
                 <button
-                  onClick={onSignIn}
+                  type="button"
+                  disabled={submitting || !username.trim() || !password}
+                  onClick={async () => {
+                    setSubmitting(true)
+                    setError('')
+                    try {
+                      await onSignIn(username, password, remember)
+                    } catch (reason) {
+                      setError(reason instanceof Error ? reason.message : String(reason))
+                    } finally {
+                      setSubmitting(false)
+                    }
+                  }}
                   className="relative mt-3 h-11 group overflow-hidden border border-[#F5A524]/40 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-all"
                   style={{
                     boxShadow:
@@ -109,10 +120,19 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
                 >
                   <span className="absolute inset-0 bg-[#F5A524]/0 group-hover:bg-[#F5A524]/10 transition-colors" />
                   <span className="relative flex items-center justify-center gap-3 text-[12px] tracking-[0.24em] text-[#F3E7D0]">
-                    {t('login.signIn')}
+                    {submitting ? 'AUTHENTICATING…' : t('login.signIn')}
                     <ArrowRight size={14} />
                   </span>
                 </button>
+                {error && (
+                  <p role="alert" className="text-[11px] text-[#E36A5D]">
+                    {t(
+                      error === 'Invalid credentials.'
+                        ? 'login.invalidCredentials'
+                        : 'login.serviceUnavailable',
+                    )}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -123,7 +143,7 @@ export function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
                   {t('login.ready')} · v{launcherVersion}
                 </span>
               </div>
-              <span className="text-[10px] tracking-[0.22em] text-[#5E5040]">{serverRegion}</span>
+              <span className="text-[10px] tracking-[0.22em] text-[#5E5040]">AUTH REQUIRED</span>
             </div>
           </div>
         </div>

@@ -3,15 +3,20 @@ services:
     build:
       context: ./admin
     ports:
-      - "8055:8055"
+      - '8055:8055'
     volumes:
       - filament-data:/data
     environment:
-      APP_URL: ${FILAMENT_APP_URL:-http://localhost:8055}
-      APP_KEY: ${FILAMENT_APP_KEY:-}
-      CMS_TOKEN: ${CMS_TOKEN:-blockfield-dev-token}
-      FILAMENT_ADMIN_EMAIL: ${FILAMENT_ADMIN_EMAIL:-admin@example.com}
-      FILAMENT_ADMIN_PASSWORD: ${FILAMENT_ADMIN_PASSWORD:-admin}
+      APP_URL: ${APP_URL:-}
+      APP_KEY: ${APP_KEY:-}
+      FILAMENT_APP_URL: ${FILAMENT_APP_URL:-http://localhost:8055}
+      FILAMENT_APP_KEY: ${FILAMENT_APP_KEY:-}
+      CMS_TOKEN: ${CMS_TOKEN:?CMS_TOKEN is required}
+      AUTH_SIGNING_KEY: ${AUTH_SIGNING_KEY:?AUTH_SIGNING_KEY is required}
+      RELOAD_TOKEN: ${RELOAD_TOKEN:?RELOAD_TOKEN is required}
+      BLOCKFIELD_API_URL: http://blockfield-api:3000/api/launcher/v1
+      FILAMENT_ADMIN_EMAIL: ${FILAMENT_ADMIN_EMAIL:-}
+      FILAMENT_ADMIN_PASSWORD: ${FILAMENT_ADMIN_PASSWORD:-}
     restart: unless-stopped
 
   blockfield-api:
@@ -22,10 +27,10 @@ services:
       filament:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - '3000:3000'
     volumes:
-      - ./files:/data/files          # Drop new ZIPs here, POST /api/launcher/v1/reload
-      - extracted:/data/extracted    # Auto-populated cache from ZIP on startup/reload
+      - ./files:/data/files # Drop new ZIPs here, POST /api/launcher/v1/reload
+      - extracted:/data/releases # Active, staged, and previous releases
     environment:
       - BASE_URL=${BASE_URL:-https://play.blockfield.gg}
       - MODPACK_VERSION=${MODPACK_VERSION:-0.1.43}
@@ -33,15 +38,25 @@ services:
       - BIND_HOST=${BIND_HOST:-0.0.0.0}
       - PORT=${PORT:-3000}
       - API_PREFIX=${API_PREFIX:-api/launcher/v1}
+      - CORS_ORIGINS=${CORS_ORIGINS:-tauri://localhost,http://tauri.localhost,http://localhost:5173}
+      - MINECRAFT_SERVER_HOST=${MINECRAFT_SERVER_HOST:-play.blockfield.gg}
+      - MINECRAFT_SERVER_PORT=${MINECRAFT_SERVER_PORT:-25565}
+      - SERVER_REGION_CODE=${SERVER_REGION_CODE:-UNKNOWN}
+      - SERVER_LOCATION_NAME=${SERVER_LOCATION_NAME:-Unknown}
       - FALLBACK_BRAND=${FALLBACK_BRAND:-BLOCKFIELD}
       - FALLBACK_BRAND_SUBTITLE=${FALLBACK_BRAND_SUBTITLE:-TACTICAL OPS}
       - FALLBACK_CHROME_TITLE=${FALLBACK_CHROME_TITLE:-BLOCKFIELD LAUNCHER}
       - FALLBACK_OPERATION_NAME=${FALLBACK_OPERATION_NAME:-IRON FRONT}
       - FALLBACK_SERVER_IP=${FALLBACK_SERVER_IP:-play.blockfield.gg:25565}
-      - FALLBACK_LAUNCHER_VERSION=${FALLBACK_LAUNCHER_VERSION:-0.4.2}
-      - FALLBACK_UPDATE_URL=${FALLBACK_UPDATE_URL:-https://play.blockfield.gg/downloads/blockfield-launcher_0.1.0_x64-setup.exe}
       - CMS_URL=http://filament:8055/api
-      - CMS_TOKEN=${CMS_TOKEN:-blockfield-dev-token}
+      - CMS_TOKEN=${CMS_TOKEN:?CMS_TOKEN is required}
+      - RELOAD_TOKEN=${RELOAD_TOKEN:?RELOAD_TOKEN is required}
+      - JAVA_VERSION=${JAVA_VERSION:-}
+      - JAVA_PLATFORM=${JAVA_PLATFORM:-}
+      - JAVA_URL=${JAVA_URL:-}
+      - JAVA_SHA256=${JAVA_SHA256:-}
+      - JAVA_SIZE=${JAVA_SIZE:-}
+      - EXTRACTED_DIR=/data/releases/active
       - CMS_REQUIRED=${CMS_REQUIRED:-false}
       - CMS_MODPACK_COLLECTION=${CMS_MODPACK_COLLECTION:-modpack_releases}
       - CMS_CONTENT_COLLECTION=${CMS_CONTENT_COLLECTION:-launcher_content}

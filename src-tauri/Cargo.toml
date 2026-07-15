@@ -6,7 +6,7 @@ authors = ["you"]
 license = ""
 repository = ""
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.88"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -24,9 +24,9 @@ log = "0.4"
 tauri = { version = "2.11.2", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 reqwest = { version = "0.12", features = ["gzip", "json", "stream"] }
 sha2 = "0.10"
 zip = "4"
@@ -36,3 +36,6 @@ tokio = { version = "1", features = ["sync", "time", "macros"] }
 futures-util = "0.3"
 dotenvy = "0.15"
 blockfield-shared = { path = "../shared" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }

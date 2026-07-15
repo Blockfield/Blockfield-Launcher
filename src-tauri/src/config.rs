@@ -77,6 +77,7 @@ pub fn load_config(app_data_dir: &Path) -> LauncherConfig {
 
 /// Save the launcher config to disk.
 pub fn save_config(app_data_dir: &PathBuf, config: &LauncherConfig) -> Result<(), String> {
+    validate_config(config)?;
     std::fs::create_dir_all(app_data_dir)
         .map_err(|e| format!("Failed to create app data dir: {e}"))?;
     let path = config_path(app_data_dir);
@@ -85,4 +86,86 @@ pub fn save_config(app_data_dir: &PathBuf, config: &LauncherConfig) -> Result<()
     std::fs::write(&path, json).map_err(|e| format!("Failed to write config: {e}"))?;
     log::info!("Launcher config saved to {}", path.display());
     Ok(())
+}
+
+pub fn validate_config(config: &LauncherConfig) -> Result<(), String> {
+    let game_dir = PathBuf::from(config.game_dir.trim());
+    if !game_dir.is_absolute() || game_dir.parent().is_none() {
+        return Err(
+            "Game directory must be a safe absolute path, not a filesystem root".to_string(),
+        );
+    }
+    std::fs::create_dir_all(&game_dir)
+        .map_err(|e| format!("Game directory cannot be created: {e}"))?;
+    let probe = game_dir.join(".blockfield-write-test");
+    std::fs::write(&probe, b"")
+        .and_then(|_| std::fs::remove_file(&probe))
+        .map_err(|e| format!("Game directory is not writable: {e}"))?;
+
+    let max_ram = total_memory_mb().map_or(32_768, |total| total.saturating_mul(3) / 4);
+    if config.ram_mb < 2_048 || config.ram_mb > max_ram {
+        return Err(format!("RAM must be between 2048 and {max_ram} MB"));
+    }
+
+    if !config.java_path.trim().is_empty() {
+        let path = Path::new(&config.java_path);
+        if !path.is_file() {
+            return Err("Selected Java executable does not exist".to_string());
+        }
+        let output = std::process::Command::new(path)
+            .arg("-version")
+            .output()
+            .map_err(|e| format!("Failed to run selected Java: {e}"))?;
+        let version = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() || !(version.contains("\"17") || version.contains("\"21")) {
+            return Err("Selected Java must be a working Java 17 or 21 runtime".to_string());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn total_memory_mb() -> Option<u32> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut status = MEMORYSTATUSEX {
+        dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+        ..unsafe { std::mem::zeroed() }
+    };
+    (unsafe { GlobalMemoryStatusEx(&mut status) } != 0)
+        .then_some((status.ullTotalPhys / 1024 / 1024).min(u64::from(u32::MAX)) as u32)
+}
+
+#[cfg(not(windows))]
+fn total_memory_mb() -> Option<u32> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let kb = meminfo.lines().find_map(|line| {
+        line.strip_prefix("MemTotal:")?
+            .split_whitespace()
+            .next()?
+            .parse::<u64>()
+            .ok()
+    })?;
+    Some((kb / 1024).min(u64::from(u32::MAX)) as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_relative_root_and_unsafe_ram_settings() {
+        let mut config = LauncherConfig {
+            game_dir: ".".to_string(),
+            ..LauncherConfig::default()
+        };
+        assert!(validate_config(&config).is_err());
+
+        config.game_dir = std::env::temp_dir()
+            .join(format!("blockfield-config-{}", std::process::id()))
+            .to_string_lossy()
+            .to_string();
+        config.ram_mb = 1;
+        assert!(validate_config(&config).is_err());
+        let _ = std::fs::remove_dir_all(&config.game_dir);
+    }
 }

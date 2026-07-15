@@ -11,34 +11,24 @@ use Filament\Schemas\Schema;
 class LauncherContentResource extends Resource
 {
     protected static ?string $model = LauncherContent::class;
+    protected static string|\UnitEnum|null $navigationGroup = 'Content';
 
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            Forms\Components\TextInput::make('brand')->maxLength(255),
-            Forms\Components\TextInput::make('brand_subtitle')->maxLength(255),
-            Forms\Components\TextInput::make('chrome_title')->maxLength(255),
-            Forms\Components\TextInput::make('operation_name')->maxLength(255),
-            Forms\Components\TextInput::make('season')->maxLength(255),
-            Forms\Components\Textarea::make('description')->rows(3)->columnSpanFull(),
-            Forms\Components\TextInput::make('server_name')->maxLength(255),
-            Forms\Components\TextInput::make('server_ip')->maxLength(255),
-            Forms\Components\TextInput::make('server_region')->maxLength(255),
-            Forms\Components\TextInput::make('operators')->maxLength(255),
-            Forms\Components\TextInput::make('ping')->maxLength(255),
-            Forms\Components\TextInput::make('region')->maxLength(255),
-            Forms\Components\TextInput::make('launcher_version')->maxLength(255),
-            Forms\Components\TextInput::make('coordinates')->maxLength(255),
-            Forms\Components\TextInput::make('copyright')->maxLength(255),
-            Forms\Components\TextInput::make('login_sector')->maxLength(255),
-            Forms\Components\TextInput::make('login_slogan')->maxLength(255),
-            Forms\Components\TextInput::make('operator_handle')->maxLength(255),
-            Forms\Components\TextInput::make('operator_initials')->maxLength(255),
-            Forms\Components\TextInput::make('operator_rank')->maxLength(255),
-            Forms\Components\TextInput::make('support_label')->maxLength(255),
-            Forms\Components\TextInput::make('network_status')->maxLength(255),
-            Forms\Components\TextInput::make('settings_preferences')->maxLength(255),
-            Forms\Components\Textarea::make('update_description')->rows(4)->columnSpanFull(),
+            Forms\Components\TextInput::make('brand')->maxLength(64)->helperText('Primary launcher brand.'),
+            Forms\Components\TextInput::make('brand_subtitle')->maxLength(64),
+            Forms\Components\TextInput::make('chrome_title')->maxLength(64),
+            Forms\Components\TextInput::make('operation_name')->maxLength(64),
+            Forms\Components\TextInput::make('season')->maxLength(64)->helperText('Example: / SEASON 02'),
+            Forms\Components\Textarea::make('description')->maxLength(500)->rows(3)->columnSpanFull(),
+            Forms\Components\TextInput::make('server_name')->maxLength(64),
+            Forms\Components\TextInput::make('copyright')->maxLength(128),
+            Forms\Components\TextInput::make('login_sector')->maxLength(64),
+            Forms\Components\TextInput::make('login_slogan')->maxLength(128),
+            Forms\Components\TextInput::make('support_label')->maxLength(32),
+            Forms\Components\TextInput::make('settings_preferences')->maxLength(64),
+            Forms\Components\Textarea::make('update_description')->maxLength(500)->rows(4)->columnSpanFull(),
         ])->columns(3);
     }
 

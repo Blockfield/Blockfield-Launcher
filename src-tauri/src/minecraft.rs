@@ -2,7 +2,6 @@ use crate::download::Downloader;
 use futures_util::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
-use sha2::Digest;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
@@ -32,14 +31,6 @@ fn launcher_name() -> String {
         .filter(|v| !v.trim().is_empty())
         .or_else(|| option_env!("BLOCKFIELD_LAUNCHER_NAME").map(String::from))
         .unwrap_or_else(|| "BlockfieldLauncher".to_string())
-}
-
-fn offline_username() -> String {
-    std::env::var("BLOCKFIELD_OFFLINE_USERNAME")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| option_env!("BLOCKFIELD_OFFLINE_USERNAME").map(String::from))
-        .unwrap_or_else(|| "Blockfield".to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +172,76 @@ pub async fn ensure_launch_dependencies(
     Ok(())
 }
 
+pub async fn prepare_download_plan(
+    game_dir: &Path,
+    minecraft_version: &str,
+    forge_version_id: Option<&str>,
+) -> Result<u64, String> {
+    ensure_version_json(game_dir, minecraft_version).await?;
+    let vanilla_json = read_json_file(&version_json_path(game_dir, minecraft_version))?;
+
+    let mut artifacts = Vec::new();
+    let client = &vanilla_json["downloads"]["client"];
+    if let (Some(url), Some(size)) = (client["url"].as_str(), client["size"].as_u64()) {
+        let artifact = Artifact {
+            path: format!("{minecraft_version}.jar"),
+            url: url.to_string(),
+            size,
+        };
+        let root = game_dir.join("versions").join(minecraft_version);
+        if artifact_needs_download(&root, &artifact) {
+            artifacts.push((root, artifact));
+        }
+    }
+
+    let mut jsons = vec![vanilla_json.clone()];
+    if let Some(forge_version_id) = forge_version_id {
+        jsons.push(read_json_file(&version_json_path(
+            game_dir,
+            forge_version_id,
+        ))?);
+    }
+    let mut libraries = Vec::new();
+    for json in &jsons {
+        let (libs, natives) = collect_library_artifacts(json);
+        libraries.extend(libs);
+        libraries.extend(natives);
+    }
+    for artifact in dedupe_artifacts(libraries) {
+        let root = game_dir.join("libraries");
+        if artifact_needs_download(&root, &artifact) {
+            artifacts.push((root, artifact));
+        }
+    }
+
+    let asset_index = &vanilla_json["assetIndex"];
+    let asset_id = asset_index["id"]
+        .as_str()
+        .ok_or_else(|| "Missing Minecraft asset index id".to_string())?;
+    let asset_url = asset_index["url"]
+        .as_str()
+        .ok_or_else(|| "Missing Minecraft asset index URL".to_string())?;
+    let index_path = game_dir
+        .join("assets")
+        .join("indexes")
+        .join(format!("{asset_id}.json"));
+    if !index_path.exists() {
+        download_text_to(asset_url, &index_path).await?;
+    }
+    let index_json = read_json_file(&index_path)?;
+    let asset_root = game_dir.join("assets").join("objects");
+    for artifact in collect_asset_artifacts(&index_json) {
+        if artifact_needs_download(&asset_root, &artifact) {
+            artifacts.push((asset_root.clone(), artifact));
+        }
+    }
+
+    Ok(artifacts
+        .into_iter()
+        .map(|(_, artifact)| artifact.size)
+        .sum())
+}
+
 fn emit(app_handle: &AppHandle, phase: &str, message: &str, cancelable: bool) {
     #[derive(Serialize, Clone)]
     struct Payload<'a> {
@@ -203,6 +264,7 @@ pub fn build_launch_args(
     ram_mb: u32,
     minecraft_version: &str,
     forge_version_id: Option<&str>,
+    identity: &crate::commands::GameIdentity,
 ) -> Result<Vec<String>, String> {
     let vanilla_json = read_json_file(&version_json_path(game_dir, minecraft_version))?;
     let forge_json = forge_version_id
@@ -233,6 +295,7 @@ pub fn build_launch_args(
         version_name,
         asset_index,
         &classpath,
+        identity,
     );
 
     let mut args = vec![format!("-Xmx{ram_mb}M"), format!("-Xms{ram_mb}M")];
@@ -340,7 +403,9 @@ async fn ensure_assets(
 }
 
 async fn fetch_json(url: &str) -> Result<Value, String> {
-    let response = reqwest::get(url)
+    let response = metadata_client()?
+        .get(url)
+        .send()
         .await
         .map_err(|e| format!("Failed to fetch {url}: {e}"))?
         .error_for_status()
@@ -352,7 +417,9 @@ async fn fetch_json(url: &str) -> Result<Value, String> {
 }
 
 async fn download_text_to(url: &str, path: &Path) -> Result<(), String> {
-    let response = reqwest::get(url)
+    let response = metadata_client()?
+        .get(url)
+        .send()
         .await
         .map_err(|e| format!("Failed to download {url}: {e}"))?
         .error_for_status()
@@ -367,7 +434,19 @@ async fn download_text_to(url: &str, path: &Path) -> Result<(), String> {
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
 
-    std::fs::write(path, text).map_err(|e| format!("Failed to write {}: {e}", path.display()))
+    let partial = crate::download::partial_path(path);
+    std::fs::write(&partial, text)
+        .map_err(|e| format!("Failed to write {}: {e}", partial.display()))?;
+    crate::download::activate_partial(&partial, path)
+        .map_err(|e| format!("Failed to activate {}: {e}", path.display()))
+}
+
+fn metadata_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))
 }
 
 async fn download_artifacts(
@@ -388,7 +467,6 @@ async fn download_artifacts(
     }
 
     let total_bytes: u64 = missing.iter().map(|(_, a)| a.size).sum();
-    downloader.add_to_grand_total(total_bytes);
     let file_count = missing.len();
     let root = root.to_path_buf();
     let label = label.to_string();
@@ -404,11 +482,12 @@ async fn download_artifacts(
             async move {
                 let mut downloaded: u64 = 0;
                 let dest = root.join(&artifact.path);
+                let partial = crate::download::partial_path(&dest);
                 let file_label = format!("{}/{}", label, artifact.path);
                 downloader
                     .download_one(
                         &artifact.url,
-                        &dest,
+                        &partial,
                         &file_label,
                         artifact.size,
                         index + 1,
@@ -420,18 +499,20 @@ async fn download_artifacts(
                     .map_err(|e| format!("Failed to download {}: {}", file_label, e))?;
 
                 if artifact.size > 0 {
-                    let actual_size = dest
+                    let actual_size = partial
                         .metadata()
-                        .map_err(|e| format!("Failed to stat {}: {}", dest.display(), e))?
+                        .map_err(|e| format!("Failed to stat {}: {}", partial.display(), e))?
                         .len();
                     if actual_size != artifact.size {
-                        let _ = std::fs::remove_file(&dest);
+                        let _ = std::fs::remove_file(&partial);
                         return Err(format!(
                             "Size mismatch for {}: expected {}, got {}",
                             file_label, artifact.size, actual_size
                         ));
                     }
                 }
+                crate::download::activate_partial(&partial, &dest)
+                    .map_err(|e| format!("Failed to activate {}: {}", dest.display(), e))?;
                 Ok(())
             }
         })
@@ -711,6 +792,7 @@ fn launch_vars(
     version_name: &str,
     asset_index: &str,
     classpath: &str,
+    identity: &crate::commands::GameIdentity,
 ) -> HashMap<String, String> {
     let game_dir = game_dir.to_string_lossy().to_string();
     let assets_dir = PathBuf::from(&game_dir)
@@ -724,16 +806,13 @@ fn launch_vars(
     let natives_dir = natives_dir(Path::new(&game_dir), minecraft_version)
         .to_string_lossy()
         .to_string();
-    let username = std::env::var("BLOCKFIELD_PLAYER_NAME")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| option_env!("BLOCKFIELD_PLAYER_NAME").map(String::from))
-        .unwrap_or_else(offline_username);
-
     HashMap::from([
-        ("auth_player_name".to_string(), username.clone()),
-        ("auth_uuid".to_string(), offline_uuid(&username)),
-        ("auth_access_token".to_string(), "0".to_string()),
+        ("auth_player_name".to_string(), identity.username.clone()),
+        ("auth_uuid".to_string(), identity.uuid.replace('-', "")),
+        (
+            "auth_access_token".to_string(),
+            identity.access_token.clone(),
+        ),
         ("clientid".to_string(), "0".to_string()),
         ("auth_xuid".to_string(), "0".to_string()),
         ("user_type".to_string(), "legacy".to_string()),
@@ -814,13 +893,6 @@ fn native_classifier(library: &Value) -> Option<String> {
     Some(classifier.replace("${arch}", native_arch_suffix()))
 }
 
-fn offline_uuid(username: &str) -> String {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(format!("OfflinePlayer:{username}").as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
-    hash.chars().take(32).collect()
-}
-
 fn read_json_file(path: &Path) -> Result<Value, String> {
     let json = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
@@ -868,5 +940,72 @@ fn classpath_separator() -> &'static str {
         ";"
     } else {
         ":"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn runtime_plan_counts_missing_client_libraries_and_assets_once() {
+        let root =
+            std::env::temp_dir().join(format!("blockfield-runtime-plan-{}", std::process::id()));
+        let version = "1.20.1";
+        let version_path = version_json_path(&root, version);
+        let index_path = root.join("assets/indexes/test.json");
+        std::fs::create_dir_all(version_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &version_path,
+            serde_json::to_vec(&serde_json::json!({
+                "downloads": { "client": { "url": "https://example.invalid/client.jar", "size": 10 } },
+                "libraries": [{
+                    "downloads": { "artifact": {
+                        "path": "com/example/lib.jar",
+                        "url": "https://example.invalid/lib.jar",
+                        "size": 20
+                    }}
+                }],
+                "assetIndex": { "id": "test", "url": "https://example.invalid/assets.json" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            &index_path,
+            serde_json::to_vec(&serde_json::json!({
+                "objects": { "test": { "hash": "aabb", "size": 30 } }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            prepare_download_plan(&root, version, None).await.unwrap(),
+            60
+        );
+
+        let files = [
+            (root.join("versions/1.20.1/1.20.1.jar"), 10),
+            (root.join("libraries/com/example/lib.jar"), 20),
+            (root.join("assets/objects/aa/aabb"), 30),
+        ];
+        for (path, size) in &files {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, vec![0; *size]).unwrap();
+        }
+        assert_eq!(
+            prepare_download_plan(&root, version, None).await.unwrap(),
+            0
+        );
+
+        std::fs::write(&files[2].0, b"partial").unwrap();
+        assert_eq!(
+            prepare_download_plan(&root, version, None).await.unwrap(),
+            30
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

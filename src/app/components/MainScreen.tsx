@@ -20,7 +20,12 @@ import { GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
 import { useI18n, type TKey } from '../i18n'
 import { OPERATION_NAME, SERVER_IP } from '../constants'
 import { listenDownloadProgress, listenLauncherStatus } from '../../lib/events'
-import type { DownloadProgress, VersionCheckResult } from '../../lib/api'
+import {
+  fetchServerStatus,
+  type DownloadProgress,
+  type ServerStatus as ServerStatusData,
+  type VersionCheckResult,
+} from '../../lib/api'
 import { contentText, useLauncherContent } from '../../lib/content'
 
 type Tone = 'ok' | 'muted' | 'warn'
@@ -90,6 +95,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const [launchStatus, setLaunchStatus] = useState('')
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchProgress, setLaunchProgress] = useState<number | null>(null)
+  const [serverStatus, setServerStatus] = useState<ServerStatusData | null>(null)
 
   const handleDeploy = useCallback(async () => {
     // Don't allow deploy until version check completes
@@ -154,6 +160,16 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
     checkVersion()
   }, [checkVersion])
 
+  useEffect(() => {
+    const refresh = () =>
+      fetchServerStatus()
+        .then(setServerStatus)
+        .catch(() => setServerStatus(null))
+    refresh()
+    const interval = window.setInterval(refresh, 30_000)
+    return () => window.clearInterval(interval)
+  }, [])
+
   // Derive display values from version check result
   const isChecked = versionInfo !== null
   const needsUpdate = versionInfo?.needsUpdate ?? false
@@ -197,9 +213,9 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const description = contentText(content, 'description') ?? t('main.description')
   const serverName = contentText(content, 'serverName', 'server_name') ?? t('main.serverName')
   const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
-  const operators = contentText(content, 'operators') ?? '142'
-  const ping = contentText(content, 'ping') ?? '28'
-  const region = contentText(content, 'region') ?? 'EU-W'
+  const players = serverStatus?.playersOnline?.toString() ?? '—'
+  const ping = serverStatus?.apiLatencyMs?.toString() ?? '—'
+  const region = serverStatus?.regionCode ?? '—'
   const features =
     content?.features?.flatMap((feature) =>
       feature.title && feature.desc
@@ -265,7 +281,11 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
               <p className="text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">{description}</p>
             </div>
 
-            <ServerStatus serverName={serverName} serverIp={serverIp} />
+            <ServerStatus
+              serverName={serverName}
+              serverIp={serverStatus ? `${serverStatus.host}:${serverStatus.port}` : serverIp}
+              online={serverStatus?.online === true}
+            />
           </div>
 
           {/* PLAY zone */}
@@ -293,9 +313,9 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
               <div className="flex shrink-0 items-center gap-4 text-right">
                 <Metric
                   icon={<Users size={14} />}
-                  label={t('main.operators')}
-                  value={operators}
-                  sub="/ 200"
+                  label={t('main.players')}
+                  value={players}
+                  sub={serverStatus?.playersMax ? `/ ${serverStatus.playersMax}` : ''}
                 />
                 <span className="h-10 w-px bg-[#18130D]" />
                 <Metric
@@ -309,7 +329,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                   icon={<Wifi size={14} />}
                   label={t('main.region')}
                   value={region}
-                  sub="FRA"
+                  sub={serverStatus?.locationName ?? ''}
                 />
               </div>
             </div>
@@ -327,7 +347,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
             </div>
 
             <div className="bg-[#0B0906] p-4 flex flex-col min-h-0">
-              <SectionHeader label={t('main.modpackStatus')} code="PKG-0142" />
+              <SectionHeader label={t('main.modpackStatus')} code="PKG-LIVE" />
               <div className="mt-3 flex flex-col gap-2 flex-1">
                 <Row label={t('main.installed')} value={installedVersion} />
                 <Row label={t('main.latest')} value={latestVersion} highlight={needsUpdate} />
@@ -441,15 +461,25 @@ function DeployButton({
   )
 }
 
-function ServerStatus({ serverName, serverIp }: { serverName: string; serverIp: string }) {
+function ServerStatus({
+  serverName,
+  serverIp,
+  online,
+}: {
+  serverName: string
+  serverIp: string
+  online: boolean
+}) {
   const { t } = useI18n()
   return (
     <div className="shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-[240px]">
       <div className="flex items-start justify-between gap-2">
         <span className="text-[10px] tracking-[0.14em] text-[#8E7A5E]">{t('main.server')}</span>
-        <span className="flex items-center gap-1.5 text-[10px] tracking-[0.16em] text-[#82D66B]">
-          <StatusDot />
-          {t('main.online')}
+        <span
+          className={`flex items-center gap-1.5 text-[10px] tracking-[0.16em] ${online ? 'text-[#82D66B]' : 'text-[#E36A5D]'}`}
+        >
+          <StatusDot pulse={online} />
+          {online ? t('main.online') : 'UNAVAILABLE'}
         </span>
       </div>
       <div className="mt-2 flex items-center gap-2">

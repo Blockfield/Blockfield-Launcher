@@ -10,9 +10,13 @@ class CmsToken
 {
     public function handle(Request $request, Closure $next): Response
     {
-        $token = env('CMS_TOKEN');
+        $token = (string) config('blockfield.cms_token', '');
 
-        if ($token && ! hash_equals($token, (string) $request->bearerToken())) {
+        if (strlen($token) < 32) {
+            abort(503, 'CMS authentication is not configured.');
+        }
+
+        if (! hash_equals($token, (string) $request->bearerToken())) {
             abort(401);
         }
 

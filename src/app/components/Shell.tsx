@@ -3,14 +3,10 @@ import { Settings, LogOut, Gamepad2, Download, LifeBuoy } from 'lucide-react'
 import { useI18n, type TKey } from '../i18n'
 import { Logo } from './Logo'
 import { StatusDot } from './ui-bits'
-import {
-  BRAND,
-  LAUNCHER_VERSION,
-  OPERATOR_HANDLE,
-  OPERATOR_INITIALS,
-  SERVER_IP,
-} from '../constants'
+import { BRAND, SERVER_IP } from '../constants'
 import { contentText, useLauncherContent } from '../../lib/content'
+import type { AuthUser } from '../../lib/auth'
+import { useLauncherVersion } from '../../lib/version'
 
 type Screen = 'main' | 'update' | 'settings'
 
@@ -22,28 +18,26 @@ const NAV_ITEMS: Array<{ id: Screen; icon: ReactNode; key: TKey }> = [
 
 export function Shell({
   active,
+  user,
   onNavigate,
   onLogout,
   children,
 }: {
   active: Screen
+  user: AuthUser
   onNavigate: (s: Screen) => void
   onLogout: () => void
   children: ReactNode
 }) {
   const { t } = useI18n()
   const content = useLauncherContent()
-  const launcherVersion =
-    contentText(content, 'launcherVersion', 'launcher_version') ?? LAUNCHER_VERSION
+  const launcherVersion = useLauncherVersion()
   const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
-  const operatorHandle =
-    contentText(content, 'operatorHandle', 'operator_handle') ?? OPERATOR_HANDLE
-  const operatorInitials =
-    contentText(content, 'operatorInitials', 'operator_initials') ?? OPERATOR_INITIALS
-  const operatorRank = contentText(content, 'operatorRank', 'operator_rank') ?? t('shell.rank')
+  const operatorHandle = user.username
+  const operatorInitials = user.username.slice(0, 2).toUpperCase()
+  const operatorRank = user.role.toUpperCase()
   const supportLabel = contentText(content, 'supportLabel', 'support_label') ?? t('shell.support')
-  const networkStatus =
-    contentText(content, 'networkStatus', 'network_status') ?? t('shell.network')
+  const networkStatus = 'AUTHENTICATED'
   const brand = contentText(content, 'brand') ?? BRAND
   const brandSubtitle = contentText(content, 'brandSubtitle', 'brand_subtitle') ?? 'TACTICAL OPS'
 

@@ -41,6 +41,31 @@ export interface LauncherStatus {
   cancelable: boolean
 }
 
+export interface ServerStatus {
+  online: boolean
+  playersOnline: number | null
+  playersMax: number | null
+  minecraftVersion: string | null
+  motd: unknown
+  host: string
+  port: number
+  regionCode: string
+  locationName: string
+  serverLatencyMs: number | null
+  checkedAt: number
+  apiLatencyMs: number
+}
+
+export async function fetchServerStatus(): Promise<ServerStatus> {
+  const api = (
+    import.meta.env.VITE_BLOCKFIELD_API_URL ?? 'http://localhost:3000/api/launcher/v1'
+  ).replace(/\/$/, '')
+  const started = performance.now()
+  const response = await fetch(`${api}/server-status`)
+  if (!response.ok) throw new Error(`Server status failed: ${response.status}`)
+  return { ...(await response.json()), apiLatencyMs: Math.round(performance.now() - started) }
+}
+
 export interface LauncherContentFeature {
   icon?: string
   title?: string
@@ -70,29 +95,13 @@ export interface LauncherContent {
   server_name?: string
   serverIp?: string
   server_ip?: string
-  operators?: string
-  ping?: string
-  region?: string
-  launcherVersion?: string
-  launcher_version?: string
-  serverRegion?: string
-  server_region?: string
-  coordinates?: string
   copyright?: string
   loginSector?: string
   login_sector?: string
   loginSlogan?: string
   login_slogan?: string
-  operatorHandle?: string
-  operator_handle?: string
-  operatorInitials?: string
-  operator_initials?: string
-  operatorRank?: string
-  operator_rank?: string
   supportLabel?: string
   support_label?: string
-  networkStatus?: string
-  network_status?: string
   updateDescription?: string
   update_description?: string
   settingsPreferences?: string

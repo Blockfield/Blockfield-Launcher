@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\TranslationResource\Pages;
 
 use App\Filament\Resources\TranslationResource;
+use App\Support\LauncherContentCache;
 use Filament\Actions;
 use Filament\Resources\Pages\ManageRecords;
 
@@ -13,7 +14,7 @@ class ManageTranslations extends ManageRecords
     protected function getHeaderActions(): array
     {
         return [
-            Actions\CreateAction::make(),
+            Actions\CreateAction::make()->after(fn () => LauncherContentCache::invalidate()),
         ];
     }
 }

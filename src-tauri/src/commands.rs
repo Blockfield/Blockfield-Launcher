@@ -1,7 +1,7 @@
 use crate::config::LauncherConfig;
 use crate::download::Downloader;
 use crate::manifest::{InstalledManifest, ModpackManifest, VersionCheckResult};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -18,6 +18,33 @@ pub struct LauncherAppState {
     /// Direct handle to the atomic cancel flag so cancel_download can set it
     /// without any lock contention.
     pub cancel_flag: Arc<AtomicBool>,
+    pub game_identity: RwLock<Option<GameIdentity>>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameIdentity {
+    pub username: String,
+    pub uuid: String,
+    pub access_token: String,
+}
+
+impl GameIdentity {
+    fn is_valid(&self) -> bool {
+        self.username.len() >= 3
+            && self.username.len() <= 16
+            && self
+                .username
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            && !self.access_token.is_empty()
+            && !self.uuid.is_empty()
+            && self.uuid.len() <= 36
+            && self
+                .uuid
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -328,43 +355,18 @@ pub async fn download_modpack(
     let installed = InstalledManifest::load(&config.game_dir);
 
     state.downloader.reset_cancel();
+    Downloader::cleanup_partials(Path::new(&config.game_dir));
 
-    // ── Compute grand total for unified progress ──────────────────
-    // We sum up everything upfront so the frontend sees one smooth 0→100% bar.
-    let mut grand_total: u64 = 0;
-    // Java
-    if let Some(ref java) = manifest.java {
-        let need_java = !java_runtime_ready(Path::new(&config.game_dir), &java.version);
-        if need_java {
-            grand_total += java.size;
-        }
-    }
-    // Forge
-    if let Some(ref forge) = manifest.forge {
-        let forge_version_id = crate::minecraft::forge_version_id(&forge.version);
-        let forge_json = PathBuf::from(&config.game_dir)
-            .join("versions")
-            .join(&forge_version_id)
-            .join(format!("{}.json", forge_version_id));
-        if !forge_json.exists() {
-            grand_total += forge.size;
-        }
-    }
-    // Modpack files (the manifest's own total)
-    grand_total += manifest.total_size;
-
-    // Minecraft runtime estimate: we add a rough minimum, and
-    // download_artifacts will add precise totals dynamically via add_to_grand_total.
-    // Start with a floor of 16 MiB so the progress bar never divides by zero.
-    grand_total = grand_total.max(16 * 1024 * 1024);
-    state.downloader.set_grand_total(grand_total);
+    // Bootstrap artifacts are known immediately. Minecraft runtime artifacts are
+    // planned after Forge has generated its version metadata; until then the UI
+    // remains in an explicit indeterminate setup phase.
+    let game_dir = PathBuf::from(&config.game_dir);
+    let mut planned_bytes = planned_bootstrap_bytes(&manifest, &game_dir);
 
     emit_status(&app_handle, "setup", "Preparing install tasks", false);
 
     // Download Java runtime if needed
     if let Some(ref java) = manifest.java {
-        let java_dir = PathBuf::from(&config.game_dir).join("java");
-        let java_ver_path = java_dir.join(".version");
         let need_java = !java_runtime_ready(Path::new(&config.game_dir), &java.version);
 
         if need_java {
@@ -375,9 +377,14 @@ pub async fn download_modpack(
                 format!("Downloading Java {}", java.version),
                 true,
             );
-            let archive_path = java_dir.join("java-archive");
-            std::fs::create_dir_all(&java_dir)
-                .map_err(|e| format!("Failed to create java dir: {e}"))?;
+            if java.sha256.len() != 64 || !java.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err("Java runtime has no valid SHA-256 checksum".to_string());
+            }
+
+            let game_dir = PathBuf::from(&config.game_dir);
+            std::fs::create_dir_all(&game_dir)
+                .map_err(|e| format!("Failed to create game dir: {e}"))?;
+            let archive_path = game_dir.join(".java-runtime.zip.part");
 
             let mut java_downloaded = 0;
             state
@@ -395,27 +402,28 @@ pub async fn download_modpack(
                 .await
                 .map_err(|e| format!("Java download failed: {e}"))?;
 
-            if !java.sha256.is_empty() {
-                let actual = Downloader::sha256_file(&archive_path)
-                    .map_err(|e| format!("Java checksum error: {e}"))?;
-                if actual != java.sha256 {
-                    let _ = std::fs::remove_file(&archive_path);
-                    return Err(format!(
-                        "Java SHA256 mismatch: expected {}, got {}",
-                        java.sha256, actual
-                    ));
-                }
-                log::info!("Java SHA256 verified");
+            let actual_size = std::fs::metadata(&archive_path)
+                .map_err(|e| format!("Java archive metadata error: {e}"))?
+                .len();
+            if actual_size != java.size {
+                let _ = std::fs::remove_file(&archive_path);
+                return Err(format!(
+                    "Java archive size mismatch: expected {}, got {actual_size}",
+                    java.size
+                ));
             }
 
+            let actual = Downloader::sha256_file(&archive_path)
+                .map_err(|e| format!("Java checksum error: {e}"))?;
+            if !actual.eq_ignore_ascii_case(&java.sha256) {
+                let _ = std::fs::remove_file(&archive_path);
+                return Err("Java SHA-256 mismatch".to_string());
+            }
+            log::info!("Java SHA256 verified");
+
             emit_status(&app_handle, "java", "Extracting Java runtime", false);
-            extract_archive(&archive_path, &java_dir)?;
+            let java_exe = install_java_archive(&archive_path, &game_dir, &java.version)?;
             let _ = std::fs::remove_file(&archive_path);
-            let java_exe = bundled_java_path(&config.game_dir).ok_or_else(|| {
-                "Java runtime extracted but java executable was not found".to_string()
-            })?;
-            std::fs::write(&java_ver_path, &java.version)
-                .map_err(|e| format!("Failed to write java version: {e}"))?;
             let java_path_str = java_exe.to_string_lossy().to_string();
             let mut cfg = state.config.write().await;
             cfg.java_path = java_path_str.clone();
@@ -444,12 +452,13 @@ pub async fn download_modpack(
                 true,
             );
             let installer_path = PathBuf::from(&config.game_dir).join("forge-installer.jar");
+            let installer_partial = crate::download::partial_path(&installer_path);
             let mut forge_downloaded = 0;
             state
                 .downloader
                 .download_one(
                     &forge.url,
-                    &installer_path,
+                    &installer_partial,
                     "forge-installer",
                     forge.size,
                     1,
@@ -461,16 +470,18 @@ pub async fn download_modpack(
                 .map_err(|e| format!("Forge download failed: {e}"))?;
 
             if !forge.sha256.is_empty() {
-                let actual = Downloader::sha256_file(&installer_path)
+                let actual = Downloader::sha256_file(&installer_partial)
                     .map_err(|e| format!("Forge checksum error: {e}"))?;
                 if actual != forge.sha256 {
-                    let _ = std::fs::remove_file(&installer_path);
+                    let _ = std::fs::remove_file(&installer_partial);
                     return Err(format!(
                         "Forge SHA256 mismatch: expected {}, got {}",
                         forge.sha256, actual
                     ));
                 }
             }
+            crate::download::activate_partial(&installer_partial, &installer_path)
+                .map_err(|e| format!("Failed to activate Forge installer: {e}"))?;
 
             // Run Forge installer
             log::info!("Running Forge installer...");
@@ -530,26 +541,41 @@ pub async fn download_modpack(
         emit_status(&app_handle, "forge", "Forge client ready", false);
     }
 
+    let game_dir = PathBuf::from(&config.game_dir);
+    let forge_version_id = manifest
+        .forge
+        .as_ref()
+        .map(|forge| crate::minecraft::forge_version_id(&forge.version));
+    emit_status(
+        &app_handle,
+        "setup",
+        "Planning required runtime files",
+        false,
+    );
+    planned_bytes += crate::minecraft::prepare_download_plan(
+        &game_dir,
+        &manifest.minecraft_version,
+        forge_version_id.as_deref(),
+    )
+    .await?;
+    state.downloader.set_grand_total(planned_bytes);
+
     // If the version changed entirely, start fresh (prune old files)
     let installed_sha256 = if installed.version != manifest.version {
         emit_status(&app_handle, "prune", "Pruning stale modpack files", false);
         // Delete files listed in the prune array
         if let Some(ref prune_patterns) = manifest.prune {
+            let game_dir = PathBuf::from(&config.game_dir);
             for pattern in prune_patterns {
-                // Simple prefix/suffix matching for basic globs
-                let game_dir = PathBuf::from(&config.game_dir);
-                if pattern.ends_with("/*") {
-                    let dir_path = game_dir.join(pattern.trim_end_matches("/*"));
-                    if dir_path.exists() {
-                        let _ = std::fs::remove_dir_all(&dir_path);
-                        log::info!("Pruned directory: {}", dir_path.display());
+                let (path, directory) = safe_prune_target(&game_dir, pattern)?;
+                if path.exists() {
+                    if directory {
+                        std::fs::remove_dir_all(&path)
+                    } else {
+                        std::fs::remove_file(&path)
                     }
-                } else {
-                    let file_path = game_dir.join(pattern);
-                    if file_path.exists() {
-                        let _ = std::fs::remove_file(&file_path);
-                        log::info!("Pruned file: {}", file_path.display());
-                    }
+                    .map_err(|e| format!("Failed to prune {}: {e}", path.display()))?;
+                    log::info!("Pruned: {}", path.display());
                 }
             }
         }
@@ -565,12 +591,6 @@ pub async fn download_modpack(
         "Syncing modpack files + preparing runtime",
         true,
     );
-
-    let game_dir = PathBuf::from(&config.game_dir);
-    let forge_version_id = manifest
-        .forge
-        .as_ref()
-        .map(|forge| crate::minecraft::forge_version_id(&forge.version));
 
     // Modpack files and Minecraft runtime are independent — run them concurrently.
     let (modpack_result, runtime_result) = tokio::join!(
@@ -603,6 +623,37 @@ pub async fn download_modpack(
         emit_status(&app_handle, "ready", "Minecraft runtime ready", false);
     }
     runtime_result
+}
+
+fn planned_bootstrap_bytes(manifest: &ModpackManifest, game_dir: &Path) -> u64 {
+    let java = manifest
+        .java
+        .as_ref()
+        .filter(|java| !java_runtime_ready(game_dir, &java.version))
+        .map_or(0, |java| java.size);
+    let forge = manifest
+        .forge
+        .as_ref()
+        .filter(|forge| {
+            let version_id = crate::minecraft::forge_version_id(&forge.version);
+            !game_dir
+                .join("versions")
+                .join(&version_id)
+                .join(format!("{version_id}.json"))
+                .exists()
+        })
+        .map_or(0, |forge| forge.size);
+    let modpack = manifest
+        .files
+        .iter()
+        .filter(|entry| {
+            let path = game_dir.join(&entry.path);
+            !matches!(Downloader::sha256_file(&path), Ok(hash) if hash == entry.sha256)
+        })
+        .map(|entry| entry.size)
+        .sum::<u64>();
+
+    java + forge + modpack
 }
 
 #[tauri::command]
@@ -644,10 +695,32 @@ pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), S
 // ── Game launch command ────────────────────────────────────────
 
 #[tauri::command]
+pub async fn set_game_identity(
+    state: State<'_, LauncherAppState>,
+    identity: Option<GameIdentity>,
+) -> Result<(), String> {
+    if identity
+        .as_ref()
+        .is_some_and(|identity| !identity.is_valid())
+    {
+        return Err("Invalid authenticated game identity".to_string());
+    }
+    *state.game_identity.write().await = identity;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn launch_game(
     app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
 ) -> Result<(), String> {
+    let identity = state
+        .game_identity
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| "Authentication required before launch".to_string())?;
+    verify_game_identity(&identity).await?;
     let config = state.config.read().await.clone();
     let manifest = state.manifest.read().await.clone();
 
@@ -718,9 +791,10 @@ pub async fn launch_game(
         ram_mb,
         &minecraft_version,
         forge_version_id.as_deref(),
+        &identity,
     )?;
 
-    log::info!("Spawning: {java} {}", args.join(" "));
+    log::info!("Spawning authenticated game process");
     emit_status(&app_handle, "launch", "Starting game process", false);
 
     let child = std::process::Command::new(&java)
@@ -756,6 +830,135 @@ fn api_base_url() -> String {
     url
 }
 
+async fn verify_game_identity(identity: &GameIdentity) -> Result<(), String> {
+    #[derive(Deserialize)]
+    struct MeResponse {
+        user: MeUser,
+    }
+    #[derive(Deserialize)]
+    struct MeUser {
+        username: String,
+        minecraft_uuid: String,
+    }
+
+    let response = reqwest::Client::new()
+        .get(format!("{}/auth/me", api_base_url()))
+        .bearer_auth(&identity.access_token)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|_| "Authentication service unavailable".to_string())?;
+    if !response.status().is_success() {
+        return Err("Authentication session expired".to_string());
+    }
+    let me = response
+        .json::<MeResponse>()
+        .await
+        .map_err(|_| "Invalid authentication response".to_string())?;
+    if me.user.username != identity.username || me.user.minecraft_uuid != identity.uuid {
+        return Err("Authenticated game identity mismatch".to_string());
+    }
+    Ok(())
+}
+
+fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
+    if value.is_empty() || value.starts_with(['/', '\\']) || value.contains('\\') {
+        return Err("path must be a non-empty relative path using '/' separators".to_string());
+    }
+
+    let mut path = PathBuf::new();
+    for part in value.split('/') {
+        if part.is_empty() || part == "." || part == ".." || part.contains(':') {
+            return Err("path contains an unsafe component".to_string());
+        }
+        path.push(part);
+    }
+    Ok(path)
+}
+
+fn safe_prune_target(game_dir: &Path, pattern: &str) -> Result<(PathBuf, bool), String> {
+    let (value, directory) = pattern
+        .strip_suffix("/*")
+        .map_or((pattern, false), |value| (value, true));
+    if value.contains('*') || value.contains('?') {
+        return Err(format!("Unsafe prune rule rejected: {pattern}"));
+    }
+
+    let relative =
+        safe_relative_path(value).map_err(|_| format!("Unsafe prune rule rejected: {pattern}"))?;
+    let target = game_dir.join(relative);
+    if target.exists() {
+        let metadata = std::fs::symlink_metadata(&target)
+            .map_err(|e| format!("Failed to inspect prune target: {e}"))?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!("Symlink prune rule rejected: {pattern}"));
+        }
+        let root = std::fs::canonicalize(game_dir)
+            .map_err(|e| format!("Failed to resolve game directory: {e}"))?;
+        let resolved = std::fs::canonicalize(&target)
+            .map_err(|e| format!("Failed to resolve prune target: {e}"))?;
+        if !resolved.starts_with(root) {
+            return Err(format!("Unsafe prune rule rejected: {pattern}"));
+        }
+    }
+    Ok((target, directory))
+}
+
+fn install_java_archive(
+    archive_path: &Path,
+    game_dir: &Path,
+    version: &str,
+) -> Result<PathBuf, String> {
+    let java_dir = game_dir.join("java");
+    let staging = game_dir.join(".java-staging");
+    let backup = game_dir.join(".java-backup");
+    remove_path(&staging)?;
+    remove_path(&backup)?;
+    std::fs::create_dir_all(&staging)
+        .map_err(|e| format!("Failed to create Java staging directory: {e}"))?;
+
+    if let Err(error) = extract_archive(archive_path, &staging) {
+        let _ = remove_path(&staging);
+        return Err(error);
+    }
+    if find_bin_java(&staging).is_none() {
+        let _ = remove_path(&staging);
+        return Err("Java archive does not contain a bin/java executable".to_string());
+    }
+    std::fs::write(staging.join(".version"), version)
+        .map_err(|e| format!("Failed to stage Java version: {e}"))?;
+
+    if java_dir.exists() {
+        std::fs::rename(&java_dir, &backup)
+            .map_err(|e| format!("Failed to preserve previous Java runtime: {e}"))?;
+    }
+    if let Err(error) = std::fs::rename(&staging, &java_dir) {
+        if backup.exists() {
+            let _ = std::fs::rename(&backup, &java_dir);
+        }
+        return Err(format!("Failed to activate Java runtime: {error}"));
+    }
+    remove_path(&backup)?;
+    find_bin_java(&java_dir)
+        .ok_or_else(|| "Activated Java runtime is missing its executable".to_string())
+}
+
+fn remove_path(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("Failed to inspect {}: {e}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        std::fs::remove_file(path)
+    } else if metadata.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+    .map_err(|e| format!("Failed to remove {}: {e}", path.display()))
+}
+
 /// Extract a ZIP archive to a target directory.
 fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
     let file =
@@ -769,9 +972,16 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
             .map_err(|e| format!("Archive entry {i} error: {e}"))?;
 
         let name = entry.name().to_string();
+        if entry
+            .unix_mode()
+            .is_some_and(|mode| mode & 0o170000 == 0o120000)
+        {
+            return Err(format!("Archive symlink rejected: {name}"));
+        }
         if entry.is_dir() {
             continue;
         }
+        safe_relative_path(&name).map_err(|_| format!("Unsafe archive entry rejected: {name}"))?;
 
         // Strip top-level directory (e.g. "jdk-21.0.5+11/" → "")
         let relative = if let Some(pos) = name.find('/') {
@@ -784,6 +994,8 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
             continue;
         }
 
+        let relative = safe_relative_path(relative)
+            .map_err(|_| format!("Unsafe archive entry rejected: {name}"))?;
         let dest = dest_dir.join(relative);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
@@ -807,6 +1019,19 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        for (name, contents) in entries {
+            writer
+                .start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(contents).unwrap();
+        }
+        writer.finish().unwrap();
+    }
 
     #[test]
     fn bundled_java_path_finds_nested_bin_java() {
@@ -828,5 +1053,147 @@ mod tests {
         assert_eq!(bundled_java_path(&root), Some(exe));
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_unsafe_relative_paths() {
+        for path in [
+            "",
+            "../x",
+            "a/../../x",
+            "C:/x",
+            "/etc/passwd",
+            r"\\server\x",
+        ] {
+            assert!(safe_relative_path(path).is_err(), "accepted {path}");
+        }
+        assert_eq!(
+            safe_relative_path("mods/old.jar").unwrap(),
+            Path::new("mods/old.jar")
+        );
+    }
+
+    #[test]
+    fn accepts_only_the_supported_prune_glob() {
+        let root = std::env::temp_dir().join(format!("blockfield-prune-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert!(safe_prune_target(&root, "config/old/*").unwrap().1);
+        assert!(!safe_prune_target(&root, "mods/old.jar").unwrap().1);
+        assert!(safe_prune_target(&root, "mods/*.jar").is_err());
+        assert!(safe_prune_target(&root, "../x").is_err());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn download_plan_counts_only_missing_bootstrap_and_changed_modpack_files() {
+        use blockfield_shared::{ForgeInfo, JavaInfo, ManifestFileEntry};
+        use sha2::Digest;
+
+        let root = std::env::temp_dir().join(format!("blockfield-plan-{}", std::process::id()));
+        let contents = b"same";
+        let hash = format!("{:x}", sha2::Sha256::digest(contents));
+        let manifest = ModpackManifest {
+            version: "1.0.0".to_string(),
+            minecraft_version: "1.20.1".to_string(),
+            files: vec![ManifestFileEntry {
+                path: "mods/test.jar".to_string(),
+                size: contents.len() as u64,
+                sha256: hash,
+                url: "https://example.invalid/test.jar".to_string(),
+            }],
+            total_size: contents.len() as u64,
+            prune: None,
+            java: Some(JavaInfo {
+                version: "17".to_string(),
+                platform: "test".to_string(),
+                url: "https://example.invalid/java.zip".to_string(),
+                sha256: "0".repeat(64),
+                size: 100,
+            }),
+            forge: Some(ForgeInfo {
+                version: "1.20.1-47.4.10".to_string(),
+                url: "https://example.invalid/forge.jar".to_string(),
+                sha256: "0".repeat(64),
+                size: 200,
+            }),
+        };
+
+        assert_eq!(planned_bootstrap_bytes(&manifest, &root), 304);
+
+        let java = root.join("java/bin").join(java_exe_name());
+        std::fs::create_dir_all(java.parent().unwrap()).unwrap();
+        std::fs::write(&java, b"").unwrap();
+        std::fs::write(root.join("java/.version"), "17").unwrap();
+        let forge_id = crate::minecraft::forge_version_id("1.20.1-47.4.10");
+        let forge_json = root
+            .join("versions")
+            .join(&forge_id)
+            .join(format!("{forge_id}.json"));
+        std::fs::create_dir_all(forge_json.parent().unwrap()).unwrap();
+        std::fs::write(forge_json, "{}").unwrap();
+
+        assert_eq!(planned_bootstrap_bytes(&manifest, &root), 4);
+        std::fs::create_dir_all(root.join("mods")).unwrap();
+        std::fs::write(root.join("mods/test.jar"), contents).unwrap();
+        assert_eq!(planned_bootstrap_bytes(&manifest, &root), 0);
+        std::fs::write(root.join("mods/test.jar"), b"changed").unwrap();
+        assert_eq!(planned_bootstrap_bytes(&manifest, &root), 4);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn java_install_is_staged_and_rejects_unsafe_archives() {
+        let root =
+            std::env::temp_dir().join(format!("blockfield-java-install-{}", std::process::id()));
+        let old_java = root.join("java").join("bin").join(java_exe_name());
+        std::fs::create_dir_all(old_java.parent().unwrap()).unwrap();
+        std::fs::write(&old_java, b"old").unwrap();
+
+        let malicious = root.join("malicious.zip");
+        write_zip(&malicious, &[("jdk/../../evil", b"bad")]);
+        assert!(install_java_archive(&malicious, &root, "2").is_err());
+        assert_eq!(std::fs::read(&old_java).unwrap(), b"old");
+        assert!(!root.join("evil").exists());
+
+        let missing_java = root.join("missing-java.zip");
+        write_zip(&missing_java, &[("jdk/readme.txt", b"no java")]);
+        assert!(install_java_archive(&missing_java, &root, "2").is_err());
+        assert_eq!(std::fs::read(&old_java).unwrap(), b"old");
+
+        let valid = root.join("valid.zip");
+        let java_entry = format!("jdk/bin/{}", java_exe_name());
+        write_zip(&valid, &[(java_entry.as_str(), b"new")]);
+        let installed = install_java_archive(&valid, &root, "2").unwrap();
+        assert_eq!(std::fs::read(installed).unwrap(), b"new");
+        assert_eq!(
+            std::fs::read_to_string(root.join("java/.version")).unwrap(),
+            "2"
+        );
+        assert!(!root.join(".java-backup").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn game_identity_rejects_placeholder_or_invalid_values() {
+        let valid = GameIdentity {
+            username: "operator_1".to_string(),
+            uuid: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+            access_token: "secret".to_string(),
+        };
+        assert!(valid.is_valid());
+        assert!(!GameIdentity {
+            access_token: String::new(),
+            ..valid.clone()
+        }
+        .is_valid());
+        assert!(!GameIdentity {
+            username: "bad name".to_string(),
+            ..valid
+        }
+        .is_valid());
     }
 }

@@ -16,14 +16,13 @@ import { invoke } from '@tauri-apps/api/core'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { GlowPanel } from './ui-bits'
 import { LANGUAGES, useI18n, type Lang } from '../i18n'
-import { OPERATOR_HANDLE } from '../constants'
 import type { LauncherConfig } from '../../lib/api'
 import { contentText, useLauncherContent } from '../../lib/content'
 
 /** Detect whether we're running inside Tauri. */
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
-export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
+export function SettingsScreen({ onLogout, username }: { onLogout: () => void; username: string }) {
   const { lang, setLang, t } = useI18n()
   const content = useLauncherContent()
   const [dir, setDir] = useState('')
@@ -34,8 +33,6 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
-  const operatorHandle =
-    contentText(content, 'operatorHandle', 'operator_handle') ?? OPERATOR_HANDLE
   const preferences =
     contentText(content, 'settingsPreferences', 'settings_preferences') ?? t('settings.preferences')
 
@@ -141,7 +138,7 @@ export function SettingsScreen({ onLogout }: { onLogout: () => void }) {
           </span>
           <span className="h-px flex-1 bg-[#18130D]" />
           <span className="shrink-0 text-[10px] tracking-[0.22em] text-[#8E7A5E]">
-            {t('settings.operator', { handle: operatorHandle })}
+            {t('settings.operator', { handle: username })}
           </span>
         </div>
 

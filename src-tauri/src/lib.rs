@@ -21,9 +21,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -67,6 +67,7 @@ pub fn run() {
                 manifest: tokio::sync::RwLock::new(None),
                 config: tokio::sync::RwLock::new(loaded_config),
                 app_data_dir,
+                game_identity: tokio::sync::RwLock::new(None),
             });
 
             Ok(())
@@ -79,6 +80,7 @@ pub fn run() {
             commands::verify_files,
             commands::cancel_download,
             commands::launch_game,
+            commands::set_game_identity,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

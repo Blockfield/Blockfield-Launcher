@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\TranslationResource\Pages;
 use App\Models\Translation;
+use App\Support\LauncherContentCache;
 use BackedEnum;
 use Filament\Actions;
 use Filament\Forms;
@@ -19,6 +20,7 @@ class TranslationResource extends Resource
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-language';
 
     protected static ?string $navigationLabel = 'Translations';
+    protected static string|\UnitEnum|null $navigationGroup = 'Content';
 
     public static function form(Schema $schema): Schema
     {
@@ -51,8 +53,8 @@ class TranslationResource extends Resource
                 Tables\Grouping\Group::make('locale')->label('Language'),
             ])
             ->recordActions([
-                Actions\EditAction::make(),
-                Actions\DeleteAction::make(),
+                Actions\EditAction::make()->after(fn () => LauncherContentCache::invalidate()),
+                Actions\DeleteAction::make()->after(fn () => LauncherContentCache::invalidate()),
             ]);
     }
 

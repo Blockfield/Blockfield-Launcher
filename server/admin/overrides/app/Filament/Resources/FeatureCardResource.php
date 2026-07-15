@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\FeatureCardResource\Pages;
 use App\Models\FeatureCard;
+use App\Support\LauncherContentCache;
 use BackedEnum;
 use Filament\Actions;
 use Filament\Forms;
@@ -19,17 +20,19 @@ class FeatureCardResource extends Resource
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-flag';
 
     protected static ?string $navigationLabel = 'Feature Cards';
+    protected static string|\UnitEnum|null $navigationGroup = 'Content';
 
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
             Forms\Components\TextInput::make('icon')
-                ->maxLength(255)
+                ->maxLength(32)
                 ->hint('Lucide icon name (flag, swords, truck, crosshair, etc.)'),
             Forms\Components\TextInput::make('title')
-                ->maxLength(255),
+                ->maxLength(64),
             Forms\Components\Textarea::make('desc')
                 ->label('Description')
+                ->maxLength(160)
                 ->rows(2)
                 ->columnSpanFull(),
             Forms\Components\TextInput::make('sort_order')
@@ -51,8 +54,8 @@ class FeatureCardResource extends Resource
             ])
             ->defaultSort('sort_order')
             ->recordActions([
-                Actions\EditAction::make(),
-                Actions\DeleteAction::make(),
+                Actions\EditAction::make()->after(fn () => LauncherContentCache::invalidate()),
+                Actions\DeleteAction::make()->after(fn () => LauncherContentCache::invalidate()),
             ]);
     }
 

@@ -12,11 +12,13 @@ The API server reads all rows (no publish/draft status — everything is live).
 ### `modpack_releases`
 
 Required fields:
+
 - `version`
 - `minecraft_version`
 - either `modpack_zip` (file upload) or `zip_url` (URL)
 
 Optional:
+
 - `prune` — JSON array of paths to delete, e.g. `["mods/old.jar", "config/*"]`
 - `java` — JSON: `{ "version", "platform", "url", "sha256", "size" }`
 - `forge` — JSON: `{ "version", "url", "sha256", "size" }`
@@ -74,13 +76,13 @@ Set `DOKPLOY_FILAMENT_WEBHOOK_URL` in GitHub Actions secrets to trigger Dokploy 
 ```sh
 docker build -f server/admin/Dockerfile -t blockfield-filament server/admin
 docker run --rm -p 8055:8055 \
-  -e CMS_TOKEN=blockfield-dev-token \
+  -e CMS_TOKEN="$CMS_TOKEN" \
   -v filament-data:/data \
   blockfield-filament
 ```
 
 Admin: `http://localhost:8055/admin`  
-Default dev login: `admin@example.com` / `admin`
+Set `FILAMENT_ADMIN_EMAIL` and a unique `FILAMENT_ADMIN_PASSWORD` of at least 12 characters before the first start. The application does not provide default credentials and never overwrites an existing administrator password.
 
 ## Troubleshooting
 

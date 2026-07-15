@@ -14,6 +14,12 @@ class ModpackRelease extends Model
         'prune',
         'java',
         'forge',
+        'status',
+        'active',
+        'archive_size',
+        'archive_sha256',
+        'publish_error',
+        'published_at',
     ];
 
     protected function casts(): array
@@ -22,6 +28,8 @@ class ModpackRelease extends Model
             'prune' => 'array',
             'java' => 'array',
             'forge' => 'array',
+            'active' => 'boolean',
+            'published_at' => 'datetime',
         ];
     }
 }

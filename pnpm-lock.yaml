@@ -14,9 +14,9 @@ importers:
       '@tauri-apps/plugin-dialog':
         specifier: ^2
         version: 2.7.1
-      '@tauri-apps/plugin-fs':
-        specifier: ^2
-        version: 2.5.1
+      '@tauri-apps/plugin-process':
+        specifier: ^2.3.1
+        version: 2.3.1
       '@tauri-apps/plugin-shell':
         specifier: ^2
         version: 2.3.5
@@ -38,7 +38,7 @@ importers:
         version: 10.0.1(eslint@10.4.1(jiti@2.7.0))
       '@tailwindcss/vite':
         specifier: 4.1.12
-        version: 4.1.12(vite@6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))
+        version: 4.1.12(vite@6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))
       '@tauri-apps/cli':
         specifier: ^2.11.2
         version: 2.11.2
@@ -53,7 +53,7 @@ importers:
         version: 19.2.3(@types/react@19.2.17)
       '@vitejs/plugin-react':
         specifier: 4.7.0
-        version: 4.7.0(vite@6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))
+        version: 4.7.0(vite@6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))
       eslint:
         specifier: ^10.4.1
         version: 10.4.1(jiti@2.7.0)
@@ -88,11 +88,11 @@ importers:
         specifier: ^8.60.1
         version: 8.60.1(eslint@10.4.1(jiti@2.7.0))(typescript@6.0.3)
       vite:
-        specifier: 6.3.5
-        version: 6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)
+        specifier: 6.4.3
+        version: 6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)
       vitest:
         specifier: ^4.1.8
-        version: 4.1.8(@types/node@25.9.2)(vite@6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))
+        version: 4.1.8(@types/node@25.9.2)(vite@6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))
 
 packages:
 
@@ -809,8 +809,8 @@ packages:
   '@tauri-apps/plugin-dialog@2.7.1':
     resolution: {integrity: sha512-OK1UBXYt+ojcmxMktzzuyonYIFta8CmAASpX+CA+DTGK24KlHjhYI6x2iOJ/TjZF4N7/ACK1oFmEOjIY9IhzOQ==}
 
-  '@tauri-apps/plugin-fs@2.5.1':
-    resolution: {integrity: sha512-9Lz+Jopp6QyeEWhlpkMx4R/+P9HgR+AVAI4vOZhlT8Xaymtz8iVI/Ov984/XTqgJz/5gz5NretqPB/XEMS3NhQ==}
+  '@tauri-apps/plugin-process@2.3.1':
+    resolution: {integrity: sha512-nCa4fGVaDL/B9ai03VyPOjfAHRHSBz5v6F/ObsB73r/dA3MHHhZtldaDMIc0V/pnUw9ehzr2iEG+XkSEyC0JJA==}
 
   '@tauri-apps/plugin-shell@2.3.5':
     resolution: {integrity: sha512-jewtULhiQ7lI7+owCKAjc8tYLJr92U16bPOeAa472LHJdgaibLP83NcfAF2e+wkEcA53FxKQAZ7byDzs2eeizg==}
@@ -2269,8 +2269,8 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  vite@6.3.5:
-    resolution: {integrity: sha512-cZn6NDFE7wdTpINgs++ZJ4N49W2vRp8LCKrn3Ob1kYNtOo21vfDoaV5GzBfLU4MovSAB8uNRm4jgzVQZ+mBzPQ==}
+  vite@6.4.3:
+    resolution: {integrity: sha512-NTKlcQjlAK7MlQoyb6LgaqHc8sso/pVyUJYWMws3jg21uTJw/LddqIFPcPqP6PzpgbIcZyKI85sFE4HBrQDA8A==}
     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
     hasBin: true
     peerDependencies:
@@ -2878,12 +2878,12 @@ snapshots:
       '@tailwindcss/oxide-win32-arm64-msvc': 4.1.12
       '@tailwindcss/oxide-win32-x64-msvc': 4.1.12
 
-  '@tailwindcss/vite@4.1.12(vite@6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))':
+  '@tailwindcss/vite@4.1.12(vite@6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))':
     dependencies:
       '@tailwindcss/node': 4.1.12
       '@tailwindcss/oxide': 4.1.12
       tailwindcss: 4.1.12
-      vite: 6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)
+      vite: 6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)
 
   '@tauri-apps/api@2.11.0': {}
 
@@ -2938,7 +2938,7 @@ snapshots:
     dependencies:
       '@tauri-apps/api': 2.11.0
 
-  '@tauri-apps/plugin-fs@2.5.1':
+  '@tauri-apps/plugin-process@2.3.1':
     dependencies:
       '@tauri-apps/api': 2.11.0
 
@@ -3087,7 +3087,7 @@ snapshots:
       '@typescript-eslint/types': 8.60.1
       eslint-visitor-keys: 5.0.1
 
-  '@vitejs/plugin-react@4.7.0(vite@6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))':
+  '@vitejs/plugin-react@4.7.0(vite@6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))':
     dependencies:
       '@babel/core': 7.29.7
       '@babel/plugin-transform-react-jsx-self': 7.29.7(@babel/core@7.29.7)
@@ -3095,7 +3095,7 @@ snapshots:
       '@rolldown/pluginutils': 1.0.0-beta.27
       '@types/babel__core': 7.20.5
       react-refresh: 0.17.0
-      vite: 6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)
+      vite: 6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)
     transitivePeerDependencies:
       - supports-color
 
@@ -3108,13 +3108,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
-  '@vitest/mocker@4.1.8(vite@6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))':
+  '@vitest/mocker@4.1.8(vite@6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))':
     dependencies:
       '@vitest/spy': 4.1.8
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)
+      vite: 6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)
 
   '@vitest/pretty-format@4.1.8':
     dependencies:
@@ -4686,7 +4686,7 @@ snapshots:
 
   util-deprecate@1.0.2: {}
 
-  vite@6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1):
+  vite@6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1):
     dependencies:
       esbuild: 0.25.12
       fdir: 6.5.0(picomatch@4.0.4)
@@ -4700,10 +4700,10 @@ snapshots:
       jiti: 2.7.0
       lightningcss: 1.30.1
 
-  vitest@4.1.8(@types/node@25.9.2)(vite@6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)):
+  vitest@4.1.8(@types/node@25.9.2)(vite@6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)):
     dependencies:
       '@vitest/expect': 4.1.8
-      '@vitest/mocker': 4.1.8(vite@6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))
+      '@vitest/mocker': 4.1.8(vite@6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1))
       '@vitest/pretty-format': 4.1.8
       '@vitest/runner': 4.1.8
       '@vitest/snapshot': 4.1.8
@@ -4720,7 +4720,7 @@ snapshots:
       tinyexec: 1.2.4
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
-      vite: 6.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)
+      vite: 6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.30.1)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 25.9.2

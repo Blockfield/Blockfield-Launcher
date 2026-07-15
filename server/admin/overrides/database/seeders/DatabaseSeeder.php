@@ -7,21 +7,35 @@ use App\Models\LauncherContent;
 use App\Models\NewsFeedEntry;
 use App\Models\Translation;
 use App\Models\User;
+use App\Models\LauncherSession;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        User::updateOrCreate(
-            ['email' => env('FILAMENT_ADMIN_EMAIL', 'admin@example.com')],
-            [
-                'name' => env('FILAMENT_ADMIN_NAME', 'Blockfield Admin'),
-                'password' => Hash::make(env('FILAMENT_ADMIN_PASSWORD', 'admin')),
-            ],
-        );
+        LauncherSession::where('expires_at', '<', now()->subDays(7))->delete();
+        DB::table('admin_audit_logs')->where('created_at', '<', now()->subDays(90))->delete();
+        if (! User::exists()) {
+            $email = (string) config('blockfield.admin.email', '');
+            $password = (string) config('blockfield.admin.password', '');
+
+            if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                throw new \RuntimeException('FILAMENT_ADMIN_EMAIL is required for initial bootstrap.');
+            }
+            if (strlen($password) < 12 || strtolower($password) === 'admin') {
+                throw new \RuntimeException('FILAMENT_ADMIN_PASSWORD must be at least 12 characters.');
+            }
+
+            User::create([
+                'email' => $email,
+                'name' => config('blockfield.admin.name', 'Blockfield Admin'),
+                'password' => Hash::make($password),
+            ]);
+        }
 
         LauncherContent::firstOrCreate(
             [],
@@ -33,21 +47,10 @@ class DatabaseSeeder extends Seeder
                 'season' => '/ SEASON 01',
                 'description' => 'Large-scale tactical PvP across contested terrain.',
                 'server_name' => 'BLOCKFIELD - PRIMARY',
-                'server_ip' => 'play.blockfield.gg:25565',
-                'server_region' => 'EU-WEST - 28ms',
-                'operators' => '142',
-                'ping' => '28',
-                'region' => 'EU-W',
-                'launcher_version' => '0.4.2',
-                'coordinates' => 'LAT 47.3829 / LON 19.0402',
                 'copyright' => '2026 BLOCKFIELD COMMAND',
                 'login_sector' => 'SECTOR 07 - NORTH RIDGE',
                 'login_slogan' => 'DEPLOY. CAPTURE. DOMINATE.',
-                'operator_handle' => 'KILO_7',
-                'operator_initials' => 'K7',
-                'operator_rank' => 'RANK - SERGEANT',
                 'support_label' => 'SUPPORT',
-                'network_status' => 'NETWORK NOMINAL',
                 'update_description' => 'Synchronizing modpack assets with the primary deployment server. Do not close the launcher until the operation completes.',
                 'settings_preferences' => '/ LAUNCHER PREFERENCES',
             ],

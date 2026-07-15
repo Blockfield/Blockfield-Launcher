@@ -12,24 +12,10 @@
     "core:window:allow-close",
     "core:window:allow-start-dragging",
     "core:event:default",
-    "dialog:default",
     "dialog:allow-open",
     "dialog:allow-ask",
-    "dialog:allow-message",
-    "fs:default",
-    "fs:allow-read",
-    "fs:allow-write",
-    "fs:allow-exists",
-    "fs:allow-mkdir",
-    "fs:allow-remove",
-    "fs:allow-rename",
-    "fs:scope-appdata-recursive",
-    "fs:scope-app-recursive",
-    "shell:default",
-    "shell:allow-open",
-    "shell:allow-execute",
-    "updater:default",
     "updater:allow-check",
-    "updater:allow-download-and-install"
+    "updater:allow-download-and-install",
+    "process:allow-restart"
   ]
 }

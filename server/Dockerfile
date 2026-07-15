@@ -1,5 +1,5 @@
 # ── Build stage ──────────────────────────────────────────────
-FROM rust:1.88-slim-bookworm AS builder
+FROM rust:1.88-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS builder
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
@@ -32,7 +32,7 @@ RUN touch shared/src/lib.rs server/src/main.rs && \
     cp target/release/blockfield-server /usr/local/bin/
 
 # ── Runtime stage ────────────────────────────────────────────
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
 RUN apt-get update && apt-get install -y ca-certificates curl tini && rm -rf /var/lib/apt/lists/*
 
@@ -54,8 +54,6 @@ ENV FALLBACK_BRAND_SUBTITLE="TACTICAL OPS"
 ENV FALLBACK_CHROME_TITLE="BLOCKFIELD LAUNCHER"
 ENV FALLBACK_OPERATION_NAME="IRON FRONT"
 ENV FALLBACK_SERVER_IP=play.blockfield.gg:25565
-ENV FALLBACK_LAUNCHER_VERSION=0.4.2
-ENV FALLBACK_UPDATE_URL=https://play.blockfield.gg/downloads/blockfield-launcher_0.1.0_x64-setup.exe
 ENV GITHUB_REPO=netherg-io/blockfield-launcher
 ENV GITHUB_UPDATE_TAG=develop
 

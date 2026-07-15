@@ -66,7 +66,12 @@ pub struct Downloader {
 impl Downloader {
     pub fn new(app_handle: AppHandle) -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .read_timeout(std::time::Duration::from_secs(30))
+                .timeout(std::time::Duration::from_secs(30 * 60))
+                .build()
+                .expect("valid HTTP client"),
             app_handle,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             grand_total: AtomicU64::new(0),
@@ -89,14 +94,32 @@ impl Downloader {
         self.grand_total.store(0, Ordering::SeqCst);
     }
 
+    pub fn cleanup_partials(game_dir: &Path) {
+        fn visit(dir: &Path) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                if kind.is_symlink() {
+                    continue;
+                }
+                if kind.is_dir() {
+                    visit(&path);
+                } else if path.to_string_lossy().ends_with(".part") {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+        visit(game_dir);
+    }
+
     /// Set the grand total of all expected bytes across all download phases.
     pub fn set_grand_total(&self, total: u64) {
         self.grand_total.store(total, Ordering::SeqCst);
-    }
-
-    /// Add to the grand total (useful when phases discover their size dynamically).
-    pub fn add_to_grand_total(&self, delta: u64) {
-        self.grand_total.fetch_add(delta, Ordering::SeqCst);
     }
 
     /// Check whether cancellation has been requested.
@@ -130,12 +153,11 @@ impl Downloader {
         let game_dir = PathBuf::from(game_dir);
         std::fs::create_dir_all(&game_dir)?;
 
-        let file_count = manifest.files.len();
         let mut total_downloaded: u64 = 0;
         let mut new_installed: std::collections::HashMap<String, String> = installed_sha256.clone();
         let mut downloads = Vec::new();
 
-        for (i, entry) in manifest.files.iter().enumerate() {
+        for entry in &manifest.files {
             if self.is_cancelled().await {
                 log::info!("Download cancelled by user");
                 return Err(DownloadError::Other("Download cancelled".to_string()));
@@ -149,21 +171,7 @@ impl Downloader {
                 match Self::sha256_file(&dest) {
                     Ok(actual_hash) if actual_hash == entry.sha256 => {
                         log::info!("Skipping unchanged file: {}", entry.path);
-                        total_downloaded += entry.size;
-                        self.cumulative_downloaded
-                            .fetch_add(entry.size, Ordering::Relaxed);
-                        let cumulative = self.cumulative_downloaded.load(Ordering::Relaxed);
-                        let grand = self.grand_total.load(Ordering::Relaxed);
-                        self.emit_progress(
-                            &entry.path,
-                            i + 1,
-                            file_count,
-                            entry.size,
-                            entry.size,
-                            cumulative,
-                            grand,
-                            0,
-                        );
+                        new_installed.insert(entry.path.clone(), entry.sha256.clone());
                         continue;
                     }
                     Ok(actual_hash) => {
@@ -185,11 +193,17 @@ impl Downloader {
                 dest,
                 file_path: entry.path.clone(),
                 file_size: entry.size,
-                file_index: i + 1,
-                file_count,
+                file_index: 0,
+                file_count: 0,
                 sha256: entry.sha256.clone(),
             });
             new_installed.insert(entry.path.clone(), entry.sha256.clone());
+        }
+
+        let file_count = downloads.len();
+        for (index, job) in downloads.iter_mut().enumerate() {
+            job.file_index = index + 1;
+            job.file_count = file_count;
         }
 
         total_downloaded += self.download_jobs(downloads).await?;
@@ -218,12 +232,17 @@ impl Downloader {
     }
 
     async fn download_jobs(&self, jobs: Vec<DownloadJob>) -> Result<u64, DownloadError> {
+        let partials = jobs
+            .iter()
+            .map(|job| partial_path(&job.dest))
+            .collect::<Vec<_>>();
         let mut downloads = futures_util::stream::iter(jobs)
             .map(|job| async move {
                 let mut downloaded = 0;
+                let partial = partial_path(&job.dest);
                 self.download_one(
                     &job.url,
-                    &job.dest,
+                    &partial,
                     &job.file_path,
                     job.file_size,
                     job.file_index,
@@ -233,14 +252,22 @@ impl Downloader {
                 )
                 .await?;
 
-                let actual_hash = Self::sha256_file(&job.dest)?;
+                let actual_hash = Self::sha256_file(&partial)?;
                 if actual_hash != job.sha256 {
-                    let _ = std::fs::remove_file(&job.dest);
+                    let _ = std::fs::remove_file(&partial);
                     return Err(DownloadError::Other(format!(
                         "SHA256 mismatch for {}: expected {}, got {}",
                         job.file_path, job.sha256, actual_hash
                     )));
                 }
+                if std::fs::metadata(&partial)?.len() != job.file_size {
+                    let _ = std::fs::remove_file(&partial);
+                    return Err(DownloadError::Other(format!(
+                        "Size mismatch for {}",
+                        job.file_path
+                    )));
+                }
+                activate_partial(&partial, &job.dest)?;
 
                 Ok(downloaded)
             })
@@ -248,7 +275,15 @@ impl Downloader {
 
         let mut total_downloaded = 0;
         while let Some(result) = downloads.next().await {
-            total_downloaded += result?;
+            match result {
+                Ok(downloaded) => total_downloaded += downloaded,
+                Err(error) => {
+                    for partial in &partials {
+                        let _ = std::fs::remove_file(partial);
+                    }
+                    return Err(error);
+                }
+            }
         }
         Ok(total_downloaded)
     }
@@ -275,46 +310,161 @@ impl Downloader {
             std::fs::create_dir_all(parent)?;
         }
 
-        let response = self.client.get(url).send().await?.error_for_status()?;
-        let mut stream = response.bytes_stream();
-
-        let mut file = std::fs::File::create(dest)?;
-        let mut file_bytes: u64 = 0;
+        let mut file_bytes = std::fs::metadata(dest)
+            .map(|value| value.len())
+            .unwrap_or(0);
+        if file_size > 0 && file_bytes > file_size {
+            std::fs::remove_file(dest)?;
+            file_bytes = 0;
+        }
+        if file_bytes > 0 {
+            *_total_downloaded += file_bytes;
+            self.cumulative_downloaded
+                .fetch_add(file_bytes, Ordering::Relaxed);
+        }
         let start = Instant::now();
+        let mut last_error = "download failed".to_string();
 
-        while let Some(chunk) = stream.next().await {
+        for attempt in 1..=3u64 {
             if self.is_cancelled().await {
                 let _ = std::fs::remove_file(dest);
                 return Err(DownloadError::Other("Download cancelled".to_string()));
             }
+            if file_size > 0 && file_bytes == file_size {
+                return Ok(());
+            }
 
-            let chunk = chunk?;
-            std::io::Write::write_all(&mut file, &chunk)?;
-            file_bytes += chunk.len() as u64;
-            *_total_downloaded += chunk.len() as u64;
-
-            // Update the atomic cumulative counter (never resets across phases)
-            self.cumulative_downloaded
-                .fetch_add(chunk.len() as u64, Ordering::Relaxed);
-
-            // Calculate speed
-            let elapsed = start.elapsed().as_secs_f64();
-            let speed = if elapsed > 0.0 {
-                (file_bytes as f64 / elapsed) as u64
-            } else {
-                0
+            let resume_from = file_bytes;
+            let mut request = self.client.get(url);
+            if resume_from > 0 {
+                request = request.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
+            }
+            let response = match request.send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    last_error = error.to_string();
+                    if attempt < 3 {
+                        self.emit_retry(file_path, attempt + 1);
+                        tokio::time::sleep(std::time::Duration::from_millis(250 * attempt)).await;
+                        continue;
+                    }
+                    break;
+                }
             };
+            let status = response.status();
+            if !status.is_success() {
+                last_error = format!("HTTP status {status}");
+                let transient = status.is_server_error()
+                    || status == reqwest::StatusCode::REQUEST_TIMEOUT
+                    || status == reqwest::StatusCode::TOO_MANY_REQUESTS;
+                if transient && attempt < 3 {
+                    self.emit_retry(file_path, attempt + 1);
+                    tokio::time::sleep(std::time::Duration::from_millis(250 * attempt)).await;
+                    continue;
+                }
+                break;
+            }
 
-            // Use atomic cumulative values so the frontend sees continuous progress
-            let cumulative = self.cumulative_downloaded.load(Ordering::Relaxed);
-            let grand = self.grand_total.load(Ordering::Relaxed);
+            let resumed = resume_from > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
+            if resumed {
+                let expected = format!("bytes {resume_from}-");
+                let valid = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_RANGE)
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| value.starts_with(&expected));
+                if !valid {
+                    return Err(DownloadError::Other(format!(
+                        "Invalid range response for {file_path}"
+                    )));
+                }
+            } else if resume_from > 0 {
+                *_total_downloaded = _total_downloaded.saturating_sub(resume_from);
+                self.cumulative_downloaded
+                    .fetch_sub(resume_from, Ordering::Relaxed);
+                file_bytes = 0;
+            }
 
-            self.emit_progress(
-                file_path, file_index, file_count, file_bytes, file_size, cumulative, grand, speed,
-            );
+            let mut options = std::fs::OpenOptions::new();
+            options.create(true).write(true);
+            if resumed {
+                options.append(true);
+            } else {
+                options.truncate(true);
+            }
+            let mut file = options.open(dest)?;
+            let mut stream = response.bytes_stream();
+            let mut stream_failed = false;
+
+            while let Some(chunk) = stream.next().await {
+                if self.is_cancelled().await {
+                    drop(file);
+                    let _ = std::fs::remove_file(dest);
+                    return Err(DownloadError::Other("Download cancelled".to_string()));
+                }
+                let chunk = match chunk {
+                    Ok(chunk) => chunk,
+                    Err(error) => {
+                        last_error = error.to_string();
+                        stream_failed = true;
+                        break;
+                    }
+                };
+                std::io::Write::write_all(&mut file, &chunk)?;
+                file_bytes += chunk.len() as u64;
+                *_total_downloaded += chunk.len() as u64;
+                self.cumulative_downloaded
+                    .fetch_add(chunk.len() as u64, Ordering::Relaxed);
+
+                let elapsed = start.elapsed().as_secs_f64();
+                let speed = if elapsed > 0.0 {
+                    (file_bytes as f64 / elapsed) as u64
+                } else {
+                    0
+                };
+                let cumulative = self.cumulative_downloaded.load(Ordering::Relaxed);
+                let grand = self.grand_total.load(Ordering::Relaxed);
+                self.emit_progress(
+                    file_path, file_index, file_count, file_bytes, file_size, cumulative, grand,
+                    speed,
+                );
+            }
+            std::io::Write::flush(&mut file)?;
+            file.sync_all()?;
+            drop(file);
+
+            if !stream_failed && (file_size == 0 || file_bytes == file_size) {
+                return Ok(());
+            }
+            if !stream_failed {
+                last_error = format!(
+                    "Size mismatch for {file_path}: expected {file_size}, got {file_bytes}"
+                );
+            }
+            if file_size > 0 && file_bytes > file_size {
+                break;
+            }
+            if attempt < 3 {
+                self.emit_retry(file_path, attempt + 1);
+                tokio::time::sleep(std::time::Duration::from_millis(250 * attempt)).await;
+            }
         }
 
-        Ok(())
+        let _ = std::fs::remove_file(dest);
+        Err(DownloadError::Other(format!(
+            "Download failed for {file_path} after 3 attempts: {last_error}"
+        )))
+    }
+
+    fn emit_retry(&self, file_path: &str, attempt: u64) {
+        let _ = self.app_handle.emit(
+            "launcher://status",
+            serde_json::json!({
+                "phase": "retry",
+                "message": format!("Retrying {file_path} ({attempt}/3)"),
+                "cancelable": true,
+            }),
+        );
     }
 
     /// Emit a progress event to the frontend.
@@ -349,10 +499,45 @@ impl Downloader {
     /// Compute the SHA-256 hex digest of a file.
     pub fn sha256_file(path: &Path) -> Result<String, DownloadError> {
         use sha2::Digest;
-        let bytes = std::fs::read(path)?;
+        let mut file = std::fs::File::open(path)?;
         let mut hasher = sha2::Sha256::new();
-        hasher.update(&bytes);
+        std::io::copy(&mut file, &mut HashWriter(&mut hasher))?;
         Ok(format!("{:x}", hasher.finalize()))
+    }
+}
+
+pub(crate) fn partial_path(path: &Path) -> PathBuf {
+    let mut value = path.as_os_str().to_os_string();
+    value.push(".part");
+    PathBuf::from(value)
+}
+
+pub(crate) fn activate_partial(partial: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    if !destination.exists() {
+        return std::fs::rename(partial, destination);
+    }
+    let backup = partial_path(destination).with_extension("backup");
+    let _ = std::fs::remove_file(&backup);
+    std::fs::rename(destination, &backup)?;
+    if let Err(error) = std::fs::rename(partial, destination) {
+        let _ = std::fs::rename(&backup, destination);
+        return Err(error);
+    }
+    let _ = std::fs::remove_file(backup);
+    Ok(())
+}
+
+struct HashWriter<'a>(&'a mut sha2::Sha256);
+
+impl std::io::Write for HashWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        use sha2::Digest;
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 

@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\NewsFeedEntryResource\Pages;
 use App\Models\NewsFeedEntry;
+use App\Support\LauncherContentCache;
 use BackedEnum;
 use Filament\Actions;
 use Filament\Forms;
@@ -19,6 +20,7 @@ class NewsFeedEntryResource extends Resource
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-newspaper';
 
     protected static ?string $navigationLabel = 'News Feed';
+    protected static string|\UnitEnum|null $navigationGroup = 'Content';
 
     public static function form(Schema $schema): Schema
     {
@@ -32,11 +34,12 @@ class NewsFeedEntryResource extends Resource
                 ->default('amber')
                 ->required(),
             Forms\Components\TextInput::make('date')
-                ->maxLength(255)
+                ->maxLength(16)
                 ->hint('e.g. "06.07"'),
             Forms\Components\TextInput::make('title')
-                ->maxLength(255),
+                ->maxLength(96),
             Forms\Components\Textarea::make('body')
+                ->maxLength(500)
                 ->rows(3)
                 ->columnSpanFull(),
             Forms\Components\TextInput::make('sort_order')
@@ -60,8 +63,8 @@ class NewsFeedEntryResource extends Resource
             ])
             ->defaultSort('sort_order')
             ->recordActions([
-                Actions\EditAction::make(),
-                Actions\DeleteAction::make(),
+                Actions\EditAction::make()->after(fn () => LauncherContentCache::invalidate()),
+                Actions\DeleteAction::make()->after(fn () => LauncherContentCache::invalidate()),
             ]);
     }
 

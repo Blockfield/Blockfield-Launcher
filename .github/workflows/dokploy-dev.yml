@@ -18,8 +18,71 @@ env:
   FILAMENT_IMAGE_NAME: ghcr.io/netherg-io/blockfield-launcher-filament
 
 jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm version:check
+      - run: pnpm build
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: pnpm audit --audit-level high
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  filament-tests:
+    name: Filament tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t blockfield-filament-test server/admin
+      - name: Run tests
+        run: >-
+          docker run --rm --entrypoint php
+          -e APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          -e CMS_TOKEN=0123456789abcdef0123456789abcdef
+          -e AUTH_SIGNING_KEY=abcdef0123456789abcdef0123456789
+          -e RELOAD_TOKEN=reload0123456789abcdef0123456789ab
+          -e FILAMENT_ADMIN_EMAIL=admin@example.com
+          -e FILAMENT_ADMIN_PASSWORD=test-password-123
+          blockfield-filament-test artisan test
+      - name: Audit Composer dependencies
+        run: docker run --rm --entrypoint composer blockfield-filament-test audit
+      - name: Scan Filament image
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: blockfield-filament-test
+          exit-code: 1
+          severity: CRITICAL,HIGH
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   tauri-release:
     name: Build Windows Tauri release
+    needs: [quality, filament-tests, secret-scan]
     runs-on: blacksmith-4vcpu-windows-2025
     environment: dev
     permissions:
@@ -54,6 +117,19 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Validate updater signing secrets
+        shell: pwsh
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_PRIVATE_KEY)) {
+            throw "TAURI_PRIVATE_KEY is required"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_KEY_PASSWORD)) {
+            throw "TAURI_KEY_PASSWORD is required"
+          }
+
       - name: Build Tauri release
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
@@ -66,27 +142,17 @@ jobs:
           VITE_OPERATION_NAME: ${{ vars.VITE_OPERATION_NAME || 'IRON FRONT' }}
           VITE_SEASON: ${{ vars.VITE_SEASON || '/ SEASON 01' }}
           VITE_SERVER_NAME: ${{ vars.VITE_SERVER_NAME || 'BLOCKFIELD - PRIMARY' }}
-          VITE_LAUNCHER_VERSION: ${{ vars.VITE_LAUNCHER_VERSION || '0.4.2' }}
           VITE_SERVER_IP: ${{ vars.VITE_SERVER_IP || 'play.blockfield.gg:25565' }}
-          VITE_SERVER_REGION: ${{ vars.VITE_SERVER_REGION || 'EU-WEST - 28ms' }}
-          VITE_SERVER_PING: ${{ vars.VITE_SERVER_PING || '28' }}
-          VITE_SERVER_REGION_CODE: ${{ vars.VITE_SERVER_REGION_CODE || 'EU-W' }}
-          VITE_OPERATORS: ${{ vars.VITE_OPERATORS || '142' }}
-          VITE_COORDINATES: ${{ vars.VITE_COORDINATES || 'LAT 47.3829 / LON 19.0402' }}
           VITE_COPYRIGHT: ${{ vars.VITE_COPYRIGHT || '2026 BLOCKFIELD COMMAND' }}
-          VITE_OPERATOR_HANDLE: ${{ vars.VITE_OPERATOR_HANDLE || 'KILO_7' }}
-          VITE_OPERATOR_INITIALS: ${{ vars.VITE_OPERATOR_INITIALS || 'K7' }}
           VITE_LOGIN_PLACEHOLDER: ${{ vars.VITE_LOGIN_PLACEHOLDER || 'operator@blockfield.gg' }}
           # Backend (Rust) — BLOCKFIELD_* vars consumed at build+run time by src-tauri
           BLOCKFIELD_MOJANG_MANIFEST_URL: ${{ vars.BLOCKFIELD_MOJANG_MANIFEST_URL || 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json' }}
           BLOCKFIELD_MOJANG_ASSET_BASE_URL: ${{ vars.BLOCKFIELD_MOJANG_ASSET_BASE_URL || 'https://resources.download.minecraft.net' }}
           BLOCKFIELD_LAUNCHER_NAME: ${{ vars.BLOCKFIELD_LAUNCHER_NAME || 'BlockfieldLauncher' }}
-          BLOCKFIELD_OFFLINE_USERNAME: ${{ vars.BLOCKFIELD_OFFLINE_USERNAME || 'Blockfield' }}
           BLOCKFIELD_MINECRAFT_VERSION: ${{ vars.BLOCKFIELD_MINECRAFT_VERSION || '1.20.1' }}
           BLOCKFIELD_DEFAULT_RAM_MB: ${{ vars.BLOCKFIELD_DEFAULT_RAM_MB || '8192' }}
           BLOCKFIELD_AUTO_UPDATE: ${{ vars.BLOCKFIELD_AUTO_UPDATE || 'true' }}
           BLOCKFIELD_DEFAULT_LANG: ${{ vars.BLOCKFIELD_DEFAULT_LANG || 'en' }}
-          BLOCKFIELD_PLAYER_NAME: ${{ vars.BLOCKFIELD_PLAYER_NAME || 'Blockfield' }}
         run: pnpm tauri:build
 
       - name: Publish dev release
@@ -94,8 +160,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
-          $tauriConf = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
-          $version = $tauriConf.version
+          $package = Get-Content package.json | ConvertFrom-Json
+          $version = $package.version
 
           $exeFiles = @(
             Get-ChildItem -Path target/release/bundle, src-tauri/target/release/bundle -Recurse -File -Filter *.exe -ErrorAction SilentlyContinue |
@@ -112,13 +178,14 @@ jobs:
           $sigFiles = @(
             Get-ChildItem -Path target/release/bundle, src-tauri/target/release/bundle -Recurse -File -Filter *.sig -ErrorAction SilentlyContinue
           )
-          $signature = ""
-          if ($sigFiles.Count -gt 0) {
-            $signature = (Get-Content $sigFiles[0].FullName -Raw).Trim()
-            Write-Host "Found .sig file: $($sigFiles[0].FullName)"
-          } else {
-            Write-Warning "No .sig file found — signature will be empty"
+          if ($sigFiles.Count -eq 0) {
+            throw "No updater .sig file found"
           }
+          $signature = (Get-Content $sigFiles[0].FullName -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($signature)) {
+            throw "Updater signature is empty"
+          }
+          Write-Host "Found .sig file: $($sigFiles[0].FullName)"
 
           $releaseNotes = "Dev Windows build for $env:GITHUB_SHA"
 
@@ -134,6 +201,13 @@ jobs:
             }
           }
           $updateJson | ConvertTo-Json -Depth 4 | Set-Content update.json
+          $validated = Get-Content update.json -Raw | ConvertFrom-Json
+          $platform = $validated.platforms.'windows-x86_64'
+          if ($validated.version -ne $version -or
+              [string]::IsNullOrWhiteSpace($platform.url) -or
+              [string]::IsNullOrWhiteSpace($platform.signature)) {
+            throw "Generated updater metadata is invalid"
+          }
           Write-Host "Generated update.json:"
           Get-Content update.json
 
