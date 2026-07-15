@@ -8,24 +8,24 @@ This report maps every backlog item to its implementation and automated proof. I
 
 ## P0
 
-| Item      | Status | Implementation and proof                                                                                                                                                                                                                                        |
-| --------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| BF-P0-001 | Closed | Laravel login/refresh/logout/me API, hashed rotating sessions, expiry/revocation/status checks and throttling; persistent launcher auth in `src/lib/auth.ts`. `LauncherAuthTest` and frontend auth tests cover the normal and failure paths.                    |
-| BF-P0-002 | Closed | Dedicated `LauncherUser` and `LauncherSession` models/migration with normalized unique identity, UUID, status/role and token hashes. Existing Filament administrators remain separate.                                                                          |
-| BF-P0-003 | Closed | `LauncherUserResource` supports search/filter/create/edit/password reset/status/ban/session revocation and audited actions. Resource authorization and transition tests pass.                                                                                   |
-| BF-P0-004 | Closed | Login/main screens render authenticated identity only after the auth API succeeds and distinguish invalid credentials, expiry and service failure. No verified fallback remains.                                                                                |
-| BF-P0-005 | Closed | Launch revalidates `/auth/me`, passes the authenticated username, stable UUID and short-lived signed project ticket, and rejects placeholder identity. Launch arguments and tokens are not logged.                                                              |
-| BF-P0-006 | Closed | Rust API implements Minecraft Server List Ping with timeout and 10-second cache, configured region/location, freshness time and unavailable state. Frontend renders nullable real values. Rust tests cover success, malformed data, offline, timeout and cache. |
-| BF-P0-007 | Closed | Reload requires a dedicated strong bearer secret, compares it in constant time, returns structured 401/409/503 responses and is single-flight. Publication logs request/release/version/phase.                                                                  |
-| BF-P0-008 | Closed | CMS middleware fails closed for missing/short tokens and always checks the protected bearer token. `CmsTokenTest` covers missing, wrong and valid configuration.                                                                                                |
-| BF-P0-009 | Closed | Release-specific staging, safe extraction, manifest verification, atomic active/previous rename, persistent active manifest and rollback are implemented. Rust tests cover unsafe/corrupt archives, empty manifests, rollback, retention and restart.           |
-| BF-P0-010 | Closed | Filament provides draft, validate, publish, rollback and archive actions. Publish invokes backend activation, marks exactly one DB row active and compensates backend activation if the DB transaction fails.                                                   |
-| BF-P0-011 | Closed | Client prune rules reject absolute paths, parent components, drive/UNC prefixes, empty paths, unsupported globs and escapes; deletion remains contained in the game root. Rust contract tests pass.                                                             |
-| BF-P0-012 | Closed | Java extraction rejects unsafe/symlink entries, stages into a temporary directory, verifies `bin/java`, and atomically swaps while retaining the previous runtime on failure. Tests cover malicious, missing and valid archives.                                |
-| BF-P0-013 | Closed | Java metadata requires immutable HTTPS URL, exact positive size and SHA-256 in CMS, server manifest and launcher. Download is size/hash verified before staged extraction.                                                                                      |
-| BF-P0-014 | Closed | Tauri updater public key remains configured; CI requires signing secrets and a non-empty `.sig`, validates `update.json`, and will not publish unsigned metadata.                                                                                               |
-| BF-P0-015 | Closed | First Filament admin requires explicit email and a non-default password of at least 12 characters; startup never overwrites an existing admin password. Seeder tests pass.                                                                                      |
-| BF-P0-016 | Closed | Filament Docker/Compose/entrypoint and examples use the same `FILAMENT_*`, CMS, reload and signing environment contract.                                                                                                                                        |
+| Item      | Status | Implementation and proof                                                                                                                                                                                                                                                                            |
+| --------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BF-P0-001 | Closed | Laravel login/refresh/logout/me API, hashed rotating sessions, expiry/revocation/status checks and throttling; persistent launcher auth in `src/lib/auth.ts`. `LauncherAuthTest` and frontend auth tests cover the normal and failure paths.                                                        |
+| BF-P0-002 | Closed | Dedicated `LauncherUser` and `LauncherSession` models/migration with normalized unique identity, UUID, status/role and token hashes. Existing Filament administrators remain separate.                                                                                                              |
+| BF-P0-003 | Closed | `LauncherUserResource` supports search/filter/create/edit/password reset/status/ban/session revocation and audited actions. Resource authorization and transition tests pass.                                                                                                                       |
+| BF-P0-004 | Closed | Login/main screens render authenticated identity only after the auth API succeeds and distinguish invalid credentials, expiry and service failure. No verified fallback remains.                                                                                                                    |
+| BF-P0-005 | Closed | Launch revalidates `/auth/me`, passes the authenticated username, stable UUID and short-lived signed project ticket, and rejects placeholder identity. Launch arguments and tokens are not logged.                                                                                                  |
+| BF-P0-006 | Closed | Rust API implements Minecraft Server List Ping with timeout and 10-second cache, configured region/location, freshness time and unavailable state. Frontend renders nullable real values. Rust tests cover success, malformed data, offline, timeout and cache.                                     |
+| BF-P0-007 | Closed | Reload requires a dedicated strong bearer secret, compares it in constant time, returns structured 401/409/503 responses and is single-flight. Publication logs request/release/version/phase.                                                                                                      |
+| BF-P0-008 | Closed | CMS middleware fails closed for missing/short tokens and always checks the protected bearer token. `CmsTokenTest` covers missing, wrong and valid configuration.                                                                                                                                    |
+| BF-P0-009 | Closed | Release-specific staging, safe extraction, manifest verification, atomic active/previous rename, persistent active manifest and rollback are implemented. Rust tests cover unsafe/corrupt archives, empty manifests, rollback, retention and restart.                                               |
+| BF-P0-010 | Closed | Filament provides draft, validate, publish, rollback and archive actions. Publish invokes backend activation, marks exactly one DB row active and compensates backend activation if the DB transaction fails.                                                                                       |
+| BF-P0-011 | Closed | Client prune rules reject absolute paths, parent components, drive/UNC prefixes, empty paths, unsupported globs and escapes; deletion remains contained in the game root. Rust contract tests pass.                                                                                                 |
+| BF-P0-012 | Closed | Java extraction rejects unsafe/symlink entries, stages into a temporary directory, verifies `bin/java`, and atomically swaps while retaining the previous runtime on failure. Tests cover malicious, missing and valid archives.                                                                    |
+| BF-P0-013 | Closed | Java metadata requires immutable HTTPS URL, exact positive size and SHA-256 in CMS, server manifest and launcher. Download is size/hash verified before staged extraction.                                                                                                                          |
+| BF-P0-014 | Closed | Tauri updater public key remains configured; CI requires signing secrets and a non-empty `.sig`, validates `update.json`, and will not publish unsigned metadata. Private GitHub release metadata and installers are streamed through a server-side authenticated proxy without exposing its token. |
+| BF-P0-015 | Closed | First Filament admin requires explicit email and a non-default password of at least 12 characters; startup never overwrites an existing admin password. Seeder tests pass.                                                                                                                          |
+| BF-P0-016 | Closed | Filament Docker/Compose/entrypoint and examples use the same `FILAMENT_*`, CMS, reload and signing environment contract.                                                                                                                                                                            |
 
 ## P1
 
@@ -73,7 +73,7 @@ Executed on 2026-07-15 from the dirty `dev` working tree:
 - `pnpm audit --audit-level high`: no known vulnerabilities
 - `cargo fmt --all`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace`: 31 tests passed
+- `cargo test --workspace`: 32 tests passed
 - `cargo audit`: no blocking vulnerability; 18 informational transitive warnings remain, primarily Tauri Linux GTK3 maintenance warnings plus upstream unsoundness notices
 - `composer validate --strict`: valid
 - `composer audit --locked`: no security advisories
@@ -100,6 +100,12 @@ An isolated SQLite Laravel/Filament application and the current `target/debug/bl
 This run found and fixed an empty-body logout proxy bug; `auth_proxy_accepts_empty_logout_body` now guards the path.
 
 CI additionally owns the frontend production build, Filament Docker build/test, image scan, secret scan and signed Windows Tauri build. These are not represented as locally passed until the workflow runs on the resulting revision.
+
+### Dev deployment verification
+
+The deployed CMS applied all four MVP migrations and is healthy. Release `0.1.0` is active with a server-computed 458,300,386-byte archive SHA-256, immutable Temurin 17.0.19+10 and Forge 47.4.10 metadata, and an audited bootstrap repair. A second administrator account was created without logging its password.
+
+The deployed API returned live/ready `200`, a 4,772-file manifest, exact single-byte `206` range delivery, empty-body logout `200`, invalid login `401`, and live status for the configured `minecraft.play.nether.pp.ua:25565` endpoint. At the time of verification the Minecraft endpoint itself timed out: its DNS resolved to Cloudflare proxy addresses and no Minecraft SRV record existed. The private GitHub release also required the new server-side `GITHUB_TOKEN` proxy configuration before updater metadata can be served instead of `204`.
 
 ## Release-candidate boundary
 

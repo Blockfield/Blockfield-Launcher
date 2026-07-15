@@ -7,16 +7,17 @@ Port: `3000`
 
 ## Endpoints
 
-| Method | Path                             | Description               |
-| ------ | -------------------------------- | ------------------------- |
-| `GET`  | `/health/live`                   | Process liveness          |
-| `GET`  | `/health/ready`                  | Release/dependency health |
-| `GET`  | `/api/launcher/v1/content.json`  | Launcher UI content       |
-| `GET`  | `/api/launcher/v1/manifest.json` | Modpack file manifest     |
-| `GET`  | `/api/launcher/v1/update.json`   | Launcher self-update info |
-| `GET`  | `/api/launcher/v1/files/{path}`  | Individual modpack files  |
-| `GET`  | `/api/launcher/v1/server-status` | Live Minecraft status     |
-| `POST` | `/api/launcher/v1/reload`        | Protected release publish |
+| Method | Path                                    | Description                 |
+| ------ | --------------------------------------- | --------------------------- |
+| `GET`  | `/health/live`                          | Process liveness            |
+| `GET`  | `/health/ready`                         | Release/dependency health   |
+| `GET`  | `/api/launcher/v1/content.json`         | Launcher UI content         |
+| `GET`  | `/api/launcher/v1/manifest.json`        | Modpack file manifest       |
+| `GET`  | `/api/launcher/v1/update.json`          | Launcher self-update info   |
+| `GET`  | `/api/launcher/v1/update-assets/{name}` | Private release asset proxy |
+| `GET`  | `/api/launcher/v1/files/{path}`         | Individual modpack files    |
+| `GET`  | `/api/launcher/v1/server-status`        | Live Minecraft status       |
+| `POST` | `/api/launcher/v1/reload`               | Protected release publish   |
 
 ## Environment variables
 
@@ -26,6 +27,7 @@ See [`.env.example`](./.env.example). Required vars in production:
 - `CMS_URL` — Filament CMS API URL
 - `CMS_TOKEN` — bearer token for CMS authentication
 - `RELOAD_TOKEN` — separate bearer token for release publication
+- `GITHUB_TOKEN` — read-only repository token when `GITHUB_REPO` is private; it stays server-side while update metadata is rewritten to the asset proxy
 
 Generate secrets:
 
@@ -43,7 +45,7 @@ Deploy as a **separate Dokploy app** (not compose). Use the Docker image built b
 4. Attach domain (e.g. `play.blockfield.gg`) to port `3000`
 5. Mount volumes:
    - `/data/files` — modpack ZIPs and CMS download cache
-   - `/data/extracted` — auto-populated modpack extraction cache
+   - `/data/extracted` — release volume; set `EXTRACTED_DIR=/data/extracted/active` so the mounted directory itself is never renamed
 6. Deploy
 
 Verify:

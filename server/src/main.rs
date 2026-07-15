@@ -1224,6 +1224,58 @@ async fn serve_update(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+async fn serve_update_asset(
+    State(state): State<Arc<AppState>>,
+    AxumPath(name): AxumPath<String>,
+    headers: HeaderMap,
+) -> Response {
+    if name.is_empty() || safe_file_part(&name) != name {
+        return json_error(StatusCode::BAD_REQUEST, "invalid update asset");
+    }
+    let Some(token) = state.config.github_token.as_ref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let url = match github_release_asset_url(&state.config, &state.client, &name).await {
+        Ok(Some(url)) => url,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+    };
+    let mut request = state
+        .client
+        .get(url)
+        .header("User-Agent", "blockfield-launcher-server")
+        .header("Accept", "application/octet-stream")
+        .bearer_auth(token);
+    if let Some(range) = headers.get(header::RANGE) {
+        request = request.header(header::RANGE, range);
+    }
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+    };
+    let status =
+        StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    if !status.is_success() {
+        return status.into_response();
+    }
+    let mut builder = Response::builder()
+        .status(status)
+        .header(header::CACHE_CONTROL, "private, no-store");
+    for name in [
+        header::CONTENT_TYPE,
+        header::CONTENT_LENGTH,
+        header::CONTENT_RANGE,
+        header::ACCEPT_RANGES,
+    ] {
+        if let Some(value) = response.headers().get(&name) {
+            builder = builder.header(name, value);
+        }
+    }
+    builder
+        .body(Body::from_stream(response.bytes_stream()))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
 async fn fetch_github_update(config: &AppConfig, client: &Client) -> Result<Option<Value>, String> {
     let repo = match config.github_repo.as_ref() {
         Some(r) => r,
@@ -1231,14 +1283,23 @@ async fn fetch_github_update(config: &AppConfig, client: &Client) -> Result<Opti
     };
     let tag = &config.github_update_tag;
 
-    let url = format!("https://github.com/{repo}/releases/download/{tag}/update.json");
+    let url = if config.github_token.is_some() {
+        match github_release_asset_url(config, client, "update.json").await? {
+            Some(url) => url,
+            None => return Ok(None),
+        }
+    } else {
+        format!("https://github.com/{repo}/releases/download/{tag}/update.json")
+    };
 
     let mut request = client
         .get(&url)
         .header("User-Agent", "blockfield-launcher-server");
 
     if let Some(token) = config.github_token.as_ref() {
-        request = request.header("Authorization", format!("Bearer {token}"));
+        request = request
+            .header("Accept", "application/octet-stream")
+            .bearer_auth(token);
     }
 
     let response = request
@@ -1252,11 +1313,107 @@ async fn fetch_github_update(config: &AppConfig, client: &Client) -> Result<Opti
         return Ok(None);
     }
 
-    response
+    let mut value = response
         .json()
         .await
-        .map(Some)
-        .map_err(|e| format!("GitHub update parse failed: {e}"))
+        .map_err(|e| format!("GitHub update parse failed: {e}"))?;
+    if !update_metadata_is_signed(&value) {
+        return Err("GitHub update metadata is incomplete or unsigned".to_string());
+    }
+    rewrite_update_asset_urls(config, &mut value);
+    Ok(Some(value))
+}
+
+fn update_metadata_is_signed(value: &Value) -> bool {
+    value
+        .get("version")
+        .and_then(Value::as_str)
+        .is_some_and(|version| !version.trim().is_empty())
+        && value
+            .get("platforms")
+            .and_then(Value::as_object)
+            .is_some_and(|platforms| {
+                !platforms.is_empty()
+                    && platforms.values().all(|platform| {
+                        platform
+                            .get("url")
+                            .and_then(Value::as_str)
+                            .is_some_and(|url| url.starts_with("https://"))
+                            && platform
+                                .get("signature")
+                                .and_then(Value::as_str)
+                                .is_some_and(|signature| !signature.trim().is_empty())
+                    })
+            })
+}
+
+async fn github_release_asset_url(
+    config: &AppConfig,
+    client: &Client,
+    name: &str,
+) -> Result<Option<String>, String> {
+    let repo = config
+        .github_repo
+        .as_ref()
+        .ok_or_else(|| "GitHub repository is not configured".to_string())?;
+    let token = config
+        .github_token
+        .as_ref()
+        .ok_or_else(|| "GitHub token is not configured".to_string())?;
+    let release = client
+        .get(format!(
+            "https://api.github.com/repos/{repo}/releases/tags/{}",
+            config.github_update_tag
+        ))
+        .header("User-Agent", "blockfield-launcher-server")
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("GitHub release fetch failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("GitHub release fetch failed: {e}"))?
+        .json::<Value>()
+        .await
+        .map_err(|e| format!("GitHub release parse failed: {e}"))?;
+    Ok(release
+        .get("assets")
+        .and_then(Value::as_array)
+        .and_then(|assets| {
+            assets.iter().find_map(|asset| {
+                (asset.get("name").and_then(Value::as_str) == Some(name))
+                    .then(|| asset.get("url").and_then(Value::as_str))
+                    .flatten()
+                    .map(str::to_string)
+            })
+        }))
+}
+
+fn rewrite_update_asset_urls(config: &AppConfig, value: &mut Value) {
+    if config.github_token.is_none() {
+        return;
+    }
+    let Some(platforms) = value.get_mut("platforms").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for platform in platforms.values_mut() {
+        let Some(url) = platform.get("url").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(name) = url
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.is_empty() && safe_file_part(name) == *name)
+        else {
+            continue;
+        };
+        platform["url"] = Value::String(format!(
+            "{}/{}/update-assets/{name}",
+            config.base_url.trim_end_matches('/'),
+            config.api_prefix.trim_matches('/')
+        ));
+    }
 }
 
 async fn serve_content(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
@@ -1690,6 +1847,10 @@ async fn main() {
         .route(&format!("/{prefix}/auth/me"), get(proxy_auth_me))
         .route(&format!("/{prefix}/auth/{{action}}"), post(proxy_auth_post))
         .route(&format!("/{prefix}/update.json"), get(serve_update))
+        .route(
+            &format!("/{prefix}/update-assets/{{*name}}"),
+            get(serve_update_asset),
+        )
         .route(&format!("/{prefix}/content.json"), get(serve_content))
         .route(
             &format!("/{prefix}/content/reload"),
@@ -1770,6 +1931,38 @@ mod tests {
         assert_eq!(java.platform, "windows-x64");
         assert_eq!(java.url, "https://example.com/jre-17.0.16.zip");
         assert_eq!(java.size, 123);
+    }
+
+    #[test]
+    fn private_update_assets_are_proxied_without_exposing_the_token() {
+        let mut config = test_config();
+        config.github_repo = Some("netherg-io/Blockfield-Launcher".to_string());
+        config.github_token = Some("server-only-token".to_string());
+        let mut metadata = json!({
+            "version": "0.1.0",
+            "platforms": {
+                "windows-x86_64": {
+                    "url": "https://github.com/netherg-io/Blockfield-Launcher/releases/download/develop/blockfield-launcher_0.1.0_x64-setup.exe",
+                    "signature": "signed"
+                }
+            }
+        });
+
+        assert!(update_metadata_is_signed(&metadata));
+        let mut unsigned = metadata.clone();
+        unsigned["platforms"]["windows-x86_64"]["signature"] = Value::String(String::new());
+        assert!(!update_metadata_is_signed(&unsigned));
+
+        rewrite_update_asset_urls(&config, &mut metadata);
+
+        let url = metadata["platforms"]["windows-x86_64"]["url"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:3000/api/launcher/v1/update-assets/blockfield-launcher_0.1.0_x64-setup.exe"
+        );
+        assert!(!metadata.to_string().contains("server-only-token"));
     }
 
     #[test]
