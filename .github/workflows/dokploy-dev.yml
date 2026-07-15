@@ -67,7 +67,7 @@ jobs:
       - name: Audit Composer dependencies
         run: docker run --rm --entrypoint composer blockfield-filament-test audit
       - name: Scan Filament image
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: blockfield-filament-test
           exit-code: 1
@@ -85,7 +85,7 @@ jobs:
           docker run --rm
           --volume "$PWD:/repo"
           ghcr.io/gitleaks/gitleaks:v8.30.1
-          detect --source=/repo --verbose --redact
+          detect --source=/repo --config=/repo/.gitleaks.toml --verbose --redact
 
   tauri-release:
     name: Build Windows Tauri release

@@ -1,0 +1,14 @@
+title = "Blockfield Launcher secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Known non-production credentials used by local and CI examples"
+targetRules = ["generic-api-key", "curl-auth-header"]
+regexTarget = "line"
+regexes = [
+  '''CMS_TOKEN=0123456789abcdef0123456789abcdef''',
+  '''AUTH_SIGNING_KEY=abcdef0123456789abcdef0123456789''',
+  '''Authorization: Bearer blockfield-dev-token''',
+]
