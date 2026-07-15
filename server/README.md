@@ -27,7 +27,8 @@ See [`.env.example`](./.env.example). Required vars in production:
 - `CMS_URL` — Filament CMS API URL
 - `CMS_TOKEN` — bearer token for CMS authentication
 - `RELOAD_TOKEN` — separate bearer token for release publication
-- `GITHUB_TOKEN` — read-only repository token when `GITHUB_REPO` is private; it stays server-side while update metadata is rewritten to the asset proxy
+- `UPDATE_DIR` — preferred directory containing signed updater metadata and installers; dev CI packages it into the final backend image
+- `GITHUB_TOKEN` — optional read-only fallback for a private `GITHUB_REPO`; it stays server-side while metadata is rewritten to the asset proxy
 
 Generate secrets:
 

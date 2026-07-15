@@ -37,6 +37,7 @@ FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bb
 RUN apt-get update && apt-get install -y ca-certificates curl tini && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/blockfield-server /usr/local/bin/blockfield-server
+COPY server/updates/ /updates/
 
 # Keep active, staged, and previous releases on one filesystem. Mounting the
 # active directory itself prevents the atomic directory swap used on publish.
@@ -44,6 +45,7 @@ VOLUME ["/data"]
 
 ENV FILES_DIR=/data/files
 ENV EXTRACTED_DIR=/data/extracted
+ENV UPDATE_DIR=/updates
 ENV BASE_URL=https://play.blockfield.gg
 ENV MODPACK_VERSION=0.1.43
 ENV MINECRAFT_VERSION=1.20.1

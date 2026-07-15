@@ -65,6 +65,7 @@ struct AppConfig {
     github_repo: Option<String>,
     github_update_tag: String,
     github_token: Option<String>,
+    update_dir: Option<PathBuf>,
     // Fallback JSON values (used when CMS is unavailable)
     fallback_brand: String,
     fallback_brand_subtitle: String,
@@ -106,6 +107,7 @@ impl AppConfig {
             github_repo: env_opt("GITHUB_REPO"),
             github_update_tag: env_string("GITHUB_UPDATE_TAG", "develop"),
             github_token: env_opt("GITHUB_TOKEN"),
+            update_dir: env_opt("UPDATE_DIR").map(PathBuf::from),
             fallback_brand: env_string("FALLBACK_BRAND", "BLOCKFIELD"),
             fallback_brand_subtitle: env_string("FALLBACK_BRAND_SUBTITLE", "TACTICAL OPS"),
             fallback_chrome_title: env_string("FALLBACK_CHROME_TITLE", "BLOCKFIELD LAUNCHER"),
@@ -1210,6 +1212,15 @@ fn json_error(status: StatusCode, message: &str) -> Response {
 }
 
 async fn serve_update(State(state): State<Arc<AppState>>) -> Response {
+    match load_local_update(&state.config) {
+        Ok(Some(value)) => return json_value_response(value),
+        Ok(None) => {}
+        Err(error) => log_event(
+            "warn",
+            "updater.local_metadata_unavailable",
+            json!({ "error": error }),
+        ),
+    }
     match fetch_github_update(&state.config, &state.client).await {
         Ok(Some(value)) => json_value_response(value),
         Ok(None) => StatusCode::NO_CONTENT.into_response(),
@@ -1224,6 +1235,25 @@ async fn serve_update(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+fn load_local_update(config: &AppConfig) -> Result<Option<Value>, String> {
+    let Some(dir) = config.update_dir.as_ref() else {
+        return Ok(None);
+    };
+    let path = dir.join("update.json");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let mut value: Value = serde_json::from_slice(
+        &std::fs::read(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?,
+    )
+    .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
+    if !update_metadata_is_signed(&value) {
+        return Err("Local update metadata is incomplete or unsigned".to_string());
+    }
+    rewrite_update_asset_urls(config, &mut value, true);
+    Ok(Some(value))
+}
+
 async fn serve_update_asset(
     State(state): State<Arc<AppState>>,
     AxumPath(name): AxumPath<String>,
@@ -1231,6 +1261,15 @@ async fn serve_update_asset(
 ) -> Response {
     if name.is_empty() || safe_file_part(&name) != name {
         return json_error(StatusCode::BAD_REQUEST, "invalid update asset");
+    }
+    if let Some(path) = state
+        .config
+        .update_dir
+        .as_ref()
+        .map(|dir| dir.join(&name))
+        .filter(|path| path.is_file())
+    {
+        return serve_local_update_asset(&path, &headers).await;
     }
     let Some(token) = state.config.github_token.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
@@ -1273,6 +1312,48 @@ async fn serve_update_asset(
     }
     builder
         .body(Body::from_stream(response.bytes_stream()))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+async fn serve_local_update_asset(path: &Path, headers: &HeaderMap) -> Response {
+    let mut file = match tokio::fs::File::open(path).await {
+        Ok(file) => file,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let size = match file.metadata().await {
+        Ok(metadata) => metadata.len(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let range = match parse_byte_range(headers, size) {
+        Ok(range) => range,
+        Err(()) => {
+            return Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(header::CONTENT_RANGE, format!("bytes */{size}"))
+                .body(Body::empty())
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
+    };
+    let (status, start, end) = range
+        .map(|(start, end)| (StatusCode::PARTIAL_CONTENT, start, end))
+        .unwrap_or((StatusCode::OK, 0, size.saturating_sub(1)));
+    if start > 0 && file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let length = if size == 0 { 0 } else { end - start + 1 };
+    let mut builder = Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(header::CONTENT_LENGTH, length)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CACHE_CONTROL, "private, no-store");
+    if status == StatusCode::PARTIAL_CONTENT {
+        builder = builder.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{size}"));
+    }
+    builder
+        .body(Body::from_stream(tokio_util::io::ReaderStream::new(
+            file.take(length),
+        )))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
@@ -1320,7 +1401,7 @@ async fn fetch_github_update(config: &AppConfig, client: &Client) -> Result<Opti
     if !update_metadata_is_signed(&value) {
         return Err("GitHub update metadata is incomplete or unsigned".to_string());
     }
-    rewrite_update_asset_urls(config, &mut value);
+    rewrite_update_asset_urls(config, &mut value, config.github_token.is_some());
     Ok(Some(value))
 }
 
@@ -1390,8 +1471,8 @@ async fn github_release_asset_url(
         }))
 }
 
-fn rewrite_update_asset_urls(config: &AppConfig, value: &mut Value) {
-    if config.github_token.is_none() {
+fn rewrite_update_asset_urls(config: &AppConfig, value: &mut Value, proxy_assets: bool) {
+    if !proxy_assets {
         return;
     }
     let Some(platforms) = value.get_mut("platforms").and_then(Value::as_object_mut) else {
@@ -1910,6 +1991,7 @@ mod tests {
             github_repo: None,
             github_update_tag: "develop".to_string(),
             github_token: None,
+            update_dir: None,
             fallback_brand: "BLOCKFIELD".to_string(),
             fallback_brand_subtitle: "TACTICAL OPS".to_string(),
             fallback_chrome_title: "BLOCKFIELD LAUNCHER".to_string(),
@@ -1953,7 +2035,7 @@ mod tests {
         unsigned["platforms"]["windows-x86_64"]["signature"] = Value::String(String::new());
         assert!(!update_metadata_is_signed(&unsigned));
 
-        rewrite_update_asset_urls(&config, &mut metadata);
+        rewrite_update_asset_urls(&config, &mut metadata, true);
 
         let url = metadata["platforms"]["windows-x86_64"]["url"]
             .as_str()
@@ -1963,6 +2045,41 @@ mod tests {
             "http://localhost:3000/api/launcher/v1/update-assets/blockfield-launcher_0.1.0_x64-setup.exe"
         );
         assert!(!metadata.to_string().contains("server-only-token"));
+    }
+
+    #[test]
+    fn signed_local_update_metadata_uses_the_backend_asset_route() {
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-local-update-{}-{}",
+            std::process::id(),
+            REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("update.json"),
+            serde_json::to_vec(&json!({
+                "version": "0.1.0",
+                "platforms": {
+                    "windows-x86_64": {
+                        "url": "https://github.com/example/repo/releases/download/develop/launcher.exe",
+                        "signature": "signed"
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(root.join("launcher.exe"), b"installer").unwrap();
+        let mut config = test_config();
+        config.update_dir = Some(root.clone());
+
+        let metadata = load_local_update(&config).unwrap().unwrap();
+
+        assert_eq!(
+            metadata["platforms"]["windows-x86_64"]["url"],
+            "http://localhost:3000/api/launcher/v1/update-assets/launcher.exe"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
