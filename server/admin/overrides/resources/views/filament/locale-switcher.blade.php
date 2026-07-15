@@ -1,6 +1,6 @@
 <form method="GET" action="{{ url()->current() }}" class="flex items-center gap-2 px-2">
     <label for="cms-locale" class="text-sm font-medium text-gray-500 dark:text-gray-400">
-        Locale
+        Content locale
     </label>
     <x-filament::input.wrapper>
         <x-filament::input.select

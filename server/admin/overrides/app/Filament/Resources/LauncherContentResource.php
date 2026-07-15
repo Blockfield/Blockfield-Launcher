@@ -16,8 +16,6 @@ class LauncherContentResource extends Resource
 
     public static function form(Schema $schema): Schema
     {
-        $locale = CmsLocale::current();
-
         return $schema->components([
             Forms\Components\TextInput::make('brand')->maxLength(64)->helperText('Primary launcher brand.'),
             Forms\Components\TextInput::make(CmsLocale::field('brand_subtitle', 'content.brandSubtitle'))
@@ -41,8 +39,6 @@ class LauncherContentResource extends Resource
                 ->label('Support label')->maxLength(32),
             Forms\Components\TextInput::make(CmsLocale::field('settings_preferences', 'content.settingsPreferences'))
                 ->label('Settings preferences')->maxLength(64),
-            Forms\Components\TextInput::make("translations.{$locale}.nav.deploy")
-                ->label('Deploy button')->maxLength(64),
             Forms\Components\Textarea::make(CmsLocale::field('update_description', 'content.updateDescription'))
                 ->label('Update description')->maxLength(500)->rows(4)->columnSpanFull(),
         ])->columns(3);

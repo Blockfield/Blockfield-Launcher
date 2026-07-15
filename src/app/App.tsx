@@ -6,7 +6,6 @@ import { MainScreen } from './components/MainScreen'
 import { UpdateScreen } from './components/UpdateScreen'
 import { SettingsScreen } from './components/SettingsScreen'
 import { I18nContext, makeT, type Lang } from './i18n'
-import { contentTranslations, useLauncherContent } from '../lib/content'
 import { login, logout, register, restoreSession, type AuthSession } from '../lib/auth'
 
 type Screen = 'login' | 'main' | 'update' | 'settings'
@@ -23,7 +22,6 @@ const loadLang = (): Lang => {
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
 export default function App() {
-  const content = useLauncherContent()
   const [screen, setScreen] = useState<Screen>('login')
   const [lang, setLangState] = useState<Lang>(loadLang)
   const [session, setSession] = useState<AuthSession | null>(null)
@@ -35,10 +33,7 @@ export default function App() {
     if (typeof document !== 'undefined') document.documentElement.lang = next
   }, [])
 
-  const i18n = useMemo(
-    () => ({ lang, setLang, t: makeT(lang, contentTranslations(content, lang)) }),
-    [content, lang, setLang],
-  )
+  const i18n = useMemo(() => ({ lang, setLang, t: makeT(lang) }), [lang, setLang])
 
   // Check for launcher updates on mount
   useEffect(() => {

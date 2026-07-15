@@ -25,16 +25,11 @@ class NewsFeedEntryResource extends Resource
 
     public static function form(Schema $schema): Schema
     {
-        $locale = CmsLocale::current();
-
         return $schema->components([
-            $locale === 'en'
-                ? Forms\Components\Select::make('tag')
-                    ->options(['PATCH' => 'PATCH', 'EVENT' => 'EVENT', 'OPS' => 'OPS'])
-                    ->default('PATCH')
-                    ->required()
-                : Forms\Components\TextInput::make("translations.{$locale}.tag")
-                    ->label('Tag')->maxLength(32),
+            Forms\Components\Select::make('tag')
+                ->options(['PATCH' => 'PATCH', 'EVENT' => 'EVENT', 'OPS' => 'OPS'])
+                ->default('PATCH')
+                ->required(),
             Forms\Components\Select::make('tone')
                 ->options(['amber' => 'Amber', 'green' => 'Green', 'sand' => 'Sand'])
                 ->default('amber')
@@ -63,11 +58,7 @@ class NewsFeedEntryResource extends Resource
 
         return $table
             ->columns([
-                Tables\Columns\TextColumn::make('tag')
-                    ->state(fn (NewsFeedEntry $record): ?string => $locale === 'en'
-                        ? $record->tag
-                        : (data_get($record->translations, "{$locale}.tag") ?: $record->tag))
-                    ->badge()->sortable(),
+                Tables\Columns\TextColumn::make('tag')->badge()->sortable(),
                 Tables\Columns\TextColumn::make('tone')->badge(),
                 Tables\Columns\TextColumn::make('date')->searchable(),
                 Tables\Columns\TextColumn::make('title')

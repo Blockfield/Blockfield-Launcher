@@ -52,10 +52,6 @@ class DatabaseSeeder extends Seeder
                 'support_label' => 'SUPPORT',
                 'update_description' => 'Synchronizing modpack assets with the primary deployment server. Do not close the launcher until the operation completes.',
                 'settings_preferences' => '/ LAUNCHER PREFERENCES',
-                'translations' => [
-                    'ru' => ['nav' => ['deploy' => 'БОЙ']],
-                    'uk' => ['nav' => ['deploy' => 'БІЙ']],
-                ],
             ],
         );
 

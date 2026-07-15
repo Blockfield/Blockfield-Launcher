@@ -82,6 +82,12 @@ const FEED: FallbackFeedEntry[] = [
   },
 ]
 
+const FEED_TAG_KEYS: Record<string, TKey> = {
+  PATCH: 'main.tag.patch',
+  EVENT: 'main.tag.event',
+  OPS: 'main.tag.ops',
+}
+
 /** Whether we're running inside Tauri (vs browser dev). */
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
@@ -248,19 +254,19 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           desc: t(feature.desc),
         }))
   const feed =
-    content?.feed?.flatMap((entry, index) =>
-      entry.title && entry.body
-        ? [
-            {
-              tag: localizedContentText(content, lang, `feed.${index}.tag`) ?? entry.tag ?? '',
-              tone: feedTone(entry.tone),
-              date: entry.date ?? '',
-              title: localizedContentText(content, lang, `feed.${index}.title`) ?? entry.title,
-              body: localizedContentText(content, lang, `feed.${index}.body`) ?? entry.body,
-            },
-          ]
-        : [],
-    ) ?? []
+    content?.feed?.flatMap((entry, index) => {
+      if (!entry.title || !entry.body) return []
+      const tagKey = entry.tag ? FEED_TAG_KEYS[entry.tag] : undefined
+      return [
+        {
+          tag: tagKey ? t(tagKey) : (entry.tag ?? ''),
+          tone: feedTone(entry.tone),
+          date: entry.date ?? '',
+          title: localizedContentText(content, lang, `feed.${index}.title`) ?? entry.title,
+          body: localizedContentText(content, lang, `feed.${index}.body`) ?? entry.body,
+        },
+      ]
+    }) ?? []
   const displayFeed =
     feed.length > 0
       ? feed

@@ -82,7 +82,7 @@ class CmsApiController extends Controller
                 }
                 foreach ($feedRecords as $index => $entry) {
                     foreach ($entry->translations ?? [] as $locale => $messages) {
-                        foreach (['tag', 'title', 'body'] as $field) {
+                        foreach (['title', 'body'] as $field) {
                             if (filled($messages[$field] ?? null)) {
                                 $translations[$locale]["feed.{$index}.{$field}"] = $messages[$field];
                             }

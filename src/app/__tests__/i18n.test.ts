@@ -7,18 +7,18 @@ describe('makeT', () => {
     expect(makeT('en')('shell.launcherVersion', { v: '1.2.3' })).toBe('LAUNCHER v1.2.3')
   })
 
-  it('uses CMS overrides before bundled translations', () => {
-    expect(
-      makeT('en', { 'shell.launcherVersion': 'BUILD {v}' })('shell.launcherVersion', {
-        v: '9.9.9',
-      }),
-    ).toBe('BUILD 9.9.9')
+  it('keeps launcher UI translations in the bundled dictionary', () => {
+    expect(makeT('ru')('main.tag.patch')).toBe('ПАТЧ')
   })
 
-  it('uses localized CMS content with an English fallback', () => {
+  it('uses localized CMS content with a per-key English fallback', () => {
     const content = {
       operation_name: 'IRON FRONT',
-      translations: { ru: { 'content.operationName': 'ЖЕЛЕЗНЫЙ ФРОНТ' } },
+      translations: {
+        en: { 'content.description': 'English CMS description' },
+        ru: { 'content.operationName': 'ЖЕЛЕЗНЫЙ ФРОНТ' },
+        uk: {},
+      },
     }
 
     expect(localizedContentText(content, 'ru', 'content.operationName', 'operation_name')).toBe(
@@ -26,6 +26,9 @@ describe('makeT', () => {
     )
     expect(localizedContentText(content, 'uk', 'content.operationName', 'operation_name')).toBe(
       'IRON FRONT',
+    )
+    expect(localizedContentText(content, 'uk', 'content.description')).toBe(
+      'English CMS description',
     )
   })
 })

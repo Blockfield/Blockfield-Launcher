@@ -33,9 +33,13 @@ export function contentText(content: LauncherContent | null, ...keys: string[]) 
 
 export function contentTranslations(content: LauncherContent | null, lang: string) {
   const translations = content?.translations
-  const byLang = translations?.[lang] ?? translations?.en
-  if (!byLang || typeof byLang !== 'object') return undefined
-  return byLang
+  const english = translations?.en
+  const localized = translations?.[lang]
+  if (typeof english !== 'object' && typeof localized !== 'object') return undefined
+  return {
+    ...(typeof english === 'object' ? english : {}),
+    ...(typeof localized === 'object' ? localized : {}),
+  }
 }
 
 export function localizedContentText(

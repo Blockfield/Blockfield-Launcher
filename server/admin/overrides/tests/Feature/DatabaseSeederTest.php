@@ -28,15 +28,6 @@ test('seeding does not replace an existing admin password', function (): void {
     expect(User::count())->toBe(1);
 });
 
-test('launcher translations live on launcher content instead of a separate resource', function (): void {
-    config()->set('blockfield.admin.email', 'admin@example.com');
-    config()->set('blockfield.admin.password', '12345678');
-
-    $this->seed(DatabaseSeeder::class);
-
-    expect(LauncherContent::firstOrFail()->translations['ru']['nav']['deploy'])->toBe('БОЙ');
-});
-
 test('editing one locale preserves the others', function (): void {
     $data = CmsLocale::preserveOtherLocales(
         ['translations' => ['ru' => ['title' => 'Новый заголовок']]],
@@ -60,23 +51,36 @@ test('admin locale switcher is visible and persists the selected locale', functi
         ->assertSessionHas('cms_locale', 'ru');
 });
 
+test('admin locale switcher is hidden outside localized content', function (): void {
+    $user = User::factory()->create(['role' => 'admin']);
+
+    $this->actingAs($user)
+        ->get('/admin/modpack-releases')
+        ->assertOk()
+        ->assertDontSee('Content locale');
+});
+
 test('content api flattens localized fields for the launcher', function (): void {
     config()->set('blockfield.admin.email', 'admin@example.com');
     config()->set('blockfield.admin.password', '12345678');
     config()->set('blockfield.cms_token', str_repeat('a', 32));
 
     $this->seed(DatabaseSeeder::class);
+    LauncherContent::firstOrFail()->update([
+        'translations' => ['ru' => ['content' => ['operationName' => 'ЖЕЛЕЗНЫЙ ФРОНТ']]],
+    ]);
     \App\Models\FeatureCard::orderBy('sort_order')->firstOrFail()->update([
         'translations' => ['ru' => ['title' => 'ТОЧКИ ЗАХВАТА']],
     ]);
     \App\Models\NewsFeedEntry::orderBy('sort_order')->firstOrFail()->update([
-        'translations' => ['ru' => ['title' => 'Баланс техники']],
+        'translations' => ['ru' => ['tag' => 'ПАТЧ', 'title' => 'Баланс техники']],
     ]);
 
     $this->withToken(str_repeat('a', 32))
         ->getJson('/api/items/launcher_content')
         ->assertOk()
-        ->assertJsonFragment(['nav.deploy' => 'БОЙ'])
+        ->assertJsonFragment(['content.operationName' => 'ЖЕЛЕЗНЫЙ ФРОНТ'])
         ->assertJsonFragment(['feature.0.title' => 'ТОЧКИ ЗАХВАТА'])
-        ->assertJsonFragment(['feed.0.title' => 'Баланс техники']);
+        ->assertJsonFragment(['feed.0.title' => 'Баланс техники'])
+        ->assertJsonMissing(['feed.0.tag' => 'ПАТЧ']);
 });

@@ -488,9 +488,9 @@ function format(template: string, vars?: Record<string, string | number>) {
   return template.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? `{${k}}`))
 }
 
-export function makeT(lang: Lang, overrides?: Record<string, string>): TFunction {
+export function makeT(lang: Lang): TFunction {
   const dict = DICTS[lang] ?? en
-  return (key, vars) => format(overrides?.[key] ?? dict[key] ?? en[key] ?? key, vars)
+  return (key, vars) => format(dict[key] ?? en[key] ?? key, vars)
 }
 
 type I18n = { lang: Lang; setLang: (lang: Lang) => void; t: TFunction }

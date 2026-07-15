@@ -2,6 +2,9 @@
 
 namespace App\Providers;
 
+use App\Filament\Resources\FeatureCardResource\Pages\ManageFeatureCards;
+use App\Filament\Resources\LauncherContentResource\Pages\ManageLauncherContent;
+use App\Filament\Resources\NewsFeedEntryResource\Pages\ManageNewsFeedEntries;
 use App\Support\CmsLocale;
 use Filament\Support\Facades\FilamentView;
 use Filament\View\PanelsRenderHook;
@@ -23,6 +26,11 @@ class AppServiceProvider extends ServiceProvider
                 'locale' => CmsLocale::current(),
                 'locales' => CmsLocale::OPTIONS,
             ]),
+            scopes: [
+                ManageLauncherContent::class,
+                ManageFeatureCards::class,
+                ManageNewsFeedEntries::class,
+            ],
         );
     }
 }
