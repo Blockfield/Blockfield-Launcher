@@ -613,6 +613,8 @@ fn run_packwiz_installer(
         .args([
             "-jar",
             INSTALLER_JAR,
+            // we ship the installer jar ourselves; without this it insists on the bootstrap wrapper
+            "--bootstrap-no-update",
             "-g",
             "-s",
             "client",
