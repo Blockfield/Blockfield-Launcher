@@ -7,7 +7,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://modpack.dev.nether.pp.ua/launcher/latest.json"
+        "https://github.com/netherg-io/blockfield-launcher-releases/releases/latest/download/latest.json"
       ]
     }
   }

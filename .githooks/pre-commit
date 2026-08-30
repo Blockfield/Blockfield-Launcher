@@ -43,9 +43,11 @@ if has_files '\.rs$|Cargo\.(toml|lock)$'; then
 
     RUST_FILES=$(echo "$STAGED" | grep '\.rs$' || true)
 
-    check_step "cargo fmt --check"          cargo fmt --check
-    check_step "cargo clippy -- -D warnings" cargo clippy -- -D warnings
-    check_step "cargo test"                  cargo test
+    # scripts/rust-env.sh falls back to the podman builder image when gtk/webkit dev libs are missing
+    RUST_ENV="$(git rev-parse --show-toplevel)/scripts/rust-env.sh"
+    check_step "cargo fmt --check"          "$RUST_ENV" cargo fmt --all -- --check
+    check_step "cargo clippy -- -D warnings" "$RUST_ENV" cargo clippy --workspace --all-targets -- -D warnings
+    check_step "cargo test"                  "$RUST_ENV" cargo test --workspace
 else
     echo -e "${CYAN}⏭  Rust — no changes, skipped${NC}"
 fi

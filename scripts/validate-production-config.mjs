@@ -26,7 +26,8 @@ if (!networkOrigins.includes(url.origin) || networkOrigins.some((origin) =>
   origin !== url.origin && origin !== 'http://ipc.localhost')) {
   throw new Error(`Production CSP must contain only the configured API origin: ${url.origin}`)
 }
-if (!config.plugins?.updater?.endpoints?.every((endpoint) => endpoint.startsWith(`${url.origin}/`))) {
-  throw new Error('Production updater endpoint must use the pack origin')
+const RELEASES = 'https://github.com/netherg-io/blockfield-launcher-releases/releases/'
+if (!config.plugins?.updater?.endpoints?.every((endpoint) => endpoint.startsWith(RELEASES))) {
+  throw new Error(`Production updater endpoint must live in the public releases repo: ${RELEASES}`)
 }
 console.log(`Production pack configuration valid: ${url.origin}`)

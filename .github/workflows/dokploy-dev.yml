@@ -154,7 +154,7 @@ jobs:
           VITE_OPERATION_NAME: ${{ vars.VITE_OPERATION_NAME || 'IRON FRONT' }}
           VITE_SEASON: ${{ vars.VITE_SEASON || '/ SEASON 01' }}
           VITE_SERVER_NAME: ${{ vars.VITE_SERVER_NAME || 'BLOCKFIELD - PRIMARY' }}
-          VITE_SERVER_IP: ${{ vars.VITE_SERVER_IP || 'mc.dev.nether.pp.ua:25565' }}
+          VITE_SERVER_IP: ${{ vars.VITE_SERVER_IP || 'minecraft.play.nether.pp.ua:25565' }}
           VITE_COPYRIGHT: ${{ vars.VITE_COPYRIGHT || '2026 BLOCKFIELD COMMAND' }}
           BLOCKFIELD_MOJANG_MANIFEST_URL: ${{ vars.BLOCKFIELD_MOJANG_MANIFEST_URL || 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json' }}
           BLOCKFIELD_MOJANG_ASSET_BASE_URL: ${{ vars.BLOCKFIELD_MOJANG_ASSET_BASE_URL || 'https://resources.download.minecraft.net' }}
@@ -172,9 +172,9 @@ jobs:
           includeUpdaterJson: true
 
   publish-launcher:
-    # The repo is private, so GitHub release assets are not downloadable by the updater:
-    # mirror bundles + latest.json to the pack host and rewrite the URLs.
-    name: Publish launcher to pack host
+    # The source repo is private, so its release assets are unusable by the Tauri updater.
+    # Mirror bundles + latest.json into the public releases repo (https://github.com/netherg-io/blockfield-launcher-releases).
+    name: Publish launcher release
     needs: [tauri-release]
     runs-on: ubuntu-22.04
     environment: dev
@@ -182,32 +182,30 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Download release assets
+      - name: Download build assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version=$(node -p "require('./package.json').version")
-          mkdir -p launcher
-          gh release download "launcher-v$version" --dir launcher
-          python3 - <<'EOF'
-          import json, os
-          base = os.environ["VITE_BLOCKFIELD_PACK_URL"].rstrip("/") + "/launcher/"
-          path = "launcher/latest.json"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          mkdir -p release
+          gh release download "launcher-v$version" --dir release
+          python3 - "$version" <<'EOF'
+          import json, sys
+          version = sys.argv[1]
+          base = "https://github.com/netherg-io/blockfield-launcher-releases/releases/download/launcher-v" + version + "/"
+          path = "release/latest.json"
           data = json.load(open(path))
           for platform in data["platforms"].values():
               platform["url"] = base + platform["url"].rsplit("/", 1)[-1]
           json.dump(data, open(path, "w"), indent=2)
           print(json.dumps(data["platforms"], indent=1))
           EOF
-        env:
-          VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
-      - uses: webfactory/ssh-agent@v0.9.1
+      - uses: softprops/action-gh-release@v2
         with:
-          ssh-private-key: ${{ secrets.PACK_HOST_SSH_KEY }}
-      - name: Upload
-        env:
-          PACK_HOST: ${{ secrets.PACK_HOST }} # user@host
-          PACK_HOST_DIR: ${{ vars.PACK_HOST_DIR || '/srv/minecraft/modpack/launcher' }}
-        run: |
-          ssh-keyscan -H "${PACK_HOST#*@}" >> ~/.ssh/known_hosts
-          rsync -av --delete launcher/ "$PACK_HOST:$PACK_HOST_DIR/"
+          repository: netherg-io/blockfield-launcher-releases
+          token: ${{ secrets.RELEASES_TOKEN }} # PAT with contents:write on the releases repo
+          tag_name: launcher-v${{ env.VERSION }}
+          name: Launcher v${{ env.VERSION }}
+          body: Built from ${{ github.repository }}@${{ github.sha }}
+          files: release/*
