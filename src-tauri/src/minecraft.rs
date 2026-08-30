@@ -478,9 +478,8 @@ async fn download_artifacts(
     let root = root.to_path_buf();
     let label = label.to_string();
 
-    // ponytail: same parallel pattern as download_jobs in download.rs.
-    // 6 concurrent downloads matches the modpack download fan-out.
-    const PARALLEL: usize = 6;
+    // Mostly tiny asset objects from Mojang's CDN: throughput is latency-bound, so fan out wide.
+    const PARALLEL: usize = 24;
 
     let results: Vec<Result<(), String>> = futures_util::stream::iter(missing)
         .map(|(index, artifact)| {
@@ -574,8 +573,9 @@ fn collect_asset_artifacts(index_json: &Value) -> Vec<Artifact> {
     };
 
     objects
-        .values()
-        .filter_map(|object| {
+        .iter()
+        .filter(|(name, _)| asset_wanted(name))
+        .filter_map(|(_, object)| {
             let hash = object["hash"].as_str()?;
             let prefix = hash.get(0..2)?;
             Some(Artifact {
@@ -585,6 +585,14 @@ fn collect_asset_artifacts(index_json: &Value) -> Vec<Artifact> {
             })
         })
         .collect()
+}
+
+/// The index lists ~120 translations (~90 MB); the game only ever loads the selected one.
+fn asset_wanted(name: &str) -> bool {
+    match name.strip_prefix("minecraft/lang/") {
+        Some(lang) => matches!(lang, "en_us.json" | "ru_ru.json" | "uk_ua.json"),
+        None => true,
+    }
 }
 
 fn artifact_from_value(value: &Value) -> Option<Artifact> {
@@ -982,7 +990,11 @@ mod tests {
         std::fs::write(
             &index_path,
             serde_json::to_vec(&serde_json::json!({
-                "objects": { "test": { "hash": "aabb", "size": 30 } }
+                "objects": {
+                    "test": { "hash": "aabb", "size": 30 },
+                    "minecraft/lang/ru_ru.json": { "hash": "ccdd", "size": 5 },
+                    "minecraft/lang/de_de.json": { "hash": "eeff", "size": 500 }
+                }
             }))
             .unwrap(),
         )
@@ -990,13 +1002,14 @@ mod tests {
 
         assert_eq!(
             prepare_download_plan(&root, version, None).await.unwrap(),
-            60
+            65
         );
 
         let files = [
             (root.join("versions/1.20.1/1.20.1.jar"), 10),
             (root.join("libraries/com/example/lib.jar"), 20),
             (root.join("assets/objects/aa/aabb"), 30),
+            (root.join("assets/objects/cc/ccdd"), 5),
         ];
         for (path, size) in &files {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();

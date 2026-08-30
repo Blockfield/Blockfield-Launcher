@@ -413,7 +413,7 @@ pub async fn download_modpack(
         forge_version_id.as_deref(),
     )
     .await?;
-    state.downloader.set_grand_total(java_bytes + runtime_bytes);
+    state.downloader.set_grand_total(runtime_bytes);
     crate::minecraft::ensure_launch_dependencies(
         &state.downloader,
         &app_handle,

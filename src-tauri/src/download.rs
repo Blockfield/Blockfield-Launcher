@@ -47,6 +47,10 @@ pub struct Downloader {
     grand_total: AtomicU64,
     /// Cumulative bytes downloaded across all phases (never resets mid-operation).
     cumulative_downloaded: AtomicU64,
+    /// Progress events are throttled: thousands of small asset chunks per second would
+    /// flood the webview IPC and dominate download time.
+    last_emit_ms: AtomicU64,
+    epoch: Instant,
 }
 
 impl Downloader {
@@ -63,6 +67,8 @@ impl Downloader {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             grand_total: AtomicU64::new(0),
             cumulative_downloaded: AtomicU64::new(0),
+            last_emit_ms: AtomicU64::new(0),
+            epoch: Instant::now(),
         }
     }
 
@@ -104,9 +110,24 @@ impl Downloader {
         visit(game_dir);
     }
 
-    /// Set the grand total of all expected bytes across all download phases.
-    pub fn set_grand_total(&self, total: u64) {
-        self.grand_total.store(total, Ordering::SeqCst);
+    /// Expected bytes still to come; the grand total becomes what is already downloaded plus this.
+    pub fn set_grand_total(&self, remaining: u64) {
+        let done = self.cumulative_downloaded.load(Ordering::SeqCst);
+        self.grand_total.store(done + remaining, Ordering::SeqCst);
+    }
+
+    /// True at most once per 100ms, or when everything is downloaded.
+    fn should_emit(&self, cumulative: u64, grand: u64) -> bool {
+        if grand > 0 && cumulative >= grand {
+            return true;
+        }
+        let now = self.epoch.elapsed().as_millis() as u64;
+        let last = self.last_emit_ms.load(Ordering::Relaxed);
+        now.saturating_sub(last) >= 100
+            && self
+                .last_emit_ms
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
     }
 
     /// Check whether cancellation has been requested.
@@ -277,13 +298,14 @@ impl Downloader {
                 };
                 let cumulative = self.cumulative_downloaded.load(Ordering::Relaxed);
                 let grand = self.grand_total.load(Ordering::Relaxed);
-                self.emit_progress(
-                    file_path, file_index, file_count, file_bytes, file_size, cumulative, grand,
-                    speed,
-                );
+                if self.should_emit(cumulative, grand) {
+                    self.emit_progress(
+                        file_path, file_index, file_count, file_bytes, file_size, cumulative,
+                        grand, speed,
+                    );
+                }
             }
             std::io::Write::flush(&mut file)?;
-            file.sync_all()?;
             drop(file);
 
             if !stream_failed && (file_size == 0 || file_bytes == file_size) {
