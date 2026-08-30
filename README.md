@@ -7,10 +7,10 @@
 > | File | Purpose |
 > | --- | --- |
 > | `pack.toml` / `index.toml` | packwiz pack — version, Minecraft/Forge versions, mod list |
-> | `launcher.json` | game server (`host:port`, used for `--quickPlayMultiplayer`), `packwiz-installer.jar` hash, Temurin 17 JRE per platform (`windows/linux/macos` × `x86_64/aarch64`) |
+> | `launcher.json` | game server (`host:port`, used for `--quickPlayMultiplayer`), `packwiz-installer.jar` hash, Temurin 17 JRE per platform (`windows/linux` × `x86_64/aarch64`) |
 > | `content.json` | UI texts / feed |
 >
-> Flow on "Play": download Java (zip on Windows, tar.gz elsewhere) → Forge installer from Maven →
+> Flow on "Play": download Java (zip on Windows, tar.gz on Linux) → Forge installer from Maven →
 > `java -jar packwiz-installer.jar -g -s client --pack-folder <game dir> <pack.toml>` (it downloads,
 > verifies and prunes the pack) → vanilla runtime files → launch with the offline username from
 > Settings. Server status is a direct Server List Ping from Rust (`src-tauri/src/status.rs`).

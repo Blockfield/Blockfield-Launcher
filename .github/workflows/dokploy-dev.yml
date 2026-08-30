@@ -112,9 +112,6 @@ jobs:
           - name: windows-x86_64
             os: windows-latest
             args: ''
-          - name: macos-universal
-            os: macos-latest
-            args: '--target universal-apple-darwin'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -126,8 +123,6 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
