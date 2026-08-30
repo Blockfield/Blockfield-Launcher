@@ -12,20 +12,20 @@ pnpm build
 scripts/rust-env.sh cargo build --release -p blockfield-launcher
 
 APP="$HOME/.local/lib/blockfield-launcher"
-mkdir -p "$APP" "$HOME/.local/share/applications" "$HOME/.local/share/icons/hicolor/256x256/apps"
+mkdir -p "$APP" "$HOME/.local/share/applications"
 install -m 755 "$TARGET/release/blockfield-launcher" "$APP/blockfield-launcher"
-install -m 644 src-tauri/icons/256x256.png "$HOME/.local/share/icons/hicolor/256x256/apps/blockfield-launcher.png"
+install -m 644 src-tauri/icons/256x256.png "$APP/icon.png"
 cat > "$HOME/.local/share/applications/blockfield-launcher.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Blockfield Launcher
 Comment=Blockfield modpack launcher
-Exec=$APP/blockfield-launcher
-Icon=blockfield-launcher
+# WEBKIT_DISABLE_DMABUF_RENDERER: transparent Tauri windows render invisible with WebKitGTK's DMA-BUF path on some Wayland/GPU combos
+Exec=env WEBKIT_DISABLE_DMABUF_RENDERER=1 $APP/blockfield-launcher
+Icon=$APP/icon.png
 Terminal=false
 Categories=Game;
 StartupWMClass=blockfield-launcher
 DESKTOP
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-gtk-update-icon-cache -q "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
 echo "Installed: $APP/blockfield-launcher (menu entry 'Blockfield Launcher')"
