@@ -16,7 +16,7 @@
 > Settings. Server status is a direct Server List Ping from Rust (`src-tauri/src/status.rs`).
 > Launcher builds and the updater's `latest.json` are published by CI to the public
 > https://github.com/netherg-io/blockfield-launcher-releases (this repo is private, so its own release
-> assets are unusable by the updater). Linux install without root: `scripts/install-linux.sh`.
+> assets are unusable by the updater). Linux install without root: `scripts/install-linux.sh` (plain `cargo build --release` needs `--features tauri/custom-protocol`, otherwise the window tries to load the Vite dev server).
 > `server/` (API + Filament CMS) is kept in the repo but is no longer deployed or required.
 
 Three independent deployable parts:

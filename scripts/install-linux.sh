@@ -9,7 +9,8 @@ TARGET="${BLOCKFIELD_CARGO_TARGET:-$HOME/.cache/bf-cargo-target}"
 cd "$ROOT"
 CI=true pnpm install --frozen-lockfile
 pnpm build
-scripts/rust-env.sh cargo build --release -p blockfield-launcher
+# tauri/custom-protocol = serve the embedded frontend; without it a release binary still loads devUrl (localhost:5173)
+scripts/rust-env.sh cargo build --release -p blockfield-launcher --features tauri/custom-protocol
 
 APP="$HOME/.local/lib/blockfield-launcher"
 mkdir -p "$APP" "$HOME/.local/share/applications"
