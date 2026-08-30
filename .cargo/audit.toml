@@ -1,0 +1,4 @@
+[advisories]
+# rkyv 0.7 is pulled transitively by Tauri's dependency chain ( ← ... ← tauri);
+# the fix is rkyv 0.8, which upstream has not adopted yet. Re-check on each Tauri bump.
+ignore = ["RUSTSEC-2026-0235"]
