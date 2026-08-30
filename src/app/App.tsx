@@ -1,37 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { WindowChrome } from './components/WindowChrome'
 import { Shell } from './components/Shell'
 import { MainScreen } from './components/MainScreen'
 import { UpdateScreen } from './components/UpdateScreen'
 import { SettingsScreen } from './components/SettingsScreen'
-import { I18nContext, makeT, type Lang } from './i18n'
+import { I18nContext, translate } from './i18n'
 import type { LauncherConfig } from '../lib/api'
 
 type Screen = 'main' | 'update' | 'settings'
-
-const LANG_KEY = 'blockfield.lang'
-
-const loadLang = (): Lang => {
-  if (typeof localStorage === 'undefined') return 'en'
-  const saved = localStorage.getItem(LANG_KEY)
-  return saved === 'ru' || saved === 'uk' || saved === 'en' ? saved : 'en'
-}
 
 /** Whether we're running inside Tauri (vs browser dev). */
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('main')
-  const [lang, setLangState] = useState<Lang>(loadLang)
   const [username, setUsername] = useState('')
 
-  const setLang = useCallback((next: Lang) => {
-    setLangState(next)
-    if (typeof localStorage !== 'undefined') localStorage.setItem(LANG_KEY, next)
-    if (typeof document !== 'undefined') document.documentElement.lang = next
-  }, [])
-
-  const i18n = useMemo(() => ({ lang, setLang, t: makeT(lang) }), [lang, setLang])
+  const i18n = useMemo(() => ({ lang: 'ru' as const, t: translate }), [])
 
   // Offline identity: the username lives in launcher settings; no account service involved.
   useEffect(() => {
@@ -79,7 +64,11 @@ export default function App() {
   return (
     <I18nContext.Provider value={i18n}>
       <WindowChrome>
-        <Shell user={{ username: username || '—', role: 'operator' }} active={screen} onNavigate={setScreen}>
+        <Shell
+          user={{ username: username || '—', role: 'operator' }}
+          active={screen}
+          onNavigate={setScreen}
+        >
           {screen === 'main' && <MainScreen onPlay={() => setScreen('update')} />}
           {screen === 'update' && <UpdateScreen />}
           {screen === 'settings' && (

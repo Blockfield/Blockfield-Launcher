@@ -4,7 +4,6 @@ import {
   Folder,
   Cpu,
   Coffee,
-  Globe,
   RefreshCw,
   UserRound,
   Save,
@@ -15,7 +14,7 @@ import {
 import { invoke } from '@tauri-apps/api/core'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { GlowPanel } from './ui-bits'
-import { LANGUAGES, useI18n } from '../i18n'
+import { useI18n } from '../i18n'
 import type { LauncherConfig } from '../../lib/api'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
 
@@ -29,7 +28,7 @@ export function SettingsScreen({
   username: string
   onUsernameSaved: (name: string) => void
 }) {
-  const { lang, setLang, t } = useI18n()
+  const { lang, t } = useI18n()
   const content = useLauncherContent()
   const [dir, setDir] = useState('')
   const [java, setJava] = useState('')
@@ -226,33 +225,6 @@ export function SettingsScreen({
           </Group>
 
           <Group title={t('settings.launcher')} code="LCH-002">
-            <Setting
-              icon={<Globe size={14} />}
-              label={t('settings.language')}
-              hint={t('settings.languageHint')}
-            >
-              <div className="flex flex-wrap gap-1">
-                {LANGUAGES.map((l) => (
-                  <button
-                    type="button"
-                    key={l.code}
-                    aria-pressed={lang === l.code}
-                    onClick={() => {
-                      setLang(l.code)
-                      markDirty()
-                    }}
-                    className={`h-9 px-3 text-[10px] tracking-[0.14em] border transition-colors ${
-                      lang === l.code
-                        ? 'border-[#F5A524] bg-[#F5A524] text-[#070604]'
-                        : 'border-[#2A2116] bg-[#0B0906] text-[#C7AE86] hover:border-[#8A571C]'
-                    }`}
-                  >
-                    {l.label}
-                  </button>
-                ))}
-              </div>
-            </Setting>
-
             <Setting
               icon={<RefreshCw size={14} />}
               label={t('settings.autoUpdate')}

@@ -40,8 +40,9 @@ struct Artifact {
     size: u64,
 }
 
-pub fn forge_version_id(forge_version: &str) -> String {
-    forge_version.replacen('-', "-forge-", 1)
+/// Version id the Forge installer creates under `versions/`, e.g. `1.20.1-forge-47.4.10`.
+pub fn forge_version_id(minecraft: &str, forge: &str) -> String {
+    format!("{minecraft}-forge-{forge}")
 }
 
 pub fn find_forge_version_id(game_dir: &Path) -> Option<String> {

@@ -2,13 +2,13 @@ import { Minus, Square, X } from 'lucide-react'
 import { useState, useEffect, type ReactNode } from 'react'
 import type { Window as TauriWindow } from '@tauri-apps/api/window'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
-import { LANGUAGES, useI18n } from '../i18n'
+import { useI18n } from '../i18n'
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 export function WindowChrome({ children }: { children: ReactNode }) {
   const content = useLauncherContent()
-  const { lang, setLang } = useI18n()
+  const { lang } = useI18n()
   const [appWindow, setAppWindow] = useState<TauriWindow | null>(null)
   const title =
     localizedContentText(content, lang, 'content.chromeTitle', 'chromeTitle', 'chrome_title') ??
@@ -58,18 +58,6 @@ export function WindowChrome({ children }: { children: ReactNode }) {
             {title}
           </div>
           <div className="flex items-center gap-1 text-[#8E7A5E] z-50">
-            <select
-              aria-label="Language"
-              value={lang}
-              onChange={(event) => setLang(event.target.value as typeof lang)}
-              className="mr-1 h-6 border border-[#2A2116] bg-[#11100D] px-2 text-[9px] tracking-[0.14em] text-[#C7AE86] outline-none focus:border-[#F5A524]"
-            >
-              {LANGUAGES.map((language) => (
-                <option key={language.code} value={language.code}>
-                  {language.code.toUpperCase()}
-                </option>
-              ))}
-            </select>
             <button
               onClick={handleMinimize}
               className="h-6 w-8 grid place-items-center hover:bg-[#18130D] rounded-sm transition-colors cursor-pointer"
@@ -109,18 +97,6 @@ export function WindowChrome({ children }: { children: ReactNode }) {
             {title}
           </div>
           <div className="flex items-center gap-1 text-[#8E7A5E]">
-            <select
-              aria-label="Language"
-              value={lang}
-              onChange={(event) => setLang(event.target.value as typeof lang)}
-              className="mr-1 h-6 border border-[#2A2116] bg-[#11100D] px-2 text-[9px] tracking-[0.14em] text-[#C7AE86] outline-none focus:border-[#F5A524]"
-            >
-              {LANGUAGES.map((language) => (
-                <option key={language.code} value={language.code}>
-                  {language.code.toUpperCase()}
-                </option>
-              ))}
-            </select>
             <button className="h-6 w-8 grid place-items-center hover:bg-[#18130D] rounded-sm transition-colors">
               <Minus size={12} />
             </button>

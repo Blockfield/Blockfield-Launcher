@@ -294,7 +294,7 @@ pub async fn check_modpack_version(
 
     let forge_ok = match &meta.forge {
         Some(forge) => {
-            let id = crate::minecraft::forge_version_id(forge);
+            let id = crate::minecraft::forge_version_id(&meta.minecraft, forge);
             forge_json_path(&game_dir, &id).exists()
                 && crate::minecraft::has_launch_dependencies(&game_dir, &meta.minecraft, Some(&id))
         }
@@ -367,7 +367,7 @@ pub async fn download_modpack(
 
     let forge_version_id = match &pack.meta.forge {
         Some(forge) => {
-            let id = crate::minecraft::forge_version_id(forge);
+            let id = crate::minecraft::forge_version_id(&pack.meta.minecraft, forge);
             if !forge_json_path(&game_dir, &id).exists() {
                 install_forge(
                     &app_handle,
@@ -759,7 +759,7 @@ pub async fn launch_game(
             p.meta
                 .forge
                 .as_deref()
-                .map(crate::minecraft::forge_version_id)
+                .map(|forge| crate::minecraft::forge_version_id(&p.meta.minecraft, forge))
         })
         .or_else(|| crate::minecraft::find_forge_version_id(&game_dir_path));
     let minecraft_version = pack
