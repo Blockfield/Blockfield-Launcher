@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { LauncherContent } from './api'
+import { apiBaseUrl } from './api-base'
 
-const API_BASE =
-  (import.meta.env.VITE_BLOCKFIELD_API_URL as string | undefined) ??
-  'http://localhost:3000/api/launcher/v1'
+const API_BASE = apiBaseUrl()
 
 let cached: LauncherContent | null = null
 let pending: Promise<LauncherContent | null> | null = null

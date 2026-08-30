@@ -15,6 +15,7 @@ class LauncherSession extends Model
             'access_expires_at' => 'datetime',
             'expires_at' => 'datetime',
             'revoked_at' => 'datetime',
+            'rotated_at' => 'datetime',
             'last_used_at' => 'datetime',
             'remember' => 'boolean',
         ];

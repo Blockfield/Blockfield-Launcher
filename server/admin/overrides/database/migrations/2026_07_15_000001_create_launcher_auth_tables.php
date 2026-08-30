@@ -28,11 +28,14 @@ return new class extends Migration
             $table->foreignId('launcher_user_id')->constrained()->cascadeOnDelete();
             $table->char('access_token_hash', 64)->unique();
             $table->char('refresh_token_hash', 64)->unique();
+            $table->uuid('family_id')->index();
+            $table->foreignId('parent_session_id')->nullable()->constrained('launcher_sessions')->nullOnDelete();
             $table->string('device_name')->nullable();
             $table->boolean('remember')->default(false);
             $table->timestamp('access_expires_at')->index();
             $table->timestamp('expires_at')->index();
             $table->timestamp('revoked_at')->nullable()->index();
+            $table->timestamp('rotated_at')->nullable();
             $table->timestamp('last_used_at')->nullable();
             $table->timestamps();
         });

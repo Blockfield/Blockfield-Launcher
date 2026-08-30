@@ -1,4 +1,5 @@
 use crate::manifest::ModpackManifest;
+use blockfield_shared::{validate_manifest, validate_manifest_redirect, validate_manifest_source};
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
@@ -32,6 +33,7 @@ struct DownloadJob {
     file_index: usize,
     file_count: usize,
     sha256: String,
+    game_dir: PathBuf,
 }
 
 /// Streaming download engine with progress event emission.
@@ -54,6 +56,8 @@ impl From<DownloadError> for String {
 /// Streaming download engine with progress event emission.
 pub struct Downloader {
     client: Client,
+    manifest_client: Client,
+    manifest_policy: blockfield_shared::ManifestPolicy,
     app_handle: AppHandle,
     /// Atomic cancel flag — set from any thread without locking the downloader.
     pub cancel_flag: Arc<AtomicBool>,
@@ -65,13 +69,39 @@ pub struct Downloader {
 
 impl Downloader {
     pub fn new(app_handle: AppHandle) -> Self {
-        Self {
-            client: Client::builder()
+        let manifest_policy = manifest_policy();
+        let redirect_hosts = manifest_policy.trusted_download_hosts.clone();
+        let allow_insecure_localhost = manifest_policy.allow_insecure_localhost;
+        let manifest_redirects = reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= 5 {
+                return attempt.error("too many manifest download redirects");
+            }
+            let Some(initial) = attempt.previous().first() else {
+                return attempt.stop();
+            };
+            match validate_manifest_redirect(
+                attempt.url(),
+                initial,
+                &redirect_hosts,
+                allow_insecure_localhost,
+            ) {
+                Ok(()) => attempt.follow(),
+                Err(error) => attempt.error(error),
+            }
+        });
+        let client_builder = || {
+            Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .read_timeout(std::time::Duration::from_secs(30))
                 .timeout(std::time::Duration::from_secs(30 * 60))
+        };
+        Self {
+            client: client_builder().build().expect("valid HTTP client"),
+            manifest_client: client_builder()
+                .redirect(manifest_redirects)
                 .build()
-                .expect("valid HTTP client"),
+                .expect("valid manifest HTTP client"),
+            manifest_policy,
             app_handle,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             grand_total: AtomicU64::new(0),
@@ -129,9 +159,39 @@ impl Downloader {
 
     /// Fetch the remote modpack manifest.
     pub async fn fetch_manifest(&self, url: &str) -> Result<ModpackManifest, DownloadError> {
+        validate_manifest_source(url, self.manifest_policy.allow_insecure_localhost)
+            .map_err(DownloadError::Other)?;
         log::info!("Fetching manifest from {url}");
-        let response = self.client.get(url).send().await?.error_for_status()?;
-        let manifest: ModpackManifest = response.json().await?;
+        let response = self
+            .manifest_client
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?;
+        let max_bytes = self.manifest_policy.limits.max_manifest_bytes;
+        if response
+            .content_length()
+            .is_some_and(|length| length > max_bytes as u64)
+        {
+            return Err(DownloadError::Other(
+                "Manifest exceeds the configured size limit".to_string(),
+            ));
+        }
+        let mut bytes = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            if bytes.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(DownloadError::Other(
+                    "Manifest exceeds the configured size limit".to_string(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let manifest: ModpackManifest = serde_json::from_slice(&bytes)
+            .map_err(|error| DownloadError::Other(format!("Invalid manifest JSON: {error}")))?;
+        validate_manifest(&manifest, url, bytes.len(), &self.manifest_policy)
+            .map_err(DownloadError::Other)?;
         log::info!(
             "Manifest fetched: version={}, {} files, {} bytes total",
             manifest.version,
@@ -163,7 +223,7 @@ impl Downloader {
                 return Err(DownloadError::Other("Download cancelled".to_string()));
             }
 
-            let dest = game_dir.join(&entry.path);
+            let dest = prepare_manifest_target(&game_dir, &entry.path)?;
 
             // Check existing file on disk regardless of installed manifest.
             // Handles reinstalls, manifest loss, and partial downloads.
@@ -196,6 +256,7 @@ impl Downloader {
                 file_index: 0,
                 file_count: 0,
                 sha256: entry.sha256.clone(),
+                game_dir: game_dir.clone(),
             });
             new_installed.insert(entry.path.clone(), entry.sha256.clone());
         }
@@ -240,7 +301,9 @@ impl Downloader {
             .map(|job| async move {
                 let mut downloaded = 0;
                 let partial = partial_path(&job.dest);
-                self.download_one(
+                reject_symlink(&partial)?;
+                self.download_one_with_client(
+                    &self.manifest_client,
                     &job.url,
                     &partial,
                     &job.file_path,
@@ -252,6 +315,7 @@ impl Downloader {
                 )
                 .await?;
 
+                reject_symlink(&partial)?;
                 let actual_hash = Self::sha256_file(&partial)?;
                 if actual_hash != job.sha256 {
                     let _ = std::fs::remove_file(&partial);
@@ -267,6 +331,7 @@ impl Downloader {
                         job.file_path
                     )));
                 }
+                prepare_manifest_target(&job.game_dir, &job.file_path)?;
                 activate_partial(&partial, &job.dest)?;
 
                 Ok(downloaded)
@@ -294,6 +359,59 @@ impl Downloader {
     #[allow(clippy::too_many_arguments)]
     pub async fn download_one(
         &self,
+        url: &str,
+        dest: &Path,
+        file_path: &str,
+        file_size: u64,
+        file_index: usize,
+        file_count: usize,
+        _total_downloaded: &mut u64,
+        _total_bytes_all: u64,
+    ) -> Result<(), DownloadError> {
+        self.download_one_with_client(
+            &self.client,
+            url,
+            dest,
+            file_path,
+            file_size,
+            file_index,
+            file_count,
+            _total_downloaded,
+            _total_bytes_all,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn download_manifest_artifact(
+        &self,
+        url: &str,
+        dest: &Path,
+        file_path: &str,
+        file_size: u64,
+        file_index: usize,
+        file_count: usize,
+        total_downloaded: &mut u64,
+        total_bytes_all: u64,
+    ) -> Result<(), DownloadError> {
+        self.download_one_with_client(
+            &self.manifest_client,
+            url,
+            dest,
+            file_path,
+            file_size,
+            file_index,
+            file_count,
+            total_downloaded,
+            total_bytes_all,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn download_one_with_client(
+        &self,
+        client: &Client,
         url: &str,
         dest: &Path,
         file_path: &str,
@@ -335,7 +453,7 @@ impl Downloader {
             }
 
             let resume_from = file_bytes;
-            let mut request = self.client.get(url);
+            let mut request = client.get(url);
             if resume_from > 0 {
                 request = request.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
             }
@@ -512,6 +630,119 @@ pub(crate) fn partial_path(path: &Path) -> PathBuf {
     PathBuf::from(value)
 }
 
+fn manifest_policy() -> blockfield_shared::ManifestPolicy {
+    fn value(runtime: &str, compiled: Option<&str>) -> Option<String> {
+        std::env::var(runtime)
+            .ok()
+            .or_else(|| compiled.map(str::to_string))
+            .filter(|value| !value.trim().is_empty())
+    }
+    fn usize_limit(runtime: &str, compiled: Option<&str>, default: usize) -> usize {
+        value(runtime, compiled)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    }
+    fn u64_limit(runtime: &str, compiled: Option<&str>, default: u64) -> u64 {
+        value(runtime, compiled)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    }
+
+    let mut limits = blockfield_shared::ManifestLimits::default();
+    limits.max_manifest_bytes = usize_limit(
+        "BLOCKFIELD_MAX_MANIFEST_BYTES",
+        option_env!("BLOCKFIELD_MAX_MANIFEST_BYTES"),
+        limits.max_manifest_bytes,
+    );
+    limits.max_files = usize_limit(
+        "BLOCKFIELD_MAX_MANIFEST_FILES",
+        option_env!("BLOCKFIELD_MAX_MANIFEST_FILES"),
+        limits.max_files,
+    );
+    limits.max_file_bytes = u64_limit(
+        "BLOCKFIELD_MAX_MANIFEST_FILE_BYTES",
+        option_env!("BLOCKFIELD_MAX_MANIFEST_FILE_BYTES"),
+        limits.max_file_bytes,
+    );
+    limits.max_payload_bytes = u64_limit(
+        "BLOCKFIELD_MAX_MANIFEST_PAYLOAD_BYTES",
+        option_env!("BLOCKFIELD_MAX_MANIFEST_PAYLOAD_BYTES"),
+        limits.max_payload_bytes,
+    );
+
+    blockfield_shared::ManifestPolicy {
+        limits,
+        trusted_download_hosts: value(
+            "BLOCKFIELD_TRUSTED_DOWNLOAD_HOSTS",
+            option_env!("BLOCKFIELD_TRUSTED_DOWNLOAD_HOSTS"),
+        )
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .map(str::to_string)
+        .collect(),
+        allow_insecure_localhost: cfg!(debug_assertions),
+    }
+}
+
+fn prepare_manifest_target(game_dir: &Path, value: &str) -> Result<PathBuf, DownloadError> {
+    let relative = blockfield_shared::safe_manifest_path(value).map_err(DownloadError::Other)?;
+    let root = std::fs::canonicalize(game_dir)?;
+    let mut parent = root.clone();
+    if let Some(components) = relative.parent() {
+        for component in components.components() {
+            parent.push(component);
+            match std::fs::symlink_metadata(&parent) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(DownloadError::Other(format!(
+                        "Symlinked manifest parent rejected: {}",
+                        parent.display()
+                    )));
+                }
+                Ok(metadata) if !metadata.is_dir() => {
+                    return Err(DownloadError::Other(format!(
+                        "Manifest parent is not a directory: {}",
+                        parent.display()
+                    )));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    std::fs::create_dir(&parent)?;
+                }
+                Err(error) => return Err(error.into()),
+            }
+            if !std::fs::canonicalize(&parent)?.starts_with(&root) {
+                return Err(DownloadError::Other(
+                    "Manifest target escapes the game directory".to_string(),
+                ));
+            }
+        }
+    }
+
+    let destination = root.join(relative);
+    if std::fs::symlink_metadata(&destination)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(DownloadError::Other(format!(
+            "Symlinked manifest target rejected: {}",
+            destination.display()
+        )));
+    }
+    Ok(destination)
+}
+
+fn reject_symlink(path: &Path) -> Result<(), DownloadError> {
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        Err(DownloadError::Other(format!(
+            "Symlinked download target rejected: {}",
+            path.display()
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) fn activate_partial(partial: &Path, destination: &Path) -> Result<(), std::io::Error> {
     if !destination.exists() {
         return std::fs::rename(partial, destination);
@@ -543,7 +774,40 @@ impl std::io::Write for HashWriter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::DownloadProgressPayload;
+    use super::*;
+
+    #[test]
+    fn manifest_target_stays_under_root_and_rejects_symlinked_parents() {
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-manifest-target-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let outside = root.with_extension("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+
+        assert_eq!(
+            prepare_manifest_target(&root, "mods/core.jar").unwrap(),
+            std::fs::canonicalize(&root).unwrap().join("mods/core.jar")
+        );
+        assert!(prepare_manifest_target(&root, "../outside").is_err());
+
+        let link = root.join("linked");
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&outside, &link).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_dir(&outside, &link).is_ok();
+        if linked {
+            assert!(prepare_manifest_target(&root, "linked/escape.jar").is_err());
+        }
+
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(&outside).unwrap();
+    }
 
     #[test]
     fn progress_payload_matches_frontend_keys() {

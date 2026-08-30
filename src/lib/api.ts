@@ -1,4 +1,5 @@
 /** Required Java runtime info. */
+import { apiBaseUrl } from './api-base'
 export interface JavaInfo {
   version: string
   platform: string
@@ -57,9 +58,7 @@ export interface ServerStatus {
 }
 
 export async function fetchServerStatus(): Promise<ServerStatus> {
-  const api = (
-    import.meta.env.VITE_BLOCKFIELD_API_URL ?? 'http://localhost:3000/api/launcher/v1'
-  ).replace(/\/$/, '')
+  const api = apiBaseUrl()
   const started = performance.now()
   const response = await fetch(`${api}/server-status`)
   if (!response.ok) throw new Error(`Server status failed: ${response.status}`)

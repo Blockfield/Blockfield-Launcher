@@ -34,13 +34,7 @@ class ModpackReleaseResource extends Resource
             Forms\Components\TextInput::make('minecraft_version')->default('1.20.1')->required()->maxLength(64),
             Forms\Components\FileUpload::make('modpack_zip')->label('Modpack ZIP')
                 ->directory('modpacks')->acceptedFileTypes(['application/zip', 'application/x-zip-compressed', 'application/x-zip'])
-                ->maxSize(2_000_000)->requiredWithout('zip_url')->prohibits('zip_url'),
-            Forms\Components\TextInput::make('zip_url')->label('External ZIP URL')->url()
-                ->requiredWithout('modpack_zip')->prohibits('modpack_zip')->maxLength(2048),
-            Forms\Components\TextInput::make('archive_size')->label('External ZIP size in bytes')->numeric()->minValue(1)
-                ->helperText('Required for an external URL; uploaded files are measured automatically.'),
-            Forms\Components\TextInput::make('archive_sha256')->label('External ZIP SHA-256')->length(64)
-                ->helperText('Required for an external URL; uploaded files are hashed automatically.'),
+                ->maxSize(2_000_000)->required(),
             Forms\Components\TagsInput::make('prune')->placeholder('config/old/*')->helperText('Relative paths only; only a trailing /* wildcard is supported.')->columnSpanFull(),
             Forms\Components\TextInput::make('java.version')->label('Java version')->required(),
             Forms\Components\TextInput::make('java.platform')->label('Java platform')->required(),
@@ -159,9 +153,7 @@ class ModpackReleaseResource extends Resource
 
     private static function recordError(ModpackRelease $record): ?string
     {
-        if ((bool) $record->modpack_zip === (bool) $record->zip_url) return 'Choose exactly one ZIP source.';
-        if ($record->zip_url && (! $record->archive_size || strlen((string) $record->archive_sha256) !== 64
-            || ! ctype_xdigit((string) $record->archive_sha256))) return 'External ZIP requires its exact size and SHA-256.';
+        if (! $record->modpack_zip) return 'Upload a modpack ZIP.';
         if (! preg_match('/^\d+(\.\d+)+$/', $record->version)) return 'Version must be numeric and dot-separated.';
         $java = $record->java ?? [];
         if (! isset($java['version'], $java['platform'], $java['url'], $java['sha256'], $java['size'])) return 'Complete the Java runtime fields.';

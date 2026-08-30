@@ -103,8 +103,7 @@ class CmsApiController extends Controller
             'modpack_releases' => $request->validate([
                 'version' => ['required', 'regex:/^\d+(\.\d+)+$/', 'max:64'],
                 'minecraft_version' => ['required', 'string', 'max:64'],
-                'modpack_zip' => ['nullable', 'string', 'required_without:zip_url', 'prohibits:zip_url'],
-                'zip_url' => ['nullable', 'url:http,https', 'required_without:modpack_zip', 'prohibits:modpack_zip'],
+                'modpack_zip' => ['required', 'string'],
                 'prune' => ['nullable', 'array'],
                 'prune.*' => ['string', 'max:512', function (string $attribute, mixed $value, \Closure $fail): void {
                     $path = str_ends_with((string) $value, '/*') ? substr((string) $value, 0, -2) : (string) $value;
@@ -125,8 +124,6 @@ class CmsApiController extends Controller
                 'forge.url' => ['required_with:forge', 'url:https', 'max:2048'],
                 'forge.sha256' => ['required_with:forge', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/i'],
                 'forge.size' => ['required_with:forge', 'integer', 'min:1'],
-                'archive_size' => ['required_with:zip_url', 'nullable', 'integer', 'min:1'],
-                'archive_sha256' => ['required_with:zip_url', 'nullable', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/i'],
                 'status' => ['nullable', 'in:draft,ready'],
             ]),
             'launcher_content' => $request->validate([

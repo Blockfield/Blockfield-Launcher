@@ -19,8 +19,10 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
     "version:check": "node scripts/check-version.mjs",
+    "config:check": "node scripts/validate-production-config.mjs",
+    "config:test": "node --test scripts/validate-production-config.test.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run src",
     "test:watch": "vitest"
   },
   "dependencies": {

@@ -10,7 +10,6 @@ class ModpackRelease extends Model
         'version',
         'minecraft_version',
         'modpack_zip',
-        'zip_url',
         'prune',
         'java',
         'forge',
@@ -21,6 +20,8 @@ class ModpackRelease extends Model
         'publish_error',
         'published_at',
     ];
+
+    protected $hidden = ['zip_url'];
 
     protected function casts(): array
     {

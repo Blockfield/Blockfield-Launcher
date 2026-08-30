@@ -36,6 +36,7 @@ tokio = { version = "1", features = ["sync", "time", "macros"] }
 futures-util = "0.3"
 dotenvy = "0.15"
 blockfield-shared = { path = "../shared" }
+fs2 = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }

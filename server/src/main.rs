@@ -179,7 +179,6 @@ struct ReleaseMetadata {
 #[derive(Clone)]
 enum ReleaseSource {
     CmsAsset(String),
-    Url(String),
 }
 
 #[derive(Deserialize)]
@@ -234,8 +233,6 @@ struct CmsRelease {
     build_file: Option<CmsFileField>,
     zip_file: Option<CmsFileField>,
     file: Option<CmsFileField>,
-    zip_url: Option<String>,
-    build_url: Option<String>,
     archive_size: Option<u64>,
     archive_sha256: Option<String>,
 }
@@ -265,9 +262,7 @@ impl CmsRelease {
             .or(self.build_file)
             .or(self.zip_file)
             .or(self.file);
-        let source = file
-            .map(|file| ReleaseSource::CmsAsset(file.id().to_string()))
-            .or_else(|| self.zip_url.or(self.build_url).map(ReleaseSource::Url));
+        let source = file.map(|file| ReleaseSource::CmsAsset(file.id().to_string()));
 
         ReleaseMetadata {
             version: self
@@ -295,9 +290,21 @@ async fn regenerate_from(
     let release = fetch_release(config, client, release_id).await?;
     validate_release(&release)?;
     let staging = staging_dir(config, &release.version);
-    prepare_payload(config, client, &release, &staging).await?;
-    let manifest = build_manifest(config, &release, &staging)?;
-    persist_manifest(&staging, &manifest)?;
+    if let Err(error) = prepare_payload(config, client, &release, &staging).await {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    let manifest = match build_manifest(config, &release, &staging) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+    };
+    if let Err(error) = persist_manifest(&staging, &manifest) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(error);
+    }
     activate_payload(&staging, &config.extracted_dir)?;
     cleanup_release_storage(config);
     Ok(CachedManifest { manifest })
@@ -422,19 +429,6 @@ async fn prepare_payload(
             .await?;
             extract_zip_archive(&zip_path, staging)
         }
-        Some(ReleaseSource::Url(url)) => {
-            let zip_path = cms_cache_path(config, &release.version);
-            download_file(
-                client,
-                url,
-                None,
-                &zip_path,
-                release.archive_size,
-                release.archive_sha256.as_deref(),
-            )
-            .await?;
-            extract_zip_archive(&zip_path, staging)
-        }
         None => extract_zips(&config.files_dir, staging),
     }
 }
@@ -460,12 +454,6 @@ fn validate_release(release: &ReleaseMetadata) -> Result<(), String> {
     {
         return Err("Release archive requires a size and valid SHA-256".to_string());
     }
-    if let Some(ReleaseSource::Url(url)) = &release.source {
-        if !url.starts_with("https://") && !url.starts_with("http://") {
-            return Err("Release URL must use HTTP or HTTPS".to_string());
-        }
-    }
-
     let java = release
         .java
         .as_ref()
@@ -745,10 +733,72 @@ fn reset_dir(dir: &Path) -> Result<(), String> {
 }
 
 fn extract_zip_archive(zip_path: &Path, extracted_dir: &Path) -> Result<(), String> {
+    extract_zip_archive_with_limits(zip_path, extracted_dir, &archive_limits())
+}
+
+fn extract_zip_archive_with_limits(
+    zip_path: &Path,
+    extracted_dir: &Path,
+    limits: &blockfield_shared::ArchiveLimits,
+) -> Result<(), String> {
+    let compressed_bytes = std::fs::metadata(zip_path)
+        .map_err(|e| format!("Failed to inspect zip {}: {e}", zip_path.display()))?
+        .len();
+    if compressed_bytes == 0 || compressed_bytes > limits.max_compressed_bytes {
+        return Err("ZIP is empty or exceeds the compressed-size limit".to_string());
+    }
     let file = std::fs::File::open(zip_path)
         .map_err(|e| format!("Failed to open zip {}: {e}", zip_path.display()))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip: {e}"))?;
 
+    if archive.len() > limits.max_entries {
+        return Err("ZIP contains too many entries".to_string());
+    }
+    let mut declared_total = 0u64;
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|e| format!("Zip entry {index} error: {e}"))?;
+        if entry.encrypted()
+            || !matches!(
+                entry.compression(),
+                zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated
+            )
+        {
+            return Err(format!("Unsupported ZIP entry: {}", entry.name()));
+        }
+        if entry.name().split('/').count() > limits.max_path_depth {
+            return Err(format!("ZIP path is too deep: {}", entry.name()));
+        }
+        if entry.size() > limits.max_entry_bytes {
+            return Err(format!("ZIP entry is too large: {}", entry.name()));
+        }
+        if entry.size() > 0
+            && (entry.compressed_size() == 0
+                || entry.size()
+                    > entry
+                        .compressed_size()
+                        .saturating_mul(limits.max_compression_ratio))
+        {
+            return Err(format!(
+                "Suspicious ZIP compression ratio: {}",
+                entry.name()
+            ));
+        }
+        declared_total = declared_total
+            .checked_add(entry.size())
+            .filter(|total| *total <= limits.max_uncompressed_bytes)
+            .ok_or_else(|| "ZIP exceeds the uncompressed-size limit".to_string())?;
+    }
+    let required_space = declared_total.saturating_add(limits.min_free_space_bytes);
+    if fs2::available_space(extracted_dir)
+        .map_err(|e| format!("Failed to inspect free space: {e}"))?
+        < required_space
+    {
+        return Err("Not enough free space to extract the ZIP safely".to_string());
+    }
+
+    let mut actual_total = 0u64;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
@@ -775,11 +825,48 @@ fn extract_zip_archive(zip_path: &Path, extracted_dir: &Path) -> Result<(), Stri
 
         let mut out = std::fs::File::create(&dest)
             .map_err(|e| format!("Failed to create {}: {e}", dest.display()))?;
-        std::io::copy(&mut entry, &mut out)
+        let expected = entry.size();
+        let copied = std::io::copy(&mut entry, &mut out)
             .map_err(|e| format!("Failed to extract {}: {e}", dest.display()))?;
+        actual_total = actual_total
+            .checked_add(copied)
+            .filter(|total| *total <= declared_total)
+            .ok_or_else(|| "ZIP produced more data than declared".to_string())?;
+        if copied != expected {
+            return Err(format!("ZIP entry size mismatch: {}", entry.name()));
+        }
     }
 
     Ok(())
+}
+
+fn archive_limits() -> blockfield_shared::ArchiveLimits {
+    fn limit(name: &str, default: u64) -> u64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    }
+
+    let mut limits = blockfield_shared::ArchiveLimits::default();
+    limits.max_compressed_bytes =
+        limit("BLOCKFIELD_MAX_ARCHIVE_BYTES", limits.max_compressed_bytes);
+    limits.max_uncompressed_bytes = limit(
+        "BLOCKFIELD_MAX_EXTRACTED_BYTES",
+        limits.max_uncompressed_bytes,
+    );
+    limits.max_entry_bytes = limit("BLOCKFIELD_MAX_ARCHIVE_ENTRY_BYTES", limits.max_entry_bytes);
+    limits.max_entries =
+        limit("BLOCKFIELD_MAX_ARCHIVE_ENTRIES", limits.max_entries as u64) as usize;
+    limits.max_compression_ratio =
+        limit("BLOCKFIELD_MAX_ARCHIVE_RATIO", limits.max_compression_ratio);
+    limits.max_path_depth =
+        limit("BLOCKFIELD_MAX_ARCHIVE_DEPTH", limits.max_path_depth as u64) as usize;
+    limits.min_free_space_bytes = limit(
+        "BLOCKFIELD_MIN_FREE_SPACE_BYTES",
+        limits.min_free_space_bytes,
+    );
+    limits
 }
 
 fn safe_zip_entry_path(name: &str) -> Result<PathBuf, String> {
@@ -2140,8 +2227,6 @@ mod tests {
             build_file: None,
             zip_file: None,
             file: None,
-            zip_url: None,
-            build_url: None,
             archive_size: None,
             archive_sha256: None,
         }
@@ -2232,6 +2317,52 @@ mod tests {
         std::fs::create_dir_all(&empty).unwrap();
         let config = test_config();
         assert!(build_manifest(&config, &fallback_release(&config), &empty).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn modpack_archive_limits_reject_resource_exhaustion() {
+        use std::io::Write;
+
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-zip-limits-{}-{}",
+            std::process::id(),
+            REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let extracted = root.join("extracted");
+        std::fs::create_dir_all(&extracted).unwrap();
+        let archive_path = root.join("bomb.zip");
+        let file = std::fs::File::create(&archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file(
+                "mods/large.jar",
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Deflated),
+            )
+            .unwrap();
+        writer.write_all(&[0; 16_384]).unwrap();
+        writer.finish().unwrap();
+
+        let mut limits = blockfield_shared::ArchiveLimits {
+            min_free_space_bytes: 0,
+            max_compression_ratio: 2,
+            ..Default::default()
+        };
+        assert!(extract_zip_archive_with_limits(&archive_path, &extracted, &limits).is_err());
+        assert!(!extracted.join("mods/large.jar").exists());
+
+        limits.max_compression_ratio = 10_000;
+        limits.max_entries = 1;
+        limits.max_entry_bytes = 16_384;
+        limits.max_uncompressed_bytes = 16_384;
+        assert!(extract_zip_archive_with_limits(&archive_path, &extracted, &limits).is_ok());
+        assert_eq!(
+            std::fs::metadata(extracted.join("mods/large.jar"))
+                .unwrap()
+                .len(),
+            16_384
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

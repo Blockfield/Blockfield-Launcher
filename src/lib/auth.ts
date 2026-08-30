@@ -15,9 +15,7 @@ export interface AuthSession {
 }
 
 const KEY = 'blockfield.auth'
-const API = (
-  import.meta.env.VITE_BLOCKFIELD_API_URL ?? 'http://localhost:3000/api/launcher/v1'
-).replace(/\/$/, '')
+const API = apiBaseUrl()
 
 export async function login(username: string, password: string, remember: boolean) {
   const response = await fetch(`${API}/auth/login`, {
@@ -118,3 +116,4 @@ async function isValid(accessToken: string) {
   }).catch(() => null)
   return response?.ok === true
 }
+import { apiBaseUrl } from './api-base'

@@ -1,0 +1,12 @@
+{
+  "app": {
+    "security": {
+      "csp": "default-src 'self' customprotocol: asset:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; connect-src 'self' ipc: http://ipc.localhost https://play.blockfield.gg; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://play.blockfield.gg/api/launcher/v1/update.json"]
+    }
+  }
+}

@@ -208,7 +208,7 @@ pub fn save_settings(
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
 ) -> Result<VersionCheckResult, String> {
-    let api_base = crate::commands::api_base_url();
+    let api_base = crate::commands::api_base_url()?;
     let manifest_url = format!("{api_base}/manifest.json");
     log::info!("[check_modpack_version] Fetching: {manifest_url}");
 
@@ -389,7 +389,7 @@ pub async fn download_modpack(
             let mut java_downloaded = 0;
             state
                 .downloader
-                .download_one(
+                .download_manifest_artifact(
                     &java.url,
                     &archive_path,
                     "java-runtime",
@@ -456,7 +456,7 @@ pub async fn download_modpack(
             let mut forge_downloaded = 0;
             state
                 .downloader
-                .download_one(
+                .download_manifest_artifact(
                     &forge.url,
                     &installer_partial,
                     "forge-installer",
@@ -819,15 +819,17 @@ pub async fn launch_game(
 // ── Helpers ────────────────────────────────────────────────────
 
 /// Base URL for the launcher API.
-fn api_base_url() -> String {
-    // Runtime first (dotenvy for local dev), then compile-time (CI build),
-    // then hardcoded fallback.
+fn api_base_url() -> Result<String, String> {
     let url = std::env::var("VITE_BLOCKFIELD_API_URL")
         .ok()
         .or_else(|| option_env!("VITE_BLOCKFIELD_API_URL").map(String::from))
-        .unwrap_or_else(|| "http://localhost:3000/api/launcher/v1".to_string());
+        .or_else(|| {
+            cfg!(debug_assertions).then(|| "http://localhost:3000/api/launcher/v1".to_string())
+        })
+        .ok_or_else(|| "VITE_BLOCKFIELD_API_URL is required in release builds".to_string())?;
+    blockfield_shared::validate_manifest_source(&url, cfg!(debug_assertions))?;
     log::info!("[api_base_url] VITE_BLOCKFIELD_API_URL={url}");
-    url
+    Ok(url.trim_end_matches('/').to_string())
 }
 
 async fn verify_game_identity(identity: &GameIdentity) -> Result<(), String> {
@@ -842,7 +844,7 @@ async fn verify_game_identity(identity: &GameIdentity) -> Result<(), String> {
     }
 
     let response = reqwest::Client::new()
-        .get(format!("{}/auth/me", api_base_url()))
+        .get(format!("{}/auth/me", api_base_url()?))
         .bearer_auth(&identity.access_token)
         .timeout(std::time::Duration::from_secs(10))
         .send()
@@ -961,11 +963,69 @@ fn remove_path(path: &Path) -> Result<(), String> {
 
 /// Extract a ZIP archive to a target directory.
 fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
+    extract_archive_with_limits(archive_path, dest_dir, &archive_limits())
+}
+
+fn extract_archive_with_limits(
+    archive_path: &Path,
+    dest_dir: &Path,
+    limits: &blockfield_shared::ArchiveLimits,
+) -> Result<(), String> {
+    let compressed_bytes = std::fs::metadata(archive_path)
+        .map_err(|e| format!("Failed to inspect archive: {e}"))?
+        .len();
+    if compressed_bytes == 0 || compressed_bytes > limits.max_compressed_bytes {
+        return Err("Java archive is empty or exceeds the compressed-size limit".to_string());
+    }
     let file =
         std::fs::File::open(archive_path).map_err(|e| format!("Failed to open archive: {e}"))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("Failed to read archive: {e}"))?;
 
+    if archive.len() > limits.max_entries {
+        return Err("Java archive contains too many entries".to_string());
+    }
+    let mut declared_total = 0u64;
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|e| format!("Archive entry {index} error: {e}"))?;
+        if entry.encrypted()
+            || !matches!(
+                entry.compression(),
+                zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated
+            )
+        {
+            return Err(format!("Unsupported archive entry: {}", entry.name()));
+        }
+        if entry.name().split('/').count() > limits.max_path_depth {
+            return Err(format!("Archive path is too deep: {}", entry.name()));
+        }
+        if entry.size() > limits.max_entry_bytes {
+            return Err(format!("Archive entry is too large: {}", entry.name()));
+        }
+        if entry.size() > 0
+            && (entry.compressed_size() == 0
+                || entry.size()
+                    > entry
+                        .compressed_size()
+                        .saturating_mul(limits.max_compression_ratio))
+        {
+            return Err(format!("Suspicious compression ratio: {}", entry.name()));
+        }
+        declared_total = declared_total
+            .checked_add(entry.size())
+            .filter(|total| *total <= limits.max_uncompressed_bytes)
+            .ok_or_else(|| "Java archive exceeds the uncompressed-size limit".to_string())?;
+    }
+    let required_space = declared_total.saturating_add(limits.min_free_space_bytes);
+    if fs2::available_space(dest_dir).map_err(|e| format!("Failed to inspect free space: {e}"))?
+        < required_space
+    {
+        return Err("Not enough free space to extract the Java archive safely".to_string());
+    }
+
+    let mut actual_total = 0u64;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
@@ -1004,8 +1064,16 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
 
         let mut out = std::fs::File::create(&dest)
             .map_err(|e| format!("Failed to create {}: {e}", dest.display()))?;
-        std::io::copy(&mut entry, &mut out)
+        let expected = entry.size();
+        let copied = std::io::copy(&mut entry, &mut out)
             .map_err(|e| format!("Failed to extract {}: {e}", name))?;
+        actual_total = actual_total
+            .checked_add(copied)
+            .filter(|total| *total <= declared_total)
+            .ok_or_else(|| "Java archive produced more data than declared".to_string())?;
+        if copied != expected {
+            return Err(format!("Archive entry size mismatch: {name}"));
+        }
     }
 
     log::info!(
@@ -1014,6 +1082,54 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
         dest_dir.display()
     );
     Ok(())
+}
+
+fn archive_limits() -> blockfield_shared::ArchiveLimits {
+    fn limit(name: &str, compiled: Option<&str>, default: u64) -> u64 {
+        std::env::var(name)
+            .ok()
+            .or_else(|| compiled.map(str::to_string))
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    }
+
+    let mut limits = blockfield_shared::ArchiveLimits::default();
+    limits.max_compressed_bytes = limit(
+        "BLOCKFIELD_MAX_ARCHIVE_BYTES",
+        option_env!("BLOCKFIELD_MAX_ARCHIVE_BYTES"),
+        limits.max_compressed_bytes,
+    );
+    limits.max_uncompressed_bytes = limit(
+        "BLOCKFIELD_MAX_EXTRACTED_BYTES",
+        option_env!("BLOCKFIELD_MAX_EXTRACTED_BYTES"),
+        limits.max_uncompressed_bytes,
+    );
+    limits.max_entry_bytes = limit(
+        "BLOCKFIELD_MAX_ARCHIVE_ENTRY_BYTES",
+        option_env!("BLOCKFIELD_MAX_ARCHIVE_ENTRY_BYTES"),
+        limits.max_entry_bytes,
+    );
+    limits.max_entries = limit(
+        "BLOCKFIELD_MAX_ARCHIVE_ENTRIES",
+        option_env!("BLOCKFIELD_MAX_ARCHIVE_ENTRIES"),
+        limits.max_entries as u64,
+    ) as usize;
+    limits.max_compression_ratio = limit(
+        "BLOCKFIELD_MAX_ARCHIVE_RATIO",
+        option_env!("BLOCKFIELD_MAX_ARCHIVE_RATIO"),
+        limits.max_compression_ratio,
+    );
+    limits.max_path_depth = limit(
+        "BLOCKFIELD_MAX_ARCHIVE_DEPTH",
+        option_env!("BLOCKFIELD_MAX_ARCHIVE_DEPTH"),
+        limits.max_path_depth as u64,
+    ) as usize;
+    limits.min_free_space_bytes = limit(
+        "BLOCKFIELD_MIN_FREE_SPACE_BYTES",
+        option_env!("BLOCKFIELD_MIN_FREE_SPACE_BYTES"),
+        limits.min_free_space_bytes,
+    );
+    limits
 }
 
 #[cfg(test)]
@@ -1030,6 +1146,20 @@ mod tests {
                 .unwrap();
             writer.write_all(contents).unwrap();
         }
+        writer.finish().unwrap();
+    }
+
+    fn write_deflated_zip(path: &Path, name: &str, contents: &[u8]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file(
+                name,
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Deflated),
+            )
+            .unwrap();
+        writer.write_all(contents).unwrap();
         writer.finish().unwrap();
     }
 
@@ -1174,6 +1304,53 @@ mod tests {
         );
         assert!(!root.join(".java-backup").exists());
 
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn java_archive_limits_reject_resource_exhaustion() {
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-java-limits-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let dest = root.join("out");
+        std::fs::create_dir_all(&dest).unwrap();
+        let archive = root.join("test.zip");
+        write_zip(&archive, &[("jdk/a", b"aa"), ("jdk/b", b"b")]);
+
+        let mut limits = blockfield_shared::ArchiveLimits {
+            min_free_space_bytes: 0,
+            max_entries: 1,
+            ..Default::default()
+        };
+        assert!(extract_archive_with_limits(&archive, &dest, &limits).is_err());
+        limits.max_entries = 2;
+        limits.max_entry_bytes = 1;
+        assert!(extract_archive_with_limits(&archive, &dest, &limits).is_err());
+        limits.max_entry_bytes = 2;
+        limits.max_uncompressed_bytes = 2;
+        assert!(extract_archive_with_limits(&archive, &dest, &limits).is_err());
+        limits.max_uncompressed_bytes = 3;
+        limits.min_free_space_bytes = u64::MAX;
+        assert!(extract_archive_with_limits(&archive, &dest, &limits).is_err());
+
+        let bomb = root.join("bomb.zip");
+        write_deflated_zip(&bomb, "jdk/bin/java.exe", &[0; 16_384]);
+        limits = blockfield_shared::ArchiveLimits::default();
+        limits.min_free_space_bytes = 0;
+        limits.max_compression_ratio = 2;
+        assert!(extract_archive_with_limits(&bomb, &dest, &limits).is_err());
+
+        limits.max_compression_ratio = 10_000;
+        assert!(extract_archive_with_limits(&bomb, &dest, &limits).is_ok());
+        assert_eq!(
+            std::fs::metadata(dest.join("bin/java.exe")).unwrap().len(),
+            16_384
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

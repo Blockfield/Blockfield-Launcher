@@ -74,18 +74,33 @@ class LauncherAuthController extends Controller
     public function refresh(Request $request): JsonResponse
     {
         $data = $request->validate(['refreshToken' => ['required', 'string', 'max:255']]);
-        $session = LauncherSession::with('user')
-            ->where('refresh_token_hash', hash('sha256', $data['refreshToken']))
-            ->whereNull('revoked_at')
-            ->where('expires_at', '>', now())
-            ->first();
-        if (! $session || ! $session->user->canAuthenticate()) {
-            return response()->json(['message' => 'Session expired.'], 401);
-        }
+        $hash = hash('sha256', $data['refreshToken']);
 
-        return DB::transaction(function () use ($session): JsonResponse {
-            $session->update(['revoked_at' => now()]);
-            return response()->json($this->issueSession($session->user, $session->remember, $session->device_name));
+        return DB::transaction(function () use ($hash): JsonResponse {
+            $session = LauncherSession::with('user')
+                ->where('refresh_token_hash', $hash)
+                ->lockForUpdate()
+                ->first();
+            if (! $session) {
+                return response()->json(['message' => 'Session expired.'], 401);
+            }
+            if ($session->rotated_at) {
+                LauncherSession::where('family_id', $session->family_id)
+                    ->whereNull('revoked_at')->update(['revoked_at' => now()]);
+                return response()->json(['message' => 'Session expired.'], 401);
+            }
+            if ($session->revoked_at || $session->expires_at->isPast() || ! $session->user->canAuthenticate()) {
+                return response()->json(['message' => 'Session expired.'], 401);
+            }
+
+            $session->update(['revoked_at' => now(), 'rotated_at' => now()]);
+            return response()->json($this->issueSession(
+                $session->user,
+                $session->remember,
+                $session->device_name,
+                $session->family_id,
+                $session->id,
+            ));
         });
     }
 
@@ -112,7 +127,13 @@ class LauncherAuthController extends Controller
         return $session;
     }
 
-    private function issueSession(LauncherUser $user, bool $remember, ?string $deviceName): array
+    private function issueSession(
+        LauncherUser $user,
+        bool $remember,
+        ?string $deviceName,
+        ?string $familyId = null,
+        ?int $parentSessionId = null,
+    ): array
     {
         $access = $this->signedAccessToken($user);
         $refresh = Str::random(64);
@@ -120,6 +141,8 @@ class LauncherAuthController extends Controller
             'launcher_user_id' => $user->id,
             'access_token_hash' => hash('sha256', $access),
             'refresh_token_hash' => hash('sha256', $refresh),
+            'family_id' => $familyId ?? (string) Str::uuid(),
+            'parent_session_id' => $parentSessionId,
             'device_name' => $deviceName,
             'remember' => $remember,
             'access_expires_at' => now()->addMinutes(15),

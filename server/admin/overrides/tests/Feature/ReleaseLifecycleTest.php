@@ -48,12 +48,11 @@ test('draft creation never changes the active release', function (): void {
         ->and(ModpackRelease::latest('id')->first()->status)->toBe('draft');
 });
 
-test('release input requires exactly one archive source', function (): void {
+test('release input requires a controlled CMS archive', function (): void {
     $base = ['version' => '1.1.0', 'minecraft_version' => '1.20.1'];
     $this->withHeaders(cmsHeaders())->postJson('/api/items/modpack_releases', $base)
         ->assertUnprocessable();
     $this->withHeaders(cmsHeaders())->postJson('/api/items/modpack_releases', $base + [
-        'modpack_zip' => 'modpacks/new.zip',
         'zip_url' => 'https://example.com/new.zip',
     ])->assertUnprocessable();
 });

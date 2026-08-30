@@ -74,6 +74,9 @@ test('access expiry refresh rotation logout and status revocation are enforced',
     $refreshed = $this->postJson('/api/launcher/v1/auth/refresh', ['refreshToken' => $login['refreshToken']])
         ->assertOk()->json();
     $this->postJson('/api/launcher/v1/auth/refresh', ['refreshToken' => $login['refreshToken']])->assertUnauthorized();
+    expect(LauncherSession::whereNull('revoked_at')->count())->toBe(0)
+        ->and(LauncherSession::distinct()->count('family_id'))->toBe(1)
+        ->and(LauncherSession::whereNotNull('parent_session_id')->count())->toBe(1);
     $this->withToken($refreshed['accessToken'])->postJson('/api/launcher/v1/auth/logout')->assertOk();
     $this->withToken($refreshed['accessToken'])->getJson('/api/launcher/v1/auth/me')->assertUnauthorized();
 
