@@ -6,7 +6,7 @@ import {
   Coffee,
   Globe,
   RefreshCw,
-  LogOut,
+  UserRound,
   Save,
   Minus,
   Plus,
@@ -22,11 +22,18 @@ import { localizedContentText, useLauncherContent } from '../../lib/content'
 /** Detect whether we're running inside Tauri. */
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
-export function SettingsScreen({ onLogout, username }: { onLogout: () => void; username: string }) {
+export function SettingsScreen({
+  username,
+  onUsernameSaved,
+}: {
+  username: string
+  onUsernameSaved: (name: string) => void
+}) {
   const { lang, setLang, t } = useI18n()
   const content = useLauncherContent()
   const [dir, setDir] = useState('')
   const [java, setJava] = useState('')
+  const [name, setName] = useState(username)
   const [ram, setRam] = useState(8)
   const [autoUpdate, setAutoUpdate] = useState(true)
   const [dirty, setDirty] = useState(false)
@@ -53,6 +60,7 @@ export function SettingsScreen({ onLogout, username }: { onLogout: () => void; u
       .then((cfg) => {
         setDir(cfg.gameDir)
         setJava(cfg.javaPath)
+        setName(cfg.username)
         setRam(Math.max(2, Math.round(cfg.ramMb / 1024)))
         setAutoUpdate(cfg.autoUpdate)
       })
@@ -74,8 +82,10 @@ export function SettingsScreen({ onLogout, username }: { onLogout: () => void; u
           ramMb: ram * 1024,
           autoUpdate,
           lang,
+          username: name.trim(),
         } satisfies LauncherConfig,
       })
+      onUsernameSaved(name.trim())
       setDirty(false)
       setSaveMessage(t('settings.saved'))
       setTimeout(() => setSaveMessage(null), 3000)
@@ -85,13 +95,14 @@ export function SettingsScreen({ onLogout, username }: { onLogout: () => void; u
     } finally {
       setSaving(false)
     }
-  }, [dir, java, ram, autoUpdate, lang, t])
+  }, [dir, java, name, ram, autoUpdate, lang, t, onUsernameSaved])
 
   const handleReset = useCallback(() => {
     invoke<LauncherConfig>('load_settings')
       .then((cfg) => {
         setDir(cfg.gameDir)
         setJava(cfg.javaPath)
+        setName(cfg.username)
         setRam(Math.max(2, Math.round(cfg.ramMb / 1024)))
         setAutoUpdate(cfg.autoUpdate)
       })
@@ -141,7 +152,7 @@ export function SettingsScreen({ onLogout, username }: { onLogout: () => void; u
           </span>
           <span className="h-px flex-1 bg-[#18130D]" />
           <span className="shrink-0 text-[10px] tracking-[0.22em] text-[#8E7A5E]">
-            {t('settings.operator', { handle: username })}
+            {t('settings.operator', { handle: name || '—' })}
           </span>
         </div>
 
@@ -154,6 +165,21 @@ export function SettingsScreen({ onLogout, username }: { onLogout: () => void; u
 
         <GlowPanel glow={false} className="mt-5">
           <Group title={t('settings.runtime')} code="ENV-001">
+            <Setting
+              icon={<UserRound size={14} />}
+              label={t('settings.username')}
+              hint={t('settings.usernameHint')}
+            >
+              <input
+                value={name}
+                maxLength={16}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  markDirty()
+                }}
+                className="w-full h-10 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 outline-none focus:border-[#F5A524]/60 transition-colors"
+              />
+            </Setting>
             <Setting
               icon={<Folder size={14} />}
               label={t('settings.gameDir')}
@@ -245,14 +271,7 @@ export function SettingsScreen({ onLogout, username }: { onLogout: () => void; u
           </Group>
 
           <div className="px-6 py-4 flex items-center justify-between border-t border-[#18130D] bg-[#0B0906]">
-            <button
-              type="button"
-              onClick={onLogout}
-              className="h-10 px-5 flex items-center gap-3 border border-[#3a2828] bg-[#1a0e0e] text-[#c98b8b] hover:border-[#7a3838] hover:text-[#e0a3a3] transition-colors"
-            >
-              <LogOut size={13} />
-              <span className="text-[11px] tracking-[0.18em]">{t('settings.logout')}</span>
-            </button>
+            <span />
             <div className="flex items-center gap-3">
               <button
                 type="button"

@@ -25,9 +25,7 @@ pub struct ServerStatus {
 
 pub fn split_host_port(target: &str) -> (String, u16) {
     match target.rsplit_once(':') {
-        Some((host, port)) if !host.is_empty() => {
-            (host.to_string(), port.parse().unwrap_or(25565))
-        }
+        Some((host, port)) if !host.is_empty() => (host.to_string(), port.parse().unwrap_or(25565)),
         _ => (target.to_string(), 25565),
     }
 }
@@ -165,7 +163,10 @@ mod tests {
             assert_eq!(read_varint(&buf, &mut cursor).unwrap(), value);
             assert_eq!(cursor, buf.len());
         }
-        assert_eq!(split_host_port("mc.example:25566"), ("mc.example".into(), 25566));
+        assert_eq!(
+            split_host_port("mc.example:25566"),
+            ("mc.example".into(), 25566)
+        );
         assert_eq!(split_host_port("mc.example"), ("mc.example".into(), 25565));
     }
 }

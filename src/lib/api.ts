@@ -1,5 +1,4 @@
 /** Required Java runtime info. */
-import { apiBaseUrl } from './api-base'
 export interface JavaInfo {
   version: string
   platform: string
@@ -57,12 +56,12 @@ export interface ServerStatus {
   apiLatencyMs: number
 }
 
+/** The Rust side pings the game server directly (Server List Ping); no web API involved. */
 export async function fetchServerStatus(): Promise<ServerStatus> {
-  const api = apiBaseUrl()
+  const { invoke } = await import('@tauri-apps/api/core')
   const started = performance.now()
-  const response = await fetch(`${api}/server-status`)
-  if (!response.ok) throw new Error(`Server status failed: ${response.status}`)
-  return { ...(await response.json()), apiLatencyMs: Math.round(performance.now() - started) }
+  const status = await invoke<Omit<ServerStatus, 'apiLatencyMs'>>('server_status')
+  return { ...status, apiLatencyMs: Math.round(performance.now() - started) }
 }
 
 export interface LauncherContentFeature {
@@ -119,4 +118,5 @@ export interface LauncherConfig {
   ramMb: number
   autoUpdate: boolean
   lang: string
+  username: string
 }

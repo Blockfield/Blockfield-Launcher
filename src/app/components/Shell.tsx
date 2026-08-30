@@ -1,11 +1,10 @@
 import type { ReactNode } from 'react'
-import { Settings, LogOut, Gamepad2, Download, LifeBuoy } from 'lucide-react'
+import { Settings, Gamepad2, Download, LifeBuoy } from 'lucide-react'
 import { useI18n, type TKey } from '../i18n'
 import { Logo } from './Logo'
 import { StatusDot } from './ui-bits'
 import { BRAND, SERVER_IP } from '../constants'
 import { contentText, localizedContentText, useLauncherContent } from '../../lib/content'
-import type { AuthUser } from '../../lib/auth'
 import { useLauncherVersion } from '../../lib/version'
 
 type Screen = 'main' | 'update' | 'settings'
@@ -20,13 +19,11 @@ export function Shell({
   active,
   user,
   onNavigate,
-  onLogout,
   children,
 }: {
   active: Screen
-  user: AuthUser
+  user: { username: string; role: string }
   onNavigate: (s: Screen) => void
-  onLogout: () => void
   children: ReactNode
 }) {
   const { lang, t } = useI18n()
@@ -39,7 +36,7 @@ export function Shell({
   const supportLabel =
     localizedContentText(content, lang, 'content.supportLabel', 'supportLabel', 'support_label') ??
     t('shell.support')
-  const networkStatus = 'AUTHENTICATED'
+  const networkStatus = t('shell.offlineMode')
   const brand = contentText(content, 'brand') ?? BRAND
   const brandSubtitle =
     localizedContentText(
@@ -83,13 +80,6 @@ export function Shell({
               </span>
             </div>
           </div>
-          <button
-            onClick={onLogout}
-            className="h-9 w-9 grid place-items-center border border-[#2A2116] bg-[#11100D] text-[#8E7A5E] hover:text-[#F3E7D0] hover:border-[#8A571C] transition-colors"
-            title={t('shell.logout')}
-          >
-            <LogOut size={13} />
-          </button>
         </div>
       </header>
 

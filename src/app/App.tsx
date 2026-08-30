@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { WindowChrome } from './components/WindowChrome'
-import { LoginScreen } from './components/LoginScreen'
 import { Shell } from './components/Shell'
 import { MainScreen } from './components/MainScreen'
 import { UpdateScreen } from './components/UpdateScreen'
 import { SettingsScreen } from './components/SettingsScreen'
 import { I18nContext, makeT, type Lang } from './i18n'
-import { login, logout, register, restoreSession, type AuthSession } from '../lib/auth'
+import type { LauncherConfig } from '../lib/api'
 
-type Screen = 'login' | 'main' | 'update' | 'settings'
+type Screen = 'main' | 'update' | 'settings'
 
 const LANG_KEY = 'blockfield.lang'
 
@@ -22,10 +21,9 @@ const loadLang = (): Lang => {
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('login')
+  const [screen, setScreen] = useState<Screen>('main')
   const [lang, setLangState] = useState<Lang>(loadLang)
-  const [session, setSession] = useState<AuthSession | null>(null)
-  const [restoringSession, setRestoringSession] = useState(true)
+  const [username, setUsername] = useState('')
 
   const setLang = useCallback((next: Lang) => {
     setLangState(next)
@@ -34,6 +32,18 @@ export default function App() {
   }, [])
 
   const i18n = useMemo(() => ({ lang, setLang, t: makeT(lang) }), [lang, setLang])
+
+  // Offline identity: the username lives in launcher settings; no account service involved.
+  useEffect(() => {
+    if (!isTauri()) return
+    import('@tauri-apps/api/core')
+      .then(({ invoke }) => invoke<LauncherConfig>('load_settings'))
+      .then((cfg) => {
+        setUsername(cfg.username)
+        if (!cfg.username) setScreen('settings')
+      })
+      .catch((e) => console.error('Failed to load settings:', e))
+  }, [])
 
   // Check for launcher updates on mount
   useEffect(() => {
@@ -66,103 +76,16 @@ export default function App() {
     checkLauncherUpdate()
   }, [])
 
-  const syncGameIdentity = useCallback(async (auth: AuthSession | null) => {
-    if (!isTauri()) return
-    const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('set_game_identity', {
-      identity: auth
-        ? {
-            username: auth.user.username,
-            uuid: auth.user.minecraft_uuid,
-            accessToken: auth.accessToken,
-          }
-        : null,
-    })
-  }, [])
-
-  useEffect(() => {
-    restoreSession()
-      .then(async (auth) => {
-        setSession(auth)
-        await syncGameIdentity(auth)
-        if (auth) setScreen('main')
-      })
-      .finally(() => setRestoringSession(false))
-  }, [syncGameIdentity])
-
-  useEffect(() => {
-    if (!session) return
-    const refresh = async () => {
-      const auth = await restoreSession()
-      if (!auth) {
-        setSession(null)
-        setScreen('login')
-      } else if (auth.accessToken !== session.accessToken) {
-        setSession(auth)
-        await syncGameIdentity(auth)
-      }
-    }
-    const interval = window.setInterval(refresh, 5 * 60 * 1000)
-    window.addEventListener('focus', refresh)
-    return () => {
-      window.clearInterval(interval)
-      window.removeEventListener('focus', refresh)
-    }
-  }, [session, syncGameIdentity])
-
-  const handleSignIn = useCallback(
-    async (username: string, password: string, remember: boolean) => {
-      const auth = await login(username, password, remember)
-      await syncGameIdentity(auth)
-      setSession(auth)
-      setScreen('main')
-    },
-    [syncGameIdentity],
-  )
-
-  const handleRegister = useCallback(
-    async (
-      username: string,
-      email: string,
-      password: string,
-      passwordConfirmation: string,
-      remember: boolean,
-    ) => {
-      const auth = await register(username, email, password, passwordConfirmation, remember)
-      await syncGameIdentity(auth)
-      setSession(auth)
-      setScreen('main')
-    },
-    [syncGameIdentity],
-  )
-
-  const handleLogout = useCallback(async () => {
-    const current = session
-    setSession(null)
-    setScreen('login')
-    await syncGameIdentity(null)
-    await logout(current)
-  }, [session, syncGameIdentity])
-
   return (
     <I18nContext.Provider value={i18n}>
       <WindowChrome>
-        {restoringSession ? null : screen === 'login' || !session ? (
-          <LoginScreen onSignIn={handleSignIn} onRegister={handleRegister} />
-        ) : (
-          <Shell
-            user={session.user}
-            active={screen as Exclude<Screen, 'login'>}
-            onNavigate={setScreen}
-            onLogout={handleLogout}
-          >
-            {screen === 'main' && <MainScreen onPlay={() => setScreen('update')} />}
-            {screen === 'update' && <UpdateScreen />}
-            {screen === 'settings' && (
-              <SettingsScreen onLogout={handleLogout} username={session.user.username} />
-            )}
-          </Shell>
-        )}
+        <Shell user={{ username: username || '—', role: 'operator' }} active={screen} onNavigate={setScreen}>
+          {screen === 'main' && <MainScreen onPlay={() => setScreen('update')} />}
+          {screen === 'update' && <UpdateScreen />}
+          {screen === 'settings' && (
+            <SettingsScreen username={username} onUsernameSaved={setUsername} />
+          )}
+        </Shell>
       </WindowChrome>
     </I18nContext.Provider>
   )

@@ -5,20 +5,20 @@ import { fileURLToPath } from 'node:url'
 
 const script = fileURLToPath(new URL('./validate-production-config.mjs', import.meta.url))
 const run = (value) => spawnSync(process.execPath, [script], {
-  env: { ...process.env, VITE_BLOCKFIELD_API_URL: value ?? '' },
+  env: { ...process.env, VITE_BLOCKFIELD_PACK_URL: value ?? '' },
   encoding: 'utf8',
 })
 
 test('accepts the configured production origin', () => {
-  assert.equal(run('https://play.blockfield.gg/api/launcher/v1').status, 0)
+  assert.equal(run('https://modpack.dev.nether.pp.ua').status, 0)
 })
 
-test('rejects missing, insecure, private, and development origins', () => {
+test('rejects missing, insecure, private, and mismatching origins', () => {
   for (const value of [
     '',
-    'http://play.blockfield.gg/api',
-    'https://localhost/api',
-    'https://10.0.0.1/api',
-    'https://backend.dev.example.com/api',
+    'http://modpack.dev.nether.pp.ua',
+    'https://localhost/pack',
+    'https://10.0.0.1/pack',
+    'https://other.example.com',
   ]) assert.notEqual(run(value).status, 0, value)
 })

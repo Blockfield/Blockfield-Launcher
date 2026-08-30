@@ -15,6 +15,9 @@ pub struct LauncherConfig {
     pub auto_update: bool,
     /// UI language code ("en", "ru", "uk")
     pub lang: String,
+    /// Offline-mode Minecraft username (3-16 chars: letters, digits, underscore)
+    #[serde(default)]
+    pub username: String,
 }
 
 impl Default for LauncherConfig {
@@ -38,6 +41,7 @@ impl Default for LauncherConfig {
                 .filter(|v| !v.trim().is_empty())
                 .or_else(|| option_env!("BLOCKFIELD_DEFAULT_LANG").map(String::from))
                 .unwrap_or_else(|| "en".to_string()),
+            username: String::new(),
         }
     }
 }
@@ -105,6 +109,12 @@ pub fn validate_config(config: &LauncherConfig) -> Result<(), String> {
     let max_ram = total_memory_mb().map_or(32_768, |total| total.saturating_mul(3) / 4);
     if config.ram_mb < 2_048 || config.ram_mb > max_ram {
         return Err(format!("RAM must be between 2048 and {max_ram} MB"));
+    }
+
+    if !config.username.trim().is_empty()
+        && !crate::commands::valid_username(config.username.trim())
+    {
+        return Err("Username must be 3-16 characters: letters, digits or _".to_string());
     }
 
     if !config.java_path.trim().is_empty() {

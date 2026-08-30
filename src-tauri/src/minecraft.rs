@@ -265,6 +265,7 @@ pub fn build_launch_args(
     minecraft_version: &str,
     forge_version_id: Option<&str>,
     identity: &crate::commands::GameIdentity,
+    quick_play_server: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let vanilla_json = read_json_file(&version_json_path(game_dir, minecraft_version))?;
     let forge_json = forge_version_id
@@ -318,6 +319,11 @@ pub fn build_launch_args(
 
     for arg in game_args {
         args.push(expand_placeholders(&arg, &vars)?);
+    }
+    // Vanilla 1.20+ Quick Play: straight into the server, no server list needed.
+    if let Some(server) = quick_play_server {
+        args.push("--quickPlayMultiplayer".to_string());
+        args.push(server.to_string());
     }
 
     Ok(args)

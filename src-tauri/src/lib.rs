@@ -1,8 +1,9 @@
 mod commands;
 mod config;
 mod download;
-mod manifest;
 mod minecraft;
+mod pack;
+mod status;
 
 use commands::LauncherAppState;
 use std::sync::Arc;
@@ -64,10 +65,9 @@ pub fn run() {
             app.manage(LauncherAppState {
                 downloader,
                 cancel_flag,
-                manifest: tokio::sync::RwLock::new(None),
+                pack: tokio::sync::RwLock::new(None),
                 config: tokio::sync::RwLock::new(loaded_config),
                 app_data_dir,
-                game_identity: tokio::sync::RwLock::new(None),
             });
 
             Ok(())
@@ -80,7 +80,7 @@ pub fn run() {
             commands::verify_files,
             commands::cancel_download,
             commands::launch_game,
-            commands::set_game_identity,
+            commands::server_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

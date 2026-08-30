@@ -1,28 +1,39 @@
 use crate::config::LauncherConfig;
 use crate::download::Downloader;
-use crate::manifest::{InstalledManifest, ModpackManifest, VersionCheckResult};
-use serde::{Deserialize, Serialize};
+use crate::pack::{self, JavaInfo, LauncherInfo, PackMeta};
+use crate::status::ServerStatus;
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 
+const INSTALLED_VERSION_FILE: &str = ".blockfield-pack-version";
+const INSTALLER_JAR: &str = "packwiz-installer.jar";
+
 /// Shared application state managed by Tauri.
 pub struct LauncherAppState {
     /// No outer mutex — Downloader uses atomics internally for cancel flag and progress.
     pub downloader: Arc<Downloader>,
-    pub manifest: RwLock<Option<ModpackManifest>>,
+    pub pack: RwLock<Option<PackState>>,
     pub config: RwLock<LauncherConfig>,
     pub app_data_dir: PathBuf,
     /// Direct handle to the atomic cancel flag so cancel_download can set it
     /// without any lock contention.
     pub cancel_flag: Arc<AtomicBool>,
-    pub game_identity: RwLock<Option<GameIdentity>>,
 }
 
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// What `check_modpack_version` learned about the hosted pack.
+#[derive(Clone)]
+pub struct PackState {
+    pub info: LauncherInfo,
+    pub meta: PackMeta,
+}
+
+/// Offline-mode identity. The proxy runs online-mode=false and derives the UUID from the
+/// username itself, so the launcher-side check is only about a well-formed name.
+#[derive(Clone)]
 pub struct GameIdentity {
     pub username: String,
     pub uuid: String,
@@ -30,21 +41,58 @@ pub struct GameIdentity {
 }
 
 impl GameIdentity {
-    fn is_valid(&self) -> bool {
-        self.username.len() >= 3
-            && self.username.len() <= 16
-            && self
-                .username
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-            && !self.access_token.is_empty()
-            && !self.uuid.is_empty()
-            && self.uuid.len() <= 36
-            && self
-                .uuid
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+    pub fn offline(username: &str) -> Result<Self, String> {
+        let username = username.trim();
+        if !valid_username(username) {
+            return Err(
+                "Set a Minecraft username in Settings (3-16 letters, digits or _)".to_string(),
+            );
+        }
+        Ok(Self {
+            username: username.to_string(),
+            uuid: offline_uuid(username),
+            access_token: "0".to_string(),
+        })
     }
+}
+
+pub fn valid_username(name: &str) -> bool {
+    (3..=16).contains(&name.len())
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+/// Vanilla offline UUID: UUIDv3 of "OfflinePlayer:<name>".
+fn offline_uuid(username: &str) -> String {
+    use md5::Digest;
+    let mut hash: [u8; 16] =
+        md5::Md5::digest(format!("OfflinePlayer:{username}").as_bytes()).into();
+    hash[6] = (hash[6] & 0x0f) | 0x30;
+    hash[8] = (hash[8] & 0x3f) | 0x80;
+    let hex = hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionCheckResult {
+    pub needs_update: bool,
+    pub remote_version: String,
+    pub installed_version: String,
+    pub mirror: String,
+    pub file_count: usize,
+    pub total_size: u64,
+    pub java: Option<JavaInfo>,
+    pub java_ok: bool,
+    pub forge_ok: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -204,138 +252,66 @@ pub fn save_settings(
 
 // ── Modpack commands ───────────────────────────────────────────
 
+fn installed_pack_version(game_dir: &Path) -> String {
+    std::fs::read_to_string(game_dir.join(INSTALLED_VERSION_FILE))
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn forge_json_path(game_dir: &Path, forge_version_id: &str) -> PathBuf {
+    game_dir
+        .join("versions")
+        .join(forge_version_id)
+        .join(format!("{forge_version_id}.json"))
+}
+
 #[tauri::command]
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
 ) -> Result<VersionCheckResult, String> {
-    let api_base = crate::commands::api_base_url()?;
-    let manifest_url = format!("{api_base}/manifest.json");
-    log::info!("[check_modpack_version] Fetching: {manifest_url}");
-
-    let manifest = state
-        .downloader
-        .fetch_manifest(&manifest_url)
-        .await
-        .map_err(|e| {
-            log::error!("[check_modpack_version] Fetch failed: {e}");
-            format!("Failed to fetch manifest: {e}")
-        })?;
+    let base = pack_base_url()?;
+    let info = pack::fetch_launcher_info(&base).await?;
+    let meta = pack::fetch_pack_meta(&info.pack).await?;
 
     let config = state.config.read().await.clone();
     let game_dir = PathBuf::from(&config.game_dir);
-    let manifest_path =
-        std::path::PathBuf::from(&config.game_dir).join(".blockfield-manifest.json");
-    let manifest_exists = manifest_path.exists();
-    let installed = InstalledManifest::load(&config.game_dir);
-
+    let installed = installed_pack_version(&game_dir);
+    let needs_update = installed != meta.version;
     log::info!(
-        "[check_modpack_version] game_dir={}, manifest_path={}, manifest_exists={manifest_exists}",
-        config.game_dir,
-        manifest_path.display(),
-    );
-    log::info!(
-        "[check_modpack_version] remote_version={}, installed_version={}, installed_files_count={}",
-        manifest.version,
-        installed.version,
-        installed.files.len(),
+        "[check_modpack_version] pack={} remote={} installed={} needs_update={needs_update}",
+        info.pack,
+        meta.version,
+        installed
     );
 
-    let mut needs_update = installed.version != manifest.version;
+    let java = info.java_for_this_platform();
+    let java_ok = java
+        .as_ref()
+        .is_none_or(|java| java_runtime_ready(&game_dir, &java.version));
 
-    // Even if version matches, check for missing files (quick existence + spot SHA256)
-    if !needs_update && !manifest.files.is_empty() {
-        let game_dir = PathBuf::from(&config.game_dir);
-        // First pass: quick existence check for all files
-        for entry in &manifest.files {
-            if !game_dir.join(&entry.path).exists() {
-                log::info!(
-                    "[check_modpack_version] Missing file: {} — forcing update",
-                    entry.path
-                );
-                needs_update = true;
-                break;
-            }
+    let forge_ok = match &meta.forge {
+        Some(forge) => {
+            let id = crate::minecraft::forge_version_id(forge);
+            forge_json_path(&game_dir, &id).exists()
+                && crate::minecraft::has_launch_dependencies(&game_dir, &meta.minecraft, Some(&id))
         }
-        // Second pass: SHA256 spot-check on 10 random files
-        if !needs_update {
-            for entry in manifest.files.iter().take(10) {
-                let path = game_dir.join(&entry.path);
-                match Downloader::sha256_file(&path) {
-                    Ok(hash) if hash == entry.sha256 => { /* ok */ }
-                    _ => {
-                        log::info!(
-                            "[check_modpack_version] File changed: {} — forcing update",
-                            entry.path
-                        );
-                        needs_update = true;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    log::info!("[check_modpack_version] needs_update = {needs_update}");
-
-    // Check Java version if required
-    let java_info = manifest.java.clone();
-    let java_ok = if let Some(ref java) = java_info {
-        if java_runtime_ready(&game_dir, &java.version) {
-            log::info!("[check_modpack_version] Java OK: {}", java.version);
-            true
-        } else {
-            log::info!("[check_modpack_version] Java not ready");
-            false
-        }
-    } else {
-        true // No Java requirement
-    };
-
-    // Check Forge installation
-    let forge_ok = if let Some(ref forge) = manifest.forge {
-        let forge_version_id = crate::minecraft::forge_version_id(&forge.version);
-        let forge_json = game_dir
-            .join("versions")
-            .join(&forge_version_id)
-            .join(format!("{}.json", forge_version_id));
-        let forge_json_ok = forge_json.exists();
-        let runtime_ok = crate::minecraft::has_launch_dependencies(
-            &game_dir,
-            &manifest.minecraft_version,
-            Some(&forge_version_id),
-        );
-        let ok = forge_json_ok && runtime_ok;
-        if ok {
-            log::info!("[check_modpack_version] Forge/runtime OK: {forge_version_id}");
-        } else if !forge_json_ok {
-            log::info!(
-                "[check_modpack_version] Forge not installed at {}",
-                forge_json.display()
-            );
-        } else {
-            log::info!("[check_modpack_version] Minecraft runtime files missing");
-        }
-        ok
-    } else {
-        crate::minecraft::has_launch_dependencies(&game_dir, &manifest.minecraft_version, None)
+        None => crate::minecraft::has_launch_dependencies(&game_dir, &meta.minecraft, None),
     };
 
     let result = VersionCheckResult {
         needs_update,
-        remote_version: manifest.version.clone(),
-        installed_version: installed.version.clone(),
-        mirror: api_base,
-        file_count: manifest.files.len(),
-        total_size: manifest.total_size,
-        java: java_info,
+        remote_version: meta.version.clone(),
+        installed_version: installed,
+        mirror: base,
+        file_count: 0,
+        total_size: 0,
+        java,
         java_ok,
         forge_ok,
     };
-
-    // Cache the manifest for later use
-    let mut cached = state.manifest.write().await;
-    *cached = Some(manifest);
-
+    *state.pack.write().await = Some(PackState { info, meta });
     Ok(result)
 }
 
@@ -344,344 +320,396 @@ pub async fn download_modpack(
     app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
 ) -> Result<(), String> {
-    let manifest = {
-        let cached = state.manifest.read().await;
-        cached
-            .clone()
-            .ok_or_else(|| "No manifest cached – call check_modpack_version first".to_string())?
-    };
-
+    let pack = state
+        .pack
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| "No pack info cached – call check_modpack_version first".to_string())?;
     let mut config = state.config.read().await.clone();
-    let installed = InstalledManifest::load(&config.game_dir);
+    let game_dir = PathBuf::from(&config.game_dir);
+    std::fs::create_dir_all(&game_dir).map_err(|e| format!("Failed to create game dir: {e}"))?;
 
     state.downloader.reset_cancel();
-    Downloader::cleanup_partials(Path::new(&config.game_dir));
-
-    // Bootstrap artifacts are known immediately. Minecraft runtime artifacts are
-    // planned after Forge has generated its version metadata; until then the UI
-    // remains in an explicit indeterminate setup phase.
-    let game_dir = PathBuf::from(&config.game_dir);
-    let mut planned_bytes = planned_bootstrap_bytes(&manifest, &game_dir);
-
+    Downloader::cleanup_partials(&game_dir);
+    let java = pack.info.java_for_this_platform();
+    let java_bytes = java
+        .as_ref()
+        .filter(|java| !java_runtime_ready(&game_dir, &java.version))
+        .map_or(0, |java| java.size);
+    // Forge installer, installer jar and Minecraft runtime sizes are unknown up front;
+    // the runtime plan adds its own bytes below.
+    state
+        .downloader
+        .set_grand_total(java_bytes + 64 * 1024 * 1024);
     emit_status(&app_handle, "setup", "Preparing install tasks", false);
 
-    // Download Java runtime if needed
-    if let Some(ref java) = manifest.java {
-        let need_java = !java_runtime_ready(Path::new(&config.game_dir), &java.version);
-
-        if need_java {
-            log::info!("Downloading Java {} for {}", java.version, java.platform);
-            emit_status(
-                &app_handle,
-                "java",
-                format!("Downloading Java {}", java.version),
-                true,
-            );
-            if java.sha256.len() != 64 || !java.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Err("Java runtime has no valid SHA-256 checksum".to_string());
-            }
-
-            let game_dir = PathBuf::from(&config.game_dir);
-            std::fs::create_dir_all(&game_dir)
-                .map_err(|e| format!("Failed to create game dir: {e}"))?;
-            let archive_path = game_dir.join(".java-runtime.zip.part");
-
-            let mut java_downloaded = 0;
-            state
-                .downloader
-                .download_manifest_artifact(
-                    &java.url,
-                    &archive_path,
-                    "java-runtime",
-                    java.size,
-                    1,
-                    1,
-                    &mut java_downloaded,
-                    java.size,
-                )
-                .await
-                .map_err(|e| format!("Java download failed: {e}"))?;
-
-            let actual_size = std::fs::metadata(&archive_path)
-                .map_err(|e| format!("Java archive metadata error: {e}"))?
-                .len();
-            if actual_size != java.size {
-                let _ = std::fs::remove_file(&archive_path);
-                return Err(format!(
-                    "Java archive size mismatch: expected {}, got {actual_size}",
-                    java.size
-                ));
-            }
-
-            let actual = Downloader::sha256_file(&archive_path)
-                .map_err(|e| format!("Java checksum error: {e}"))?;
-            if !actual.eq_ignore_ascii_case(&java.sha256) {
-                let _ = std::fs::remove_file(&archive_path);
-                return Err("Java SHA-256 mismatch".to_string());
-            }
-            log::info!("Java SHA256 verified");
-
-            emit_status(&app_handle, "java", "Extracting Java runtime", false);
-            let java_exe = install_java_archive(&archive_path, &game_dir, &java.version)?;
-            let _ = std::fs::remove_file(&archive_path);
-            let java_path_str = java_exe.to_string_lossy().to_string();
-            let mut cfg = state.config.write().await;
-            cfg.java_path = java_path_str.clone();
-            config.java_path = java_path_str.clone();
-            let _ = crate::config::save_config(&state.app_data_dir, &cfg);
-            log::info!("Java installed, path saved: {java_path_str}");
+    if let Some(java) = java {
+        if java_runtime_ready(&game_dir, &java.version) {
             emit_status(&app_handle, "java", "Java runtime ready", false);
         } else {
+            let java_exe = install_java(&app_handle, &state, &game_dir, &java).await?;
+            let java_path = java_exe.to_string_lossy().to_string();
+            let mut cfg = state.config.write().await;
+            cfg.java_path = java_path.clone();
+            config.java_path = java_path.clone();
+            let _ = crate::config::save_config(&state.app_data_dir, &cfg);
+            log::info!("Java installed, path saved: {java_path}");
             emit_status(&app_handle, "java", "Java runtime ready", false);
         }
     }
 
-    // Download & install Forge if needed
-    if let Some(ref forge) = manifest.forge {
-        let forge_version_id = crate::minecraft::forge_version_id(&forge.version);
-        let forge_json = PathBuf::from(&config.game_dir)
-            .join("versions")
-            .join(&forge_version_id)
-            .join(format!("{}.json", forge_version_id));
-        if !forge_json.exists() {
-            log::info!("Downloading Forge installer {}", forge.version);
-            emit_status(
-                &app_handle,
-                "forge",
-                format!("Downloading Forge {}", forge.version),
-                true,
-            );
-            let installer_path = PathBuf::from(&config.game_dir).join("forge-installer.jar");
-            let installer_partial = crate::download::partial_path(&installer_path);
-            let mut forge_downloaded = 0;
-            state
-                .downloader
-                .download_manifest_artifact(
-                    &forge.url,
-                    &installer_partial,
-                    "forge-installer",
-                    forge.size,
-                    1,
-                    1,
-                    &mut forge_downloaded,
-                    forge.size,
-                )
-                .await
-                .map_err(|e| format!("Forge download failed: {e}"))?;
-
-            if !forge.sha256.is_empty() {
-                let actual = Downloader::sha256_file(&installer_partial)
-                    .map_err(|e| format!("Forge checksum error: {e}"))?;
-                if actual != forge.sha256 {
-                    let _ = std::fs::remove_file(&installer_partial);
-                    return Err(format!(
-                        "Forge SHA256 mismatch: expected {}, got {}",
-                        forge.sha256, actual
-                    ));
-                }
-            }
-            crate::download::activate_partial(&installer_partial, &installer_path)
-                .map_err(|e| format!("Failed to activate Forge installer: {e}"))?;
-
-            // Run Forge installer
-            log::info!("Running Forge installer...");
-            emit_status(&app_handle, "forge", "Installing Forge client", false);
-
-            // Create minimal Minecraft launcher profile so Forge installer works
-            let launcher_profiles = PathBuf::from(&config.game_dir).join("launcher_profiles.json");
-            if !launcher_profiles.exists() {
-                let minimal_profile = serde_json::json!({
-                    "profiles": {},
-                    "settings": {},
-                    "version": 3
-                });
-                std::fs::write(
-                    &launcher_profiles,
-                    serde_json::to_string(&minimal_profile).unwrap_or_default(),
-                )
-                .map_err(|e| format!("Failed to create launcher profile: {e}"))?;
-            }
-
-            let java = resolved_java_path(&config);
-
-            use tauri_plugin_shell::ShellExt;
-            let output = app_handle
-                .shell()
-                .command(&java)
-                .args([
-                    "-jar",
-                    "forge-installer.jar",
-                    "--installClient",
-                    &config.game_dir,
-                ])
-                .current_dir(&config.game_dir)
-                .output()
-                .await
-                .map_err(|e| format!("Forge installer failed to start: {e}"))?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                log::error!("Forge installer stderr: {stderr}");
-                log::error!("Forge installer stdout: {stdout}");
-                let _ = std::fs::remove_file(&installer_path);
-                return Err(format!("Forge installer failed: {stderr} {stdout}"));
-            }
-
-            log::info!("Forge installed successfully");
-            let _ = std::fs::remove_file(&installer_path);
-
-            if !forge_json.exists() {
-                return Err(format!(
-                    "Forge installer completed but version JSON is missing: {}",
-                    forge_json.display()
-                ));
-            }
-        }
-        emit_status(&app_handle, "forge", "Forge client ready", false);
+    let java = resolved_java_path(&config);
+    if java == "java" && !system_java_available() {
+        return Err("No Java runtime available for this platform".to_string());
     }
 
-    let game_dir = PathBuf::from(&config.game_dir);
-    let forge_version_id = manifest
-        .forge
-        .as_ref()
-        .map(|forge| crate::minecraft::forge_version_id(&forge.version));
+    let forge_version_id = match &pack.meta.forge {
+        Some(forge) => {
+            let id = crate::minecraft::forge_version_id(forge);
+            if !forge_json_path(&game_dir, &id).exists() {
+                install_forge(
+                    &app_handle,
+                    &state,
+                    &game_dir,
+                    &java,
+                    &pack.meta.minecraft,
+                    forge,
+                )
+                .await?;
+            }
+            emit_status(&app_handle, "forge", "Forge client ready", false);
+            Some(id)
+        }
+        None => None,
+    };
+
+    emit_status(&app_handle, "modpack", "Syncing modpack files", true);
+    ensure_installer_jar(&state, &game_dir, &pack.info).await?;
+    let cancel = state.cancel_flag.clone();
+    let app = app_handle.clone();
+    let (java_for_installer, dir, pack_url) =
+        (java.clone(), game_dir.clone(), pack.info.pack.clone());
+    tokio::task::spawn_blocking(move || {
+        run_packwiz_installer(&app, &cancel, &java_for_installer, &dir, &pack_url)
+    })
+    .await
+    .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
+    std::fs::write(game_dir.join(INSTALLED_VERSION_FILE), &pack.meta.version)
+        .map_err(|e| format!("Failed to record installed version: {e}"))?;
+    emit_status(&app_handle, "modpack", "Modpack files ready", false);
+
     emit_status(
         &app_handle,
         "setup",
         "Planning required runtime files",
         false,
     );
-    planned_bytes += crate::minecraft::prepare_download_plan(
+    let runtime_bytes = crate::minecraft::prepare_download_plan(
         &game_dir,
-        &manifest.minecraft_version,
+        &pack.meta.minecraft,
         forge_version_id.as_deref(),
     )
     .await?;
-    state.downloader.set_grand_total(planned_bytes);
-
-    // If the version changed entirely, start fresh (prune old files)
-    let installed_sha256 = if installed.version != manifest.version {
-        emit_status(&app_handle, "prune", "Pruning stale modpack files", false);
-        // Delete files listed in the prune array
-        if let Some(ref prune_patterns) = manifest.prune {
-            let game_dir = PathBuf::from(&config.game_dir);
-            for pattern in prune_patterns {
-                let (path, directory) = safe_prune_target(&game_dir, pattern)?;
-                if path.exists() {
-                    if directory {
-                        std::fs::remove_dir_all(&path)
-                    } else {
-                        std::fs::remove_file(&path)
-                    }
-                    .map_err(|e| format!("Failed to prune {}: {e}", path.display()))?;
-                    log::info!("Pruned: {}", path.display());
-                }
-            }
-        }
-        emit_status(&app_handle, "prune", "Stale modpack files pruned", false);
-        std::collections::HashMap::new()
-    } else {
-        installed.files
-    };
-
-    emit_status(
+    state.downloader.set_grand_total(java_bytes + runtime_bytes);
+    crate::minecraft::ensure_launch_dependencies(
+        &state.downloader,
         &app_handle,
-        "modpack",
-        "Syncing modpack files + preparing runtime",
+        &game_dir,
+        &pack.meta.minecraft,
+        forge_version_id.as_deref(),
+    )
+    .await?;
+    emit_status(&app_handle, "ready", "Minecraft runtime ready", false);
+    Ok(())
+}
+
+async fn install_java(
+    app_handle: &AppHandle,
+    state: &State<'_, LauncherAppState>,
+    game_dir: &Path,
+    java: &JavaInfo,
+) -> Result<PathBuf, String> {
+    log::info!("Downloading Java {} for {}", java.version, java.platform);
+    emit_status(
+        app_handle,
+        "java",
+        format!("Downloading Java {}", java.version),
         true,
     );
-
-    // Modpack files and Minecraft runtime are independent — run them concurrently.
-    let (modpack_result, runtime_result) = tokio::join!(
-        async {
-            state
-                .downloader
-                .download_files(&manifest, &config.game_dir, &installed_sha256)
-                .await
-                .map_err(|e| {
-                    log::error!("Download failed: {e}");
-                    e.to_string()
-                })
-        },
-        async {
-            crate::minecraft::ensure_launch_dependencies(
-                &state.downloader,
-                &app_handle,
-                &game_dir,
-                &manifest.minecraft_version,
-                forge_version_id.as_deref(),
-            )
-            .await
-        },
-    );
-
-    modpack_result?;
-    emit_status(&app_handle, "modpack", "Modpack files ready", false);
-
-    if runtime_result.is_ok() {
-        emit_status(&app_handle, "ready", "Minecraft runtime ready", false);
+    if java.sha256.len() != 64 || !java.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Java runtime has no valid SHA-256 checksum".to_string());
     }
-    runtime_result
-}
-
-fn planned_bootstrap_bytes(manifest: &ModpackManifest, game_dir: &Path) -> u64 {
-    let java = manifest
-        .java
-        .as_ref()
-        .filter(|java| !java_runtime_ready(game_dir, &java.version))
-        .map_or(0, |java| java.size);
-    let forge = manifest
-        .forge
-        .as_ref()
-        .filter(|forge| {
-            let version_id = crate::minecraft::forge_version_id(&forge.version);
-            !game_dir
-                .join("versions")
-                .join(&version_id)
-                .join(format!("{version_id}.json"))
-                .exists()
-        })
-        .map_or(0, |forge| forge.size);
-    let modpack = manifest
-        .files
-        .iter()
-        .filter(|entry| {
-            let path = game_dir.join(&entry.path);
-            !matches!(Downloader::sha256_file(&path), Ok(hash) if hash == entry.sha256)
-        })
-        .map(|entry| entry.size)
-        .sum::<u64>();
-
-    java + forge + modpack
-}
-
-#[tauri::command]
-pub async fn verify_files(state: State<'_, LauncherAppState>) -> Result<Vec<String>, String> {
-    let manifest = {
-        let cached = state.manifest.read().await;
-        cached
-            .clone()
-            .ok_or_else(|| "No manifest cached".to_string())?
+    let extension = if java.url.ends_with(".tar.gz") {
+        "tar.gz"
+    } else {
+        "zip"
     };
-
-    let config = state.config.read().await;
-    let mut failed: Vec<String> = Vec::new();
-
-    for entry in &manifest.files {
-        let path = PathBuf::from(&config.game_dir).join(&entry.path);
-        if !path.exists() {
-            failed.push(format!("{} (missing)", entry.path));
-            continue;
-        }
-        match Downloader::sha256_file(&path) {
-            Ok(hash) if hash == entry.sha256 => { /* ok */ }
-            Ok(hash) => failed.push(format!("{} (hash mismatch: {})", entry.path, hash)),
-            Err(e) => failed.push(format!("{} (read error: {})", entry.path, e)),
-        }
+    let archive_path = game_dir.join(format!(".java-runtime.{extension}"));
+    let partial = crate::download::partial_path(&archive_path);
+    let mut downloaded = 0;
+    state
+        .downloader
+        .download_one(
+            &java.url,
+            &partial,
+            "java-runtime",
+            java.size,
+            1,
+            1,
+            &mut downloaded,
+            java.size,
+        )
+        .await
+        .map_err(|e| format!("Java download failed: {e}"))?;
+    let actual_size = std::fs::metadata(&partial)
+        .map_err(|e| format!("Java archive metadata error: {e}"))?
+        .len();
+    if actual_size != java.size {
+        let _ = std::fs::remove_file(&partial);
+        return Err(format!(
+            "Java archive size mismatch: expected {}, got {actual_size}",
+            java.size
+        ));
     }
+    let actual =
+        Downloader::sha256_file(&partial).map_err(|e| format!("Java checksum error: {e}"))?;
+    if !actual.eq_ignore_ascii_case(&java.sha256) {
+        let _ = std::fs::remove_file(&partial);
+        return Err("Java SHA-256 mismatch".to_string());
+    }
+    crate::download::activate_partial(&partial, &archive_path)
+        .map_err(|e| format!("Failed to activate Java archive: {e}"))?;
+    emit_status(app_handle, "java", "Extracting Java runtime", false);
+    let java_exe = install_java_archive(&archive_path, game_dir, &java.version);
+    let _ = std::fs::remove_file(&archive_path);
+    java_exe
+}
 
-    Ok(failed)
+async fn install_forge(
+    app_handle: &AppHandle,
+    state: &State<'_, LauncherAppState>,
+    game_dir: &Path,
+    java: &str,
+    minecraft: &str,
+    forge: &str,
+) -> Result<(), String> {
+    let url = pack::forge_installer_url(minecraft, forge);
+    log::info!("Downloading Forge installer {url}");
+    emit_status(
+        app_handle,
+        "forge",
+        format!("Downloading Forge {forge}"),
+        true,
+    );
+    let installer_path = game_dir.join("forge-installer.jar");
+    let partial = crate::download::partial_path(&installer_path);
+    let mut downloaded = 0;
+    state
+        .downloader
+        .download_one(
+            &url,
+            &partial,
+            "forge-installer",
+            0,
+            1,
+            1,
+            &mut downloaded,
+            0,
+        )
+        .await
+        .map_err(|e| format!("Forge download failed: {e}"))?;
+    crate::download::activate_partial(&partial, &installer_path)
+        .map_err(|e| format!("Failed to activate Forge installer: {e}"))?;
+
+    emit_status(app_handle, "forge", "Installing Forge client", false);
+    // The Forge installer refuses to run without a launcher profile file.
+    let launcher_profiles = game_dir.join("launcher_profiles.json");
+    if !launcher_profiles.exists() {
+        std::fs::write(
+            &launcher_profiles,
+            serde_json::json!({"profiles": {}, "settings": {}, "version": 3}).to_string(),
+        )
+        .map_err(|e| format!("Failed to create launcher profile: {e}"))?;
+    }
+    use tauri_plugin_shell::ShellExt;
+    let output = app_handle
+        .shell()
+        .command(java)
+        .args([
+            "-jar",
+            "forge-installer.jar",
+            "--installClient",
+            &game_dir.to_string_lossy(),
+        ])
+        .current_dir(game_dir)
+        .output()
+        .await
+        .map_err(|e| format!("Forge installer failed to start: {e}"))?;
+    let _ = std::fs::remove_file(&installer_path);
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        log::error!("Forge installer stderr: {stderr}");
+        log::error!("Forge installer stdout: {stdout}");
+        return Err(format!("Forge installer failed: {stderr} {stdout}"));
+    }
+    log::info!("Forge installed successfully");
+    Ok(())
+}
+
+async fn ensure_installer_jar(
+    state: &State<'_, LauncherAppState>,
+    game_dir: &Path,
+    info: &LauncherInfo,
+) -> Result<(), String> {
+    let jar = game_dir.join(INSTALLER_JAR);
+    if matches!(Downloader::sha256_file(&jar), Ok(hash) if hash.eq_ignore_ascii_case(&info.installer.sha256))
+    {
+        return Ok(());
+    }
+    let partial = crate::download::partial_path(&jar);
+    let mut downloaded = 0;
+    state
+        .downloader
+        .download_one(
+            &info.installer.url,
+            &partial,
+            INSTALLER_JAR,
+            0,
+            1,
+            1,
+            &mut downloaded,
+            0,
+        )
+        .await
+        .map_err(|e| format!("packwiz-installer download failed: {e}"))?;
+    let actual = Downloader::sha256_file(&partial).map_err(|e| e.to_string())?;
+    if !actual.eq_ignore_ascii_case(&info.installer.sha256) {
+        let _ = std::fs::remove_file(&partial);
+        return Err("packwiz-installer SHA-256 mismatch".to_string());
+    }
+    crate::download::activate_partial(&partial, &jar).map_err(|e| e.to_string())
+}
+
+/// "(12/137) Downloaded X" → (12, 137)
+fn installer_progress(line: &str) -> Option<(usize, usize)> {
+    let inner = line.strip_prefix('(')?.split_once(')')?.0;
+    let (done, total) = inner.split_once('/')?;
+    Some((done.parse().ok()?, total.parse().ok()?))
+}
+
+/// Runs packwiz-installer (client side) in the game dir; it downloads, verifies and prunes the
+/// pack contents itself. Output lines are forwarded to the UI as status/progress events.
+fn run_packwiz_installer(
+    app_handle: &AppHandle,
+    cancel: &AtomicBool,
+    java: &str,
+    game_dir: &Path,
+    pack_url: &str,
+) -> Result<(), String> {
+    use std::io::BufRead;
+    let mut child = std::process::Command::new(java)
+        .args([
+            "-jar",
+            INSTALLER_JAR,
+            "-g",
+            "-s",
+            "client",
+            "--pack-folder",
+            ".",
+        ])
+        .arg(pack_url)
+        .current_dir(game_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("packwiz-installer failed to start: {e}"))?;
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    for reader in [
+        child
+            .stdout
+            .take()
+            .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+        child
+            .stderr
+            .take()
+            .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(reader)
+                .lines()
+                .map_while(Result::ok)
+            {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    drop(tx);
+
+    let mut tail = std::collections::VecDeque::with_capacity(20);
+    let mut handle_line = |line: String| {
+        log::info!("[packwiz-installer] {line}");
+        if let Some((done, total)) = installer_progress(&line) {
+            let _ = app_handle.emit(
+                "download://progress",
+                crate::download::DownloadProgressPayload {
+                    file_path: line.clone(),
+                    file_index: done,
+                    file_count: total,
+                    bytes_downloaded: 0,
+                    file_bytes_total: 0,
+                    total_bytes_downloaded: done as u64,
+                    total_bytes_all: total as u64,
+                    speed_bytes_per_sec: 0,
+                },
+            );
+        } else {
+            emit_status(app_handle, "modpack", line.clone(), true);
+        }
+        if tail.len() == 20 {
+            tail.pop_front();
+        }
+        tail.push_back(line);
+    };
+    let status = loop {
+        while let Ok(line) = rx.try_recv() {
+            handle_line(line);
+        }
+        if cancel.load(Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Download cancelled".to_string());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(e) => return Err(format!("packwiz-installer wait failed: {e}")),
+        }
+    };
+    for line in rx {
+        handle_line(line);
+    }
+    if !status.success() {
+        return Err(format!(
+            "packwiz-installer failed ({status}):\n{}",
+            tail.iter().cloned().collect::<Vec<_>>().join("\n")
+        ));
+    }
+    Ok(())
+}
+
+/// Integrity is enforced by packwiz-installer on every sync; nothing extra to verify here.
+#[tauri::command]
+pub async fn verify_files(_state: State<'_, LauncherAppState>) -> Result<Vec<String>, String> {
+    Ok(Vec::new())
 }
 
 #[tauri::command]
@@ -692,64 +720,53 @@ pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), S
     Ok(())
 }
 
-// ── Game launch command ────────────────────────────────────────
-
 #[tauri::command]
-pub async fn set_game_identity(
-    state: State<'_, LauncherAppState>,
-    identity: Option<GameIdentity>,
-) -> Result<(), String> {
-    if identity
-        .as_ref()
-        .is_some_and(|identity| !identity.is_valid())
-    {
-        return Err("Invalid authenticated game identity".to_string());
-    }
-    *state.game_identity.write().await = identity;
-    Ok(())
+pub async fn server_status(state: State<'_, LauncherAppState>) -> Result<ServerStatus, String> {
+    let target = match state.pack.read().await.as_ref() {
+        Some(pack) => pack.info.server.clone(),
+        None => pack::fetch_launcher_info(&pack_base_url()?).await?.server,
+    };
+    let (host, port) = crate::status::split_host_port(&target);
+    tokio::task::spawn_blocking(move || crate::status::ping(&host, port))
+        .await
+        .map_err(|e| format!("status task failed: {e}"))
 }
+
+// ── Game launch command ────────────────────────────────────────
 
 #[tauri::command]
 pub async fn launch_game(
     app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
 ) -> Result<(), String> {
-    let identity = state
-        .game_identity
-        .read()
-        .await
-        .clone()
-        .ok_or_else(|| "Authentication required before launch".to_string())?;
-    verify_game_identity(&identity).await?;
     let config = state.config.read().await.clone();
-    let manifest = state.manifest.read().await.clone();
+    let identity = GameIdentity::offline(&config.username)?;
+    let pack = state.pack.read().await.clone();
 
     let java = resolved_java_path(&config);
     if java == "java" && !system_java_available() {
-        let hint = if manifest.as_ref().and_then(|m| m.java.as_ref()).is_some() {
-            "Java runtime is not installed. Open Updates to install it or select java.exe in Settings."
-        } else {
-            "Java runtime is not installed, and the deployment manifest does not provide a Java download."
-        };
-        return Err(hint.to_string());
+        return Err(
+            "Java runtime is not installed. Open Updates to install it or select a Java executable in Settings."
+                .to_string(),
+        );
     }
 
     let ram_mb = config.ram_mb;
     let game_dir = config.game_dir.clone();
     let game_dir_path = PathBuf::from(&game_dir);
 
-    let forge_version_id = manifest
+    let forge_version_id = pack
         .as_ref()
-        .and_then(|m| {
-            m.forge
-                .as_ref()
-                .map(|forge| crate::minecraft::forge_version_id(&forge.version))
+        .and_then(|p| {
+            p.meta
+                .forge
+                .as_deref()
+                .map(crate::minecraft::forge_version_id)
         })
         .or_else(|| crate::minecraft::find_forge_version_id(&game_dir_path));
-
-    let minecraft_version = manifest
+    let minecraft_version = pack
         .as_ref()
-        .map(|m| m.minecraft_version.clone())
+        .map(|p| p.meta.minecraft.clone())
         .or_else(|| {
             forge_version_id
                 .as_ref()
@@ -762,8 +779,15 @@ pub async fn launch_game(
                 .or_else(|| option_env!("BLOCKFIELD_MINECRAFT_VERSION").map(String::from))
                 .unwrap_or_else(|| "1.20.1".to_string())
         });
+    let quick_play = pack
+        .as_ref()
+        .map(|p| p.info.server.trim().to_string())
+        .filter(|s| !s.is_empty());
 
-    log::info!("Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}");
+    log::info!(
+        "Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}, user={}",
+        identity.username
+    );
 
     {
         state.downloader.reset_cancel();
@@ -792,11 +816,10 @@ pub async fn launch_game(
         &minecraft_version,
         forge_version_id.as_deref(),
         &identity,
+        quick_play.as_deref(),
     )?;
 
-    log::info!("Spawning authenticated game process");
     emit_status(&app_handle, "launch", "Starting game process", false);
-
     let child = std::process::Command::new(&java)
         .args(&args)
         .current_dir(&game_dir)
@@ -812,55 +835,23 @@ pub async fn launch_game(
         format!("Game process started (pid {})", child.id()),
         false,
     );
-
     Ok(())
 }
 
 // ── Helpers ────────────────────────────────────────────────────
 
-/// Base URL for the launcher API.
-fn api_base_url() -> Result<String, String> {
-    let url = std::env::var("VITE_BLOCKFIELD_API_URL")
+/// Base URL of the hosted packwiz pack (directory containing pack.toml and launcher.json).
+fn pack_base_url() -> Result<String, String> {
+    let url = std::env::var("VITE_BLOCKFIELD_PACK_URL")
         .ok()
-        .or_else(|| option_env!("VITE_BLOCKFIELD_API_URL").map(String::from))
-        .or_else(|| {
-            cfg!(debug_assertions).then(|| "http://localhost:3000/api/launcher/v1".to_string())
-        })
-        .ok_or_else(|| "VITE_BLOCKFIELD_API_URL is required in release builds".to_string())?;
-    blockfield_shared::validate_manifest_source(&url, cfg!(debug_assertions))?;
-    log::info!("[api_base_url] VITE_BLOCKFIELD_API_URL={url}");
-    Ok(url.trim_end_matches('/').to_string())
-}
-
-async fn verify_game_identity(identity: &GameIdentity) -> Result<(), String> {
-    #[derive(Deserialize)]
-    struct MeResponse {
-        user: MeUser,
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| option_env!("VITE_BLOCKFIELD_PACK_URL").map(String::from))
+        .ok_or_else(|| "VITE_BLOCKFIELD_PACK_URL is required".to_string())?;
+    let url = url.trim().trim_end_matches('/').to_string();
+    if !url.starts_with("https://") && !(cfg!(debug_assertions) && url.starts_with("http://")) {
+        return Err("VITE_BLOCKFIELD_PACK_URL must use https".to_string());
     }
-    #[derive(Deserialize)]
-    struct MeUser {
-        username: String,
-        minecraft_uuid: String,
-    }
-
-    let response = reqwest::Client::new()
-        .get(format!("{}/auth/me", api_base_url()?))
-        .bearer_auth(&identity.access_token)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|_| "Authentication service unavailable".to_string())?;
-    if !response.status().is_success() {
-        return Err("Authentication session expired".to_string());
-    }
-    let me = response
-        .json::<MeResponse>()
-        .await
-        .map_err(|_| "Invalid authentication response".to_string())?;
-    if me.user.username != identity.username || me.user.minecraft_uuid != identity.uuid {
-        return Err("Authenticated game identity mismatch".to_string());
-    }
-    Ok(())
+    Ok(url)
 }
 
 fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
@@ -876,34 +867,6 @@ fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
         path.push(part);
     }
     Ok(path)
-}
-
-fn safe_prune_target(game_dir: &Path, pattern: &str) -> Result<(PathBuf, bool), String> {
-    let (value, directory) = pattern
-        .strip_suffix("/*")
-        .map_or((pattern, false), |value| (value, true));
-    if value.contains('*') || value.contains('?') {
-        return Err(format!("Unsafe prune rule rejected: {pattern}"));
-    }
-
-    let relative =
-        safe_relative_path(value).map_err(|_| format!("Unsafe prune rule rejected: {pattern}"))?;
-    let target = game_dir.join(relative);
-    if target.exists() {
-        let metadata = std::fs::symlink_metadata(&target)
-            .map_err(|e| format!("Failed to inspect prune target: {e}"))?;
-        if metadata.file_type().is_symlink() {
-            return Err(format!("Symlink prune rule rejected: {pattern}"));
-        }
-        let root = std::fs::canonicalize(game_dir)
-            .map_err(|e| format!("Failed to resolve game directory: {e}"))?;
-        let resolved = std::fs::canonicalize(&target)
-            .map_err(|e| format!("Failed to resolve prune target: {e}"))?;
-        if !resolved.starts_with(root) {
-            return Err(format!("Unsafe prune rule rejected: {pattern}"));
-        }
-    }
-    Ok((target, directory))
 }
 
 fn install_java_archive(
@@ -961,9 +924,30 @@ fn remove_path(path: &Path) -> Result<(), String> {
     .map_err(|e| format!("Failed to remove {}: {e}", path.display()))
 }
 
-/// Extract a ZIP archive to a target directory.
+/// Extract a Java runtime archive: ZIP (Windows builds) or tar.gz (Linux/macOS Temurin).
 fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
+    if archive_path.to_string_lossy().ends_with(".tar.gz") {
+        return extract_tar_gz(archive_path, dest_dir);
+    }
     extract_archive_with_limits(archive_path, dest_dir, &archive_limits())
+}
+
+/// System `tar` keeps the executable bits; it exists on every Linux/macOS install.
+fn extract_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
+    let output = std::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(archive_path)
+        .arg("-C")
+        .arg(dest_dir)
+        .output()
+        .map_err(|e| format!("Failed to run tar: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "tar failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
 }
 
 fn extract_archive_with_limits(
@@ -1186,95 +1170,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsafe_relative_paths() {
-        for path in [
-            "",
-            "../x",
-            "a/../../x",
-            "C:/x",
-            "/etc/passwd",
-            r"\\server\x",
-        ] {
-            assert!(safe_relative_path(path).is_err(), "accepted {path}");
-        }
-        assert_eq!(
-            safe_relative_path("mods/old.jar").unwrap(),
-            Path::new("mods/old.jar")
-        );
-    }
-
-    #[test]
-    fn accepts_only_the_supported_prune_glob() {
-        let root = std::env::temp_dir().join(format!("blockfield-prune-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-
-        assert!(safe_prune_target(&root, "config/old/*").unwrap().1);
-        assert!(!safe_prune_target(&root, "mods/old.jar").unwrap().1);
-        assert!(safe_prune_target(&root, "mods/*.jar").is_err());
-        assert!(safe_prune_target(&root, "../x").is_err());
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn download_plan_counts_only_missing_bootstrap_and_changed_modpack_files() {
-        use blockfield_shared::{ForgeInfo, JavaInfo, ManifestFileEntry};
-        use sha2::Digest;
-
-        let root = std::env::temp_dir().join(format!("blockfield-plan-{}", std::process::id()));
-        let contents = b"same";
-        let hash = format!("{:x}", sha2::Sha256::digest(contents));
-        let manifest = ModpackManifest {
-            version: "1.0.0".to_string(),
-            minecraft_version: "1.20.1".to_string(),
-            files: vec![ManifestFileEntry {
-                path: "mods/test.jar".to_string(),
-                size: contents.len() as u64,
-                sha256: hash,
-                url: "https://example.invalid/test.jar".to_string(),
-            }],
-            total_size: contents.len() as u64,
-            prune: None,
-            java: Some(JavaInfo {
-                version: "17".to_string(),
-                platform: "test".to_string(),
-                url: "https://example.invalid/java.zip".to_string(),
-                sha256: "0".repeat(64),
-                size: 100,
-            }),
-            forge: Some(ForgeInfo {
-                version: "1.20.1-47.4.10".to_string(),
-                url: "https://example.invalid/forge.jar".to_string(),
-                sha256: "0".repeat(64),
-                size: 200,
-            }),
-        };
-
-        assert_eq!(planned_bootstrap_bytes(&manifest, &root), 304);
-
-        let java = root.join("java/bin").join(java_exe_name());
-        std::fs::create_dir_all(java.parent().unwrap()).unwrap();
-        std::fs::write(&java, b"").unwrap();
-        std::fs::write(root.join("java/.version"), "17").unwrap();
-        let forge_id = crate::minecraft::forge_version_id("1.20.1-47.4.10");
-        let forge_json = root
-            .join("versions")
-            .join(&forge_id)
-            .join(format!("{forge_id}.json"));
-        std::fs::create_dir_all(forge_json.parent().unwrap()).unwrap();
-        std::fs::write(forge_json, "{}").unwrap();
-
-        assert_eq!(planned_bootstrap_bytes(&manifest, &root), 4);
-        std::fs::create_dir_all(root.join("mods")).unwrap();
-        std::fs::write(root.join("mods/test.jar"), contents).unwrap();
-        assert_eq!(planned_bootstrap_bytes(&manifest, &root), 0);
-        std::fs::write(root.join("mods/test.jar"), b"changed").unwrap();
-        assert_eq!(planned_bootstrap_bytes(&manifest, &root), 4);
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn java_install_is_staged_and_rejects_unsafe_archives() {
         let root =
             std::env::temp_dir().join(format!("blockfield-java-install-{}", std::process::id()));
@@ -1355,22 +1250,33 @@ mod tests {
     }
 
     #[test]
-    fn game_identity_rejects_placeholder_or_invalid_values() {
-        let valid = GameIdentity {
-            username: "operator_1".to_string(),
-            uuid: "550e8400-e29b-41d4-a716-446655440000".to_string(),
-            access_token: "secret".to_string(),
-        };
-        assert!(valid.is_valid());
-        assert!(!GameIdentity {
-            access_token: String::new(),
-            ..valid.clone()
+    fn offline_identity_validates_username_and_derives_uuid() {
+        assert!(GameIdentity::offline("ab").is_err());
+        assert!(GameIdentity::offline("bad name").is_err());
+        let identity = GameIdentity::offline(" Steve ").unwrap();
+        assert_eq!(identity.username, "Steve");
+        assert_eq!(identity.uuid.len(), 36);
+        assert_eq!(identity.uuid, GameIdentity::offline("Steve").unwrap().uuid);
+        assert_ne!(identity.uuid, GameIdentity::offline("Alex").unwrap().uuid);
+    }
+
+    #[test]
+    fn rejects_unsafe_relative_paths() {
+        for value in ["", "/abs", "a\\b", "../x", "a/../b", "c:/x", "./a"] {
+            assert!(safe_relative_path(value).is_err(), "{value}");
         }
-        .is_valid());
-        assert!(!GameIdentity {
-            username: "bad name".to_string(),
-            ..valid
-        }
-        .is_valid());
+        assert_eq!(
+            safe_relative_path("mods/a.jar").unwrap(),
+            PathBuf::from("mods/a.jar")
+        );
+    }
+
+    #[test]
+    fn installer_progress_lines_are_parsed() {
+        assert_eq!(
+            installer_progress("(12/137) Downloaded Create"),
+            Some((12, 137))
+        );
+        assert_eq!(installer_progress("Finished successfully!"), None);
     }
 }

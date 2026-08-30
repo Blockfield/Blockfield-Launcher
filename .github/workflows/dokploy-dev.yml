@@ -97,71 +97,65 @@ jobs:
           detect --source=/repo --config=/repo/.gitleaks.toml --verbose --redact
 
   tauri-release:
-    name: Build Windows Tauri release
-    needs: [quality, filament-tests, secret-scan]
-    runs-on: blacksmith-4vcpu-windows-2025
+    name: Build launcher (${{ matrix.name }})
+    needs: [quality, secret-scan]
     environment: dev
     permissions:
       contents: write
-
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            args: ''
+          - name: windows-x86_64
+            os: windows-latest
+            args: ''
+          - name: macos-universal
+            os: macos-latest
+            args: '--target universal-apple-darwin'
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
           version: 11
-
-      - name: Set up Node
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
           cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             . -> target
             src-tauri -> src-tauri/target
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Validate updater signing secrets
-        shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+      - name: Linux build deps
+        if: runner.os == 'Linux'
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
-            throw "TAURI_PRIVATE_KEY is required"
-          }
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
-            throw "TAURI_KEY_PASSWORD is required"
-          }
-
-      - name: Build Tauri release
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm config:check
         env:
+          VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-          # Frontend (Vite) — VITE_* vars consumed at build time by Vite/Vite
-          VITE_BLOCKFIELD_API_URL: ${{ vars.VITE_BLOCKFIELD_API_URL }}
+          VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
           VITE_BRAND: ${{ vars.VITE_BRAND || 'BLOCKFIELD' }}
           VITE_BRAND_SUBTITLE: ${{ vars.VITE_BRAND_SUBTITLE || 'TACTICAL OPS' }}
           VITE_CHROME_TITLE: ${{ vars.VITE_CHROME_TITLE || 'BLOCKFIELD LAUNCHER' }}
           VITE_OPERATION_NAME: ${{ vars.VITE_OPERATION_NAME || 'IRON FRONT' }}
           VITE_SEASON: ${{ vars.VITE_SEASON || '/ SEASON 01' }}
           VITE_SERVER_NAME: ${{ vars.VITE_SERVER_NAME || 'BLOCKFIELD - PRIMARY' }}
-          VITE_SERVER_IP: ${{ vars.VITE_SERVER_IP || 'play.blockfield.gg:25565' }}
+          VITE_SERVER_IP: ${{ vars.VITE_SERVER_IP || 'mc.dev.nether.pp.ua:25565' }}
           VITE_COPYRIGHT: ${{ vars.VITE_COPYRIGHT || '2026 BLOCKFIELD COMMAND' }}
-          VITE_LOGIN_PLACEHOLDER: ${{ vars.VITE_LOGIN_PLACEHOLDER || 'operator@blockfield.gg' }}
-          # Backend (Rust) — BLOCKFIELD_* vars consumed at build+run time by src-tauri
           BLOCKFIELD_MOJANG_MANIFEST_URL: ${{ vars.BLOCKFIELD_MOJANG_MANIFEST_URL || 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json' }}
           BLOCKFIELD_MOJANG_ASSET_BASE_URL: ${{ vars.BLOCKFIELD_MOJANG_ASSET_BASE_URL || 'https://resources.download.minecraft.net' }}
           BLOCKFIELD_LAUNCHER_NAME: ${{ vars.BLOCKFIELD_LAUNCHER_NAME || 'BlockfieldLauncher' }}
@@ -169,255 +163,51 @@ jobs:
           BLOCKFIELD_DEFAULT_RAM_MB: ${{ vars.BLOCKFIELD_DEFAULT_RAM_MB || '8192' }}
           BLOCKFIELD_AUTO_UPDATE: ${{ vars.BLOCKFIELD_AUTO_UPDATE || 'true' }}
           BLOCKFIELD_DEFAULT_LANG: ${{ vars.BLOCKFIELD_DEFAULT_LANG || 'en' }}
-          BLOCKFIELD_TRUSTED_DOWNLOAD_HOSTS: ${{ vars.BLOCKFIELD_TRUSTED_DOWNLOAD_HOSTS || 'maven.minecraftforge.net' }}
-          BLOCKFIELD_MAX_MANIFEST_BYTES: ${{ vars.BLOCKFIELD_MAX_MANIFEST_BYTES || '8388608' }}
-          BLOCKFIELD_MAX_MANIFEST_FILES: ${{ vars.BLOCKFIELD_MAX_MANIFEST_FILES || '100000' }}
-          BLOCKFIELD_MAX_MANIFEST_FILE_BYTES: ${{ vars.BLOCKFIELD_MAX_MANIFEST_FILE_BYTES || '17179869184' }}
-          BLOCKFIELD_MAX_MANIFEST_PAYLOAD_BYTES: ${{ vars.BLOCKFIELD_MAX_MANIFEST_PAYLOAD_BYTES || '68719476736' }}
-          BLOCKFIELD_MAX_ARCHIVE_BYTES: ${{ vars.BLOCKFIELD_MAX_ARCHIVE_BYTES || '2147483648' }}
-          BLOCKFIELD_MAX_EXTRACTED_BYTES: ${{ vars.BLOCKFIELD_MAX_EXTRACTED_BYTES || '17179869184' }}
-          BLOCKFIELD_MAX_ARCHIVE_ENTRY_BYTES: ${{ vars.BLOCKFIELD_MAX_ARCHIVE_ENTRY_BYTES || '4294967296' }}
-          BLOCKFIELD_MAX_ARCHIVE_ENTRIES: ${{ vars.BLOCKFIELD_MAX_ARCHIVE_ENTRIES || '200000' }}
-          BLOCKFIELD_MAX_ARCHIVE_RATIO: ${{ vars.BLOCKFIELD_MAX_ARCHIVE_RATIO || '1000' }}
-          BLOCKFIELD_MAX_ARCHIVE_DEPTH: ${{ vars.BLOCKFIELD_MAX_ARCHIVE_DEPTH || '32' }}
-          BLOCKFIELD_MIN_FREE_SPACE_BYTES: ${{ vars.BLOCKFIELD_MIN_FREE_SPACE_BYTES || '2147483648' }}
-        run: |
-          pnpm config:check
-          pnpm tauri build --config src-tauri/tauri.prod.conf.json
+        with:
+          tauriScript: pnpm tauri
+          args: --config src-tauri/tauri.prod.conf.json ${{ matrix.args }}
+          tagName: launcher-v__VERSION__
+          releaseName: Launcher v__VERSION__
+          releaseBody: Dev build for ${{ github.sha }}
+          includeUpdaterJson: true
 
-      - name: Publish dev release
+  publish-launcher:
+    # The repo is private, so GitHub release assets are not downloadable by the updater:
+    # mirror bundles + latest.json to the pack host and rewrite the URLs.
+    name: Publish launcher to pack host
+    needs: [tauri-release]
+    runs-on: ubuntu-22.04
+    environment: dev
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: pwsh
         run: |
-          $package = Get-Content package.json | ConvertFrom-Json
-          $version = $package.version
-
-          $exeFiles = @(
-            Get-ChildItem -Path target/release/bundle, src-tauri/target/release/bundle -Recurse -File -Filter *.exe -ErrorAction SilentlyContinue |
-              Sort-Object FullName
-          )
-          if ($exeFiles.Count -eq 0) {
-            Write-Error "No Windows Tauri .exe bundles found."
-            exit 1
-          }
-          $installer = $exeFiles[0]
-          $installerName = $installer.Name
-
-          # ponytail: try .sig from Tauri bundler first, manual sign as fallback
-          $signatureFile = "$($installer.FullName).sig"
-          if (-not (Test-Path -LiteralPath $signatureFile)) {
-            throw "No updater signature found for $installerName"
-          }
-          $signature = (Get-Content -LiteralPath $signatureFile -Raw).Trim()
-          if ([string]::IsNullOrWhiteSpace($signature)) {
-            throw "Updater signature is empty"
-          }
-          Write-Host "Found matching .sig file: $signatureFile"
-
-          $releaseNotes = "Dev Windows build for $env:GITHUB_SHA"
-
-          $updateJson = @{
-            version = $version
-            notes = $releaseNotes
-            pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-            platforms = @{
-              "windows-x86_64" = @{
-                url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/develop/$installerName"
-                signature = $signature
-              }
-            }
-          }
-          $updateJson | ConvertTo-Json -Depth 4 | Set-Content update.json
-          $validated = Get-Content update.json -Raw | ConvertFrom-Json
-          $platform = $validated.platforms.'windows-x86_64'
-          if ($validated.version -ne $version -or
-              [string]::IsNullOrWhiteSpace($platform.url) -or
-              [string]::IsNullOrWhiteSpace($platform.signature)) {
-            throw "Generated updater metadata is invalid"
-          }
-          Write-Host "Generated update.json:"
-          Get-Content update.json
-
-          $artifactDir = Join-Path $env:RUNNER_TEMP 'blockfield-updater'
-          New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null
-          Copy-Item $installer.FullName $artifactDir
-          Copy-Item update.json $artifactDir
-
-          # Force develop tag to current commit — gh release edit doesn't move the tag
-          git tag -f develop $env:GITHUB_SHA
-          git push origin develop -f
-
-          # Always delete and recreate so the release points to the new commit
-          gh release delete develop -y 2>$null
-          gh release create develop `
-            --title develop `
-            --notes $releaseNotes `
-            --prerelease `
-            --target $env:GITHUB_SHA `
-            --latest=false `
-            $($installer.FullName) update.json
-
-      - name: Upload signed updater bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: signed-updater-bundle
-          path: ${{ runner.temp }}/blockfield-updater
-          if-no-files-found: error
-
-  backend:
-    name: Build & deploy backend
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    environment: dev
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.BACKEND_IMAGE_NAME }}
-          tags: |
-            type=raw,value=develop
-            type=sha,format=short,prefix=develop-
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./server/Dockerfile
-          push: true
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
-
-      - name: Deploy
+          version=$(node -p "require('./package.json').version")
+          mkdir -p launcher
+          gh release download "launcher-v$version" --dir launcher
+          python3 - <<'EOF'
+          import json, os
+          base = os.environ["VITE_BLOCKFIELD_PACK_URL"].rstrip("/") + "/launcher/"
+          path = "launcher/latest.json"
+          data = json.load(open(path))
+          for platform in data["platforms"].values():
+              platform["url"] = base + platform["url"].rsplit("/", 1)[-1]
+          json.dump(data, open(path, "w"), indent=2)
+          print(json.dumps(data["platforms"], indent=1))
+          EOF
         env:
-          DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_BACKEND_WEBHOOK_URL }}
-        run: |
-          if [ -z "$DOKPLOY_WEBHOOK_URL" ]; then
-            echo "DOKPLOY_BACKEND_WEBHOOK_URL secret is not configured; skipping deploy."
-          else
-            curl --fail --show-error --silent "$DOKPLOY_WEBHOOK_URL"
-          fi
-
-  updater-backend:
-    name: Publish signed updater backend
-    needs: [backend, tauri-release]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    environment: dev
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download signed updater bundle
-        uses: actions/download-artifact@v4
+          VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
+      - uses: webfactory/ssh-agent@v0.9.1
         with:
-          name: signed-updater-bundle
-          path: server/updates
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.BACKEND_IMAGE_NAME }}
-          tags: |
-            type=raw,value=develop
-            type=sha,format=short,prefix=develop-
-
-      - name: Build and push signed updater image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./server/Dockerfile
-          push: true
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
-
-      - name: Deploy signed updater image
+          ssh-private-key: ${{ secrets.PACK_HOST_SSH_KEY }}
+      - name: Upload
         env:
-          DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_BACKEND_WEBHOOK_URL }}
+          PACK_HOST: ${{ secrets.PACK_HOST }} # user@host
+          PACK_HOST_DIR: ${{ vars.PACK_HOST_DIR || '/srv/minecraft/modpack/launcher' }}
         run: |
-          if [ -z "$DOKPLOY_WEBHOOK_URL" ]; then
-            echo "DOKPLOY_BACKEND_WEBHOOK_URL secret is not configured; skipping deploy."
-          else
-            curl --fail --show-error --silent "$DOKPLOY_WEBHOOK_URL"
-          fi
-
-  filament:
-    name: Build & deploy Filament
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    environment: dev
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.FILAMENT_IMAGE_NAME }}
-          tags: |
-            type=raw,value=develop
-            type=sha,format=short,prefix=develop-
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./server/admin
-          file: ./server/admin/Dockerfile
-          push: true
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=filament
-          cache-to: type=gha,mode=max,scope=filament
-
-      - name: Deploy
-        env:
-          DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_FILAMENT_WEBHOOK_URL }}
-        run: |
-          if [ -z "$DOKPLOY_WEBHOOK_URL" ]; then
-            echo "DOKPLOY_FILAMENT_WEBHOOK_URL secret is not configured; skipping deploy."
-          else
-            curl --fail --show-error --silent "$DOKPLOY_WEBHOOK_URL"
-          fi
+          ssh-keyscan -H "${PACK_HOST#*@}" >> ~/.ssh/known_hosts
+          rsync -av --delete launcher/ "$PACK_HOST:$PACK_HOST_DIR/"
