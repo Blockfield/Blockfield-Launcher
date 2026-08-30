@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 
 const INSTALLED_VERSION_FILE: &str = ".blockfield-pack-version";
 const INSTALLER_JAR: &str = "packwiz-installer.jar";
+const BOOTSTRAP_JAR: &str = "packwiz-installer-bootstrap.jar";
 
 /// Shared application state managed by Tauri.
 pub struct LauncherAppState {
@@ -385,7 +386,8 @@ pub async fn download_modpack(
     };
 
     emit_status(&app_handle, "modpack", "Syncing modpack files", true);
-    ensure_installer_jar(&state, &game_dir, &pack.info).await?;
+    ensure_jar(&state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
+    ensure_jar(&state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
     let cancel = state.cancel_flag.clone();
     let app = app_handle.clone();
     let (java_for_installer, dir, pack_url) =
@@ -558,13 +560,14 @@ async fn install_forge(
     Ok(())
 }
 
-async fn ensure_installer_jar(
+async fn ensure_jar(
     state: &State<'_, LauncherAppState>,
     game_dir: &Path,
-    info: &LauncherInfo,
+    name: &str,
+    artifact: &pack::Artifact,
 ) -> Result<(), String> {
-    let jar = game_dir.join(INSTALLER_JAR);
-    if matches!(Downloader::sha256_file(&jar), Ok(hash) if hash.eq_ignore_ascii_case(&info.installer.sha256))
+    let jar = game_dir.join(name);
+    if matches!(Downloader::sha256_file(&jar), Ok(hash) if hash.eq_ignore_ascii_case(&artifact.sha256))
     {
         return Ok(());
     }
@@ -572,22 +575,13 @@ async fn ensure_installer_jar(
     let mut downloaded = 0;
     state
         .downloader
-        .download_one(
-            &info.installer.url,
-            &partial,
-            INSTALLER_JAR,
-            0,
-            1,
-            1,
-            &mut downloaded,
-            0,
-        )
+        .download_one(&artifact.url, &partial, name, 0, 1, 1, &mut downloaded, 0)
         .await
-        .map_err(|e| format!("packwiz-installer download failed: {e}"))?;
+        .map_err(|e| format!("{name} download failed: {e}"))?;
     let actual = Downloader::sha256_file(&partial).map_err(|e| e.to_string())?;
-    if !actual.eq_ignore_ascii_case(&info.installer.sha256) {
+    if !actual.eq_ignore_ascii_case(&artifact.sha256) {
         let _ = std::fs::remove_file(&partial);
-        return Err("packwiz-installer SHA-256 mismatch".to_string());
+        return Err(format!("{name} SHA-256 mismatch"));
     }
     crate::download::activate_partial(&partial, &jar).map_err(|e| e.to_string())
 }
@@ -599,7 +593,7 @@ fn installer_progress(line: &str) -> Option<(usize, usize)> {
     Some((done.parse().ok()?, total.parse().ok()?))
 }
 
-/// Runs packwiz-installer (client side) in the game dir; it downloads, verifies and prunes the
+/// Runs packwiz-installer (client side, via its bootstrap) in the game dir; it downloads, verifies and prunes the
 /// pack contents itself. Output lines are forwarded to the UI as status/progress events.
 fn run_packwiz_installer(
     app_handle: &AppHandle,
@@ -610,11 +604,13 @@ fn run_packwiz_installer(
 ) -> Result<(), String> {
     use std::io::BufRead;
     let mut child = std::process::Command::new(java)
+        // The bootstrap normally fetches the installer from GitHub; both jars come from the pack host instead.
         .args([
             "-jar",
-            INSTALLER_JAR,
-            // we ship the installer jar ourselves; without this it insists on the bootstrap wrapper
+            BOOTSTRAP_JAR,
             "--bootstrap-no-update",
+            "--bootstrap-main-jar",
+            INSTALLER_JAR,
             "-g",
             "-s",
             "client",

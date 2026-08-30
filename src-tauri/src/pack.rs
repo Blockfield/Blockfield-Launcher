@@ -28,6 +28,8 @@ pub struct LauncherInfo {
     /// `host:port` the game auto-connects to.
     pub server: String,
     pub installer: Artifact,
+    /// packwiz-installer refuses to start without its bootstrap, so both jars are shipped.
+    pub bootstrap: Artifact,
     /// Keyed by `platform_key()`.
     pub java: HashMap<String, JavaInfo>,
 }
