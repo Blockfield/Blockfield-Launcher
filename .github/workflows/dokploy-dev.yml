@@ -15,7 +15,6 @@ permissions:
 
 env:
   BACKEND_IMAGE_NAME: ghcr.io/netherg-io/blockfield-launcher-backend
-  FILAMENT_IMAGE_NAME: ghcr.io/netherg-io/blockfield-launcher-filament
 
 jobs:
   quality:
@@ -53,34 +52,6 @@ jobs:
       - run: cargo test --workspace
       - run: pnpm audit --audit-level high
       - run: cargo audit
-
-  filament-tests:
-    name: Filament tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - uses: actions/checkout@v4
-      - run: docker build -t blockfield-filament-test server/admin
-      - name: Run tests
-        run: >-
-          docker run --rm --entrypoint php
-          -e APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-          -e APP_ENV=testing
-          -e DB_DATABASE=:memory:
-          -e CMS_TOKEN=0123456789abcdef0123456789abcdef
-          -e AUTH_SIGNING_KEY=abcdef0123456789abcdef0123456789
-          -e RELOAD_TOKEN=reload0123456789abcdef0123456789ab
-          -e FILAMENT_ADMIN_EMAIL=admin@example.com
-          -e FILAMENT_ADMIN_PASSWORD=test-password-123
-          blockfield-filament-test artisan test
-      - name: Audit Composer dependencies
-        run: docker run --rm --entrypoint composer blockfield-filament-test audit
-      - name: Scan Filament image
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: blockfield-filament-test
-          exit-code: 1
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
 
   secret-scan:
     name: Secret scan
