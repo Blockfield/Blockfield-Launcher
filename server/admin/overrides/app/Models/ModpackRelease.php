@@ -12,7 +12,6 @@ class ModpackRelease extends Model
         'modpack_zip',
         'prune',
         'java',
-        'forge',
         'status',
         'active',
         'archive_size',
@@ -28,7 +27,6 @@ class ModpackRelease extends Model
         return [
             'prune' => 'array',
             'java' => 'array',
-            'forge' => 'array',
             'active' => 'boolean',
             'published_at' => 'datetime',
         ];

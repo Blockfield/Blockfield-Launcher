@@ -88,19 +88,6 @@ pub struct JavaInfo {
     pub size: u64,
 }
 
-/// Info about required Forge installer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ForgeInfo {
-    /// Forge version, e.g. "1.20.1-47.4.10"
-    pub version: String,
-    /// Download URL for the installer JAR
-    pub url: String,
-    /// SHA-256 checksum of the installer JAR
-    pub sha256: String,
-    /// File size in bytes
-    pub size: u64,
-}
-
 /// The remote modpack manifest served by the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModpackManifest {
@@ -118,12 +105,10 @@ pub struct ModpackManifest {
     pub prune: Option<Vec<String>>,
     /// Required Java runtime info (auto-downloaded if not installed)
     pub java: Option<JavaInfo>,
-    /// Forge installer info (auto-downloaded + run if not installed)
-    pub forge: Option<ForgeInfo>,
 }
 
 /// Validates the complete untrusted manifest before it is cached or used.
-/// `totalSize` is exactly the checked sum of `files`; Java and Forge sizes are
+/// `totalSize` is exactly the checked sum of `files`; the Java size is
 /// additionally included when enforcing the total payload ceiling.
 pub fn validate_manifest(
     manifest: &ModpackManifest,
@@ -175,14 +160,6 @@ pub fn validate_manifest(
         validate_download_url(&java.url, &source, &trusted, policy, false)?;
         payload_size = payload_size
             .checked_add(java.size)
-            .ok_or_else(|| "Manifest payload-size sum overflow".to_string())?;
-    }
-    if let Some(forge) = &manifest.forge {
-        validate_hash(&forge.sha256, "Forge installer")?;
-        validate_size(forge.size, "Forge installer", &policy.limits)?;
-        validate_download_url(&forge.url, &source, &trusted, policy, false)?;
-        payload_size = payload_size
-            .checked_add(forge.size)
             .ok_or_else(|| "Manifest payload-size sum overflow".to_string())?;
     }
     if payload_size > policy.limits.max_payload_bytes {
@@ -407,24 +384,6 @@ fn is_non_global_ipv4([a, b, c, _]: [u8; 4]) -> bool {
         || (224..=255).contains(&a)
 }
 
-/// Result returned to the frontend after checking for modpack updates.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VersionCheckResult {
-    pub needs_update: bool,
-    pub remote_version: String,
-    pub installed_version: String,
-    pub mirror: String,
-    pub file_count: usize,
-    pub total_size: u64,
-    /// Required Java info from the manifest
-    pub java: Option<JavaInfo>,
-    /// Whether the installed Java matches the required version
-    pub java_ok: bool,
-    /// Whether Forge is installed (true if not required)
-    pub forge_ok: bool,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,7 +405,6 @@ mod tests {
             files,
             prune: None,
             java: None,
-            forge: None,
         }
     }
 

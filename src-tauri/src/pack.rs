@@ -48,23 +48,18 @@ impl LauncherInfo {
 pub struct PackMeta {
     pub version: String,
     pub minecraft: String,
-    pub forge: Option<String>,
+    /// Fabric loader version from `[versions] fabric`.
+    pub loader: Option<String>,
 }
 
 pub fn platform_key() -> String {
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
-pub fn forge_installer_url(minecraft: &str, forge: &str) -> String {
-    format!(
-        "https://maven.minecraftforge.net/net/minecraftforge/forge/{minecraft}-{forge}/forge-{minecraft}-{forge}-installer.jar"
-    )
-}
-
 /// Minimal TOML reader for the three keys we need; avoids a TOML dependency.
 pub fn parse_pack_toml(text: &str) -> Result<PackMeta, String> {
     let mut section = String::new();
-    let (mut version, mut minecraft, mut forge) = (None, None, None);
+    let (mut version, mut minecraft, mut loader) = (None, None, None);
     for raw in text.lines() {
         let line = raw.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
@@ -81,14 +76,14 @@ pub fn parse_pack_toml(text: &str) -> Result<PackMeta, String> {
         match (section.as_str(), key.trim()) {
             ("", "version") => version = Some(value),
             ("versions", "minecraft") => minecraft = Some(value),
-            ("versions", "forge") => forge = Some(value),
+            ("versions", "fabric") => loader = Some(value),
             _ => {}
         }
     }
     Ok(PackMeta {
         version: version.ok_or("pack.toml has no version")?,
         minecraft: minecraft.ok_or("pack.toml has no [versions].minecraft")?,
-        forge,
+        loader,
     })
 }
 
@@ -128,26 +123,22 @@ mod tests {
     #[test]
     fn parses_pack_toml_versions() {
         let meta = parse_pack_toml(
-            "name = \"Blockfield\"\nversion = \"1.2.3\" # comment\n[index]\nfile = \"index.toml\"\n[versions]\nforge = \"47.4.10\"\nminecraft = \"1.20.1\"\n",
+            "name = \"Blockfield\"\nversion = \"1.2.3\" # comment\n[index]\nfile = \"index.toml\"\n[versions]\nfabric = \"0.19.3\"\nminecraft = \"1.21.1\"\n",
         )
         .unwrap();
         assert_eq!(
             meta,
             PackMeta {
                 version: "1.2.3".into(),
-                minecraft: "1.20.1".into(),
-                forge: Some("47.4.10".into())
+                minecraft: "1.21.1".into(),
+                loader: Some("0.19.3".into())
             }
         );
         assert!(parse_pack_toml("name = \"x\"").is_err());
     }
 
     #[test]
-    fn platform_key_and_forge_url_are_stable() {
+    fn platform_key_is_stable() {
         assert!(platform_key().contains('-'));
-        assert_eq!(
-            forge_installer_url("1.20.1", "47.4.10"),
-            "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.4.10/forge-1.20.1-47.4.10-installer.jar"
-        );
     }
 }

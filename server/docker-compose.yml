@@ -34,7 +34,7 @@ services:
     environment:
       - BASE_URL=${BASE_URL:-https://play.blockfield.gg}
       - MODPACK_VERSION=${MODPACK_VERSION:-0.1.43}
-      - MINECRAFT_VERSION=${MINECRAFT_VERSION:-1.20.1}
+      - MINECRAFT_VERSION=${MINECRAFT_VERSION:-1.21.1}
       - BIND_HOST=${BIND_HOST:-0.0.0.0}
       - PORT=${PORT:-3000}
       - API_PREFIX=${API_PREFIX:-api/launcher/v1}

@@ -41,10 +41,6 @@ class ModpackReleaseResource extends Resource
             Forms\Components\TextInput::make('java.url')->label('Immutable Java archive URL')->url()->required(),
             Forms\Components\TextInput::make('java.sha256')->label('Java SHA-256')->length(64)->required(),
             Forms\Components\TextInput::make('java.size')->label('Java archive size')->numeric()->minValue(1)->required(),
-            Forms\Components\TextInput::make('forge.version')->label('Forge version'),
-            Forms\Components\TextInput::make('forge.url')->label('Forge URL')->url(),
-            Forms\Components\TextInput::make('forge.sha256')->label('Forge SHA-256')->length(64),
-            Forms\Components\TextInput::make('forge.size')->label('Forge size')->numeric()->minValue(1),
         ])->columns(2);
     }
 
@@ -159,10 +155,6 @@ class ModpackReleaseResource extends Resource
         if (! isset($java['version'], $java['platform'], $java['url'], $java['sha256'], $java['size'])) return 'Complete the Java runtime fields.';
         if (! str_starts_with($java['url'], 'https://') || strlen($java['sha256']) !== 64 || ! ctype_xdigit($java['sha256'])
             || str_contains(strtolower($java['url']), '/latest/') || (int) $java['size'] < 1) return 'Java must use an immutable HTTPS URL, size, and valid SHA-256.';
-        $forge = $record->forge ?? [];
-        if ($forge && (! isset($forge['version'], $forge['url'], $forge['sha256'], $forge['size'])
-            || ! str_starts_with($forge['url'], 'https://') || strlen($forge['sha256']) !== 64
-            || ! ctype_xdigit($forge['sha256']) || (int) $forge['size'] < 1)) return 'Complete all Forge integrity fields.';
         foreach ($record->prune ?? [] as $pattern) {
             $path = str_ends_with($pattern, '/*') ? substr($pattern, 0, -2) : $pattern;
             if ($path === '' || str_starts_with($path, '/') || str_starts_with($path, '\\')

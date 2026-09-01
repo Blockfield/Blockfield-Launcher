@@ -119,11 +119,6 @@ class CmsApiController extends Controller
                 'java.url' => ['required_with:java', 'url:https', 'max:2048', 'not_regex:/\/latest\//i'],
                 'java.sha256' => ['required_with:java', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/i'],
                 'java.size' => ['required_with:java', 'integer', 'min:1'],
-                'forge' => ['nullable', 'array'],
-                'forge.version' => ['required_with:forge', 'string', 'max:64'],
-                'forge.url' => ['required_with:forge', 'url:https', 'max:2048'],
-                'forge.sha256' => ['required_with:forge', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/i'],
-                'forge.size' => ['required_with:forge', 'integer', 'min:1'],
                 'status' => ['nullable', 'in:draft,ready'],
             ]),
             'launcher_content' => $request->validate([

@@ -154,7 +154,7 @@ export function UpdateScreen() {
       setCanCancel(status.cancelable)
       addLog(status.message, status.phase === 'ready' ? 'ok' : 'info')
 
-      if (status.phase === 'setup' || status.phase === 'java' || status.phase === 'forge') {
+      if (status.phase === 'setup' || status.phase === 'java' || status.phase === 'loader') {
         setPhase('downloading')
         setStep(1, 'active')
         return
@@ -235,12 +235,12 @@ export function UpdateScreen() {
       setStep(0, 'done')
 
       const needJava = versionResult.java && !versionResult.javaOk
-      const needForge = !versionResult.forgeOk
+      const needLoader = !versionResult.loaderOk
       const needModpack = versionResult.needsUpdate
-      const needAnyDownload = needModpack || needJava || needForge
+      const needAnyDownload = needModpack || needJava || needLoader
 
-      if (needForge) {
-        addLog('Forge runtime required — will install', 'info')
+      if (needLoader) {
+        addLog('Fabric runtime required — will install', 'info')
       }
       if (needJava) {
         addLog(`Java ${versionResult.java!.version} required — will install`, 'info')

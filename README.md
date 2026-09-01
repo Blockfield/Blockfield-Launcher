@@ -6,11 +6,11 @@
 >
 > | File | Purpose |
 > | --- | --- |
-> | `pack.toml` / `index.toml` | packwiz pack — version, Minecraft/Forge versions, mod list |
+> | `pack.toml` / `index.toml` | packwiz pack — version, Minecraft/Fabric loader versions, mod list |
 > | `launcher.json` | game server (`host:port`, used for `--quickPlayMultiplayer`), packwiz bootstrap + installer jar hashes, Temurin 17 JRE per platform (`windows/linux` × `x86_64/aarch64`) |
 > | `content.json` | UI texts / feed |
 >
-> Flow on "Play": download Java (zip on Windows, tar.gz on Linux) → Forge installer from Maven →
+> Flow on "Play": download Java (zip on Windows, tar.gz on Linux) → Fabric launch profile from meta.fabricmc.net →
 > `java -jar packwiz-installer-bootstrap.jar --bootstrap-no-update --bootstrap-main-jar packwiz-installer.jar -g -s client --pack-folder <game dir> <pack.toml>` (it downloads,
 > verifies and prunes the pack) → vanilla runtime files → launch with the offline username from
 > Settings. Server status is a direct Server List Ping from Rust (`src-tauri/src/status.rs`).
@@ -85,7 +85,7 @@ JAVA_PLATFORM=windows-x64 \
 JAVA_URL=https://artifacts.example.com/java/jre-17.0.16+8-windows-x64.zip \
 JAVA_SHA256=replace-with-64-hex-characters \
 JAVA_SIZE=replace-with-exact-byte-size \
-pnpm cms:publish-modpack ./server/files/modpack.zip 0.1.44 1.20.1
+pnpm cms:publish-modpack ./server/files/modpack.zip 0.1.44 1.21.1
 ```
 
 Filament invalidates edited content automatically and its Publish action activates releases. The protected endpoint is available only for operator recovery:

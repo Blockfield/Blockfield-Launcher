@@ -93,7 +93,7 @@ pub struct VersionCheckResult {
     pub total_size: u64,
     pub java: Option<JavaInfo>,
     pub java_ok: bool,
-    pub forge_ok: bool,
+    pub loader_ok: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -261,13 +261,6 @@ fn installed_pack_version(game_dir: &Path) -> String {
         .unwrap_or_else(|| "none".to_string())
 }
 
-fn forge_json_path(game_dir: &Path, forge_version_id: &str) -> PathBuf {
-    game_dir
-        .join("versions")
-        .join(forge_version_id)
-        .join(format!("{forge_version_id}.json"))
-}
-
 #[tauri::command]
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
@@ -292,10 +285,10 @@ pub async fn check_modpack_version(
         .as_ref()
         .is_none_or(|java| java_runtime_ready(&game_dir, &java.version));
 
-    let forge_ok = match &meta.forge {
-        Some(forge) => {
-            let id = crate::minecraft::forge_version_id(&meta.minecraft, forge);
-            forge_json_path(&game_dir, &id).exists()
+    let loader_ok = match &meta.loader {
+        Some(loader) => {
+            let id = crate::minecraft::loader_version_id(&meta.minecraft, loader);
+            crate::minecraft::loader_profile_exists(&game_dir, &id)
                 && crate::minecraft::has_launch_dependencies(&game_dir, &meta.minecraft, Some(&id))
         }
         None => crate::minecraft::has_launch_dependencies(&game_dir, &meta.minecraft, None),
@@ -310,7 +303,7 @@ pub async fn check_modpack_version(
         total_size: 0,
         java,
         java_ok,
-        forge_ok,
+        loader_ok,
     };
     *state.pack.write().await = Some(PackState { info, meta });
     Ok(result)
@@ -338,7 +331,7 @@ pub async fn download_modpack(
         .as_ref()
         .filter(|java| !java_runtime_ready(&game_dir, &java.version))
         .map_or(0, |java| java.size);
-    // Forge installer, installer jar and Minecraft runtime sizes are unknown up front;
+    // The packwiz installer jar and Minecraft runtime sizes are unknown up front;
     // the runtime plan adds its own bytes below.
     state
         .downloader
@@ -365,22 +358,21 @@ pub async fn download_modpack(
         return Err("No Java runtime available for this platform".to_string());
     }
 
-    let forge_version_id = match &pack.meta.forge {
-        Some(forge) => {
-            let id = crate::minecraft::forge_version_id(&pack.meta.minecraft, forge);
-            if !forge_json_path(&game_dir, &id).exists() {
-                install_forge(
-                    &app_handle,
-                    &state,
-                    &game_dir,
-                    &java,
-                    &pack.meta.minecraft,
-                    forge,
-                )
+    let loader_version_id = match &pack.meta.loader {
+        Some(loader) => {
+            emit_status(
+                &app_handle,
+                "loader",
+                format!("Fetching Fabric {loader} profile"),
+                false,
+            );
+            crate::minecraft::ensure_loader_profile(&game_dir, &pack.meta.minecraft, loader)
                 .await?;
-            }
-            emit_status(&app_handle, "forge", "Forge client ready", false);
-            Some(id)
+            emit_status(&app_handle, "loader", "Fabric loader ready", false);
+            Some(crate::minecraft::loader_version_id(
+                &pack.meta.minecraft,
+                loader,
+            ))
         }
         None => None,
     };
@@ -410,7 +402,7 @@ pub async fn download_modpack(
     let runtime_bytes = crate::minecraft::prepare_download_plan(
         &game_dir,
         &pack.meta.minecraft,
-        forge_version_id.as_deref(),
+        loader_version_id.as_deref(),
     )
     .await?;
     state.downloader.set_grand_total(runtime_bytes);
@@ -419,7 +411,7 @@ pub async fn download_modpack(
         &app_handle,
         &game_dir,
         &pack.meta.minecraft,
-        forge_version_id.as_deref(),
+        loader_version_id.as_deref(),
     )
     .await?;
     emit_status(&app_handle, "ready", "Minecraft runtime ready", false);
@@ -486,78 +478,6 @@ async fn install_java(
     let java_exe = install_java_archive(&archive_path, game_dir, &java.version);
     let _ = std::fs::remove_file(&archive_path);
     java_exe
-}
-
-async fn install_forge(
-    app_handle: &AppHandle,
-    state: &State<'_, LauncherAppState>,
-    game_dir: &Path,
-    java: &str,
-    minecraft: &str,
-    forge: &str,
-) -> Result<(), String> {
-    let url = pack::forge_installer_url(minecraft, forge);
-    log::info!("Downloading Forge installer {url}");
-    emit_status(
-        app_handle,
-        "forge",
-        format!("Downloading Forge {forge}"),
-        true,
-    );
-    let installer_path = game_dir.join("forge-installer.jar");
-    let partial = crate::download::partial_path(&installer_path);
-    let mut downloaded = 0;
-    state
-        .downloader
-        .download_one(
-            &url,
-            &partial,
-            "forge-installer",
-            0,
-            1,
-            1,
-            &mut downloaded,
-            0,
-        )
-        .await
-        .map_err(|e| format!("Forge download failed: {e}"))?;
-    crate::download::activate_partial(&partial, &installer_path)
-        .map_err(|e| format!("Failed to activate Forge installer: {e}"))?;
-
-    emit_status(app_handle, "forge", "Installing Forge client", false);
-    // The Forge installer refuses to run without a launcher profile file.
-    let launcher_profiles = game_dir.join("launcher_profiles.json");
-    if !launcher_profiles.exists() {
-        std::fs::write(
-            &launcher_profiles,
-            serde_json::json!({"profiles": {}, "settings": {}, "version": 3}).to_string(),
-        )
-        .map_err(|e| format!("Failed to create launcher profile: {e}"))?;
-    }
-    use tauri_plugin_shell::ShellExt;
-    let output = app_handle
-        .shell()
-        .command(java)
-        .args([
-            "-jar",
-            "forge-installer.jar",
-            "--installClient",
-            &game_dir.to_string_lossy(),
-        ])
-        .current_dir(game_dir)
-        .output()
-        .await
-        .map_err(|e| format!("Forge installer failed to start: {e}"))?;
-    let _ = std::fs::remove_file(&installer_path);
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        log::error!("Forge installer stderr: {stderr}");
-        log::error!("Forge installer stdout: {stdout}");
-        return Err(format!("Forge installer failed: {stderr} {stdout}"));
-    }
-    log::info!("Forge installed successfully");
-    Ok(())
 }
 
 async fn ensure_jar(
@@ -753,29 +673,31 @@ pub async fn launch_game(
     let game_dir = config.game_dir.clone();
     let game_dir_path = PathBuf::from(&game_dir);
 
-    let forge_version_id = pack
+    let loader_version_id = pack
         .as_ref()
         .and_then(|p| {
             p.meta
-                .forge
+                .loader
                 .as_deref()
-                .map(|forge| crate::minecraft::forge_version_id(&p.meta.minecraft, forge))
+                .map(|loader| crate::minecraft::loader_version_id(&p.meta.minecraft, loader))
         })
-        .or_else(|| crate::minecraft::find_forge_version_id(&game_dir_path));
+        .or_else(|| crate::minecraft::find_loader_version_id(&game_dir_path));
     let minecraft_version = pack
         .as_ref()
         .map(|p| p.meta.minecraft.clone())
         .or_else(|| {
-            forge_version_id
-                .as_ref()
-                .and_then(|id| id.split_once("-forge-").map(|(mc, _)| mc.to_string()))
+            loader_version_id.as_ref().and_then(|id| {
+                id.strip_prefix("fabric-loader-")?
+                    .split_once('-')
+                    .map(|(_, mc)| mc.to_string())
+            })
         })
         .unwrap_or_else(|| {
             std::env::var("BLOCKFIELD_MINECRAFT_VERSION")
                 .ok()
                 .filter(|v| !v.trim().is_empty())
                 .or_else(|| option_env!("BLOCKFIELD_MINECRAFT_VERSION").map(String::from))
-                .unwrap_or_else(|| "1.20.1".to_string())
+                .unwrap_or_else(|| "1.21.1".to_string())
         });
     let quick_play = pack
         .as_ref()
@@ -802,7 +724,7 @@ pub async fn launch_game(
             &app_handle,
             &game_dir_path,
             &minecraft_version,
-            forge_version_id.as_deref(),
+            loader_version_id.as_deref(),
         )
         .await?;
     }
@@ -812,7 +734,7 @@ pub async fn launch_game(
         &game_dir_path,
         ram_mb,
         &minecraft_version,
-        forge_version_id.as_deref(),
+        loader_version_id.as_deref(),
         &identity,
         quick_play.as_deref(),
     )?;

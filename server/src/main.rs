@@ -6,7 +6,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use blockfield_shared::{ForgeInfo, JavaInfo, ManifestFileEntry, ModpackManifest};
+use blockfield_shared::{JavaInfo, ManifestFileEntry, ModpackManifest};
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
@@ -29,12 +29,6 @@ use tower_http::{
     cors::{AllowOrigin, CorsLayer},
 };
 
-const DEFAULT_FORGE_VERSION: &str = "1.20.1-47.4.10";
-const DEFAULT_FORGE_URL: &str =
-    "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.4.10/forge-1.20.1-47.4.10-installer.jar";
-const DEFAULT_FORGE_SHA256: &str =
-    "1912760b4cb6b803d8a826de603c9076b1da71ec2765e9a1f8c1ca78f65278e3";
-const DEFAULT_FORGE_SIZE: u64 = 6_078_070;
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn is_private_modpack_path(path: &str) -> bool {
@@ -77,10 +71,6 @@ struct AppConfig {
     java_url: Option<String>,
     java_sha256: Option<String>,
     java_size: Option<u64>,
-    forge_url: Option<String>,
-    forge_version: Option<String>,
-    forge_sha256: Option<String>,
-    forge_size: Option<u64>,
     cms_url: Option<String>,
     cms_token: Option<String>,
     reload_token: Option<String>,
@@ -111,7 +101,7 @@ impl AppConfig {
             files_dir: env_string("FILES_DIR", "server/files").into(),
             extracted_dir: env_string("EXTRACTED_DIR", "server/extracted").into(),
             modpack_version: env_string("MODPACK_VERSION", "0.1.43"),
-            minecraft_version: env_string("MINECRAFT_VERSION", "1.20.1"),
+            minecraft_version: env_string("MINECRAFT_VERSION", "1.21.1"),
             bind_host: env_string("BIND_HOST", "0.0.0.0"),
             port: env_string("PORT", "3000").parse().unwrap_or(3000),
             api_prefix: env_string("API_PREFIX", "api/launcher/v1"),
@@ -120,10 +110,6 @@ impl AppConfig {
             java_url: env_opt("JAVA_URL"),
             java_sha256: env_opt("JAVA_SHA256"),
             java_size: env_u64("JAVA_SIZE"),
-            forge_version: Some(env_string("FORGE_VERSION", DEFAULT_FORGE_VERSION)),
-            forge_url: Some(env_string("FORGE_URL", DEFAULT_FORGE_URL)),
-            forge_sha256: Some(env_string("FORGE_SHA256", DEFAULT_FORGE_SHA256)),
-            forge_size: Some(env_u64("FORGE_SIZE").unwrap_or(DEFAULT_FORGE_SIZE)),
             cms_url: env_opt("CMS_URL").map(|url| url.trim_end_matches('/').to_string()),
             cms_token: env_opt("CMS_TOKEN"),
             reload_token: env_opt("RELOAD_TOKEN"),
@@ -169,7 +155,6 @@ struct ReleaseMetadata {
     minecraft_version: String,
     prune: Option<Vec<String>>,
     java: Option<JavaInfo>,
-    forge: Option<ForgeInfo>,
     source: Option<ReleaseSource>,
     archive_size: Option<u64>,
     archive_sha256: Option<String>,
@@ -209,7 +194,6 @@ struct CmsRelease {
     minecraft_version: Option<String>,
     prune: Option<Value>,
     java: Option<JavaInfo>,
-    forge: Option<ForgeInfo>,
     #[serde(alias = "javaVersion")]
     java_version: Option<String>,
     #[serde(alias = "javaPlatform")]
@@ -220,14 +204,6 @@ struct CmsRelease {
     java_sha256: Option<String>,
     #[serde(alias = "javaSize")]
     java_size: Option<u64>,
-    #[serde(alias = "forgeVersion")]
-    forge_version: Option<String>,
-    #[serde(alias = "forgeUrl")]
-    forge_url: Option<String>,
-    #[serde(alias = "forgeSha256")]
-    forge_sha256: Option<String>,
-    #[serde(alias = "forgeSize")]
-    forge_size: Option<u64>,
     modpack_zip: Option<CmsFileField>,
     build_zip: Option<CmsFileField>,
     build_file: Option<CmsFileField>,
@@ -248,14 +224,6 @@ impl CmsRelease {
                 size: self.java_size?,
             })
         });
-        let forge = self.forge.or_else(|| {
-            Some(ForgeInfo {
-                version: self.forge_version?,
-                url: self.forge_url?,
-                sha256: self.forge_sha256?,
-                size: self.forge_size?,
-            })
-        });
         let file = self
             .modpack_zip
             .or(self.build_zip)
@@ -273,7 +241,6 @@ impl CmsRelease {
                 .unwrap_or_else(|| config.minecraft_version.clone()),
             prune: parse_prune(self.prune),
             java: java.or_else(|| java_from_env(config)),
-            forge: forge.or_else(|| forge_from_env(config)),
             source,
             archive_size: self.archive_size,
             archive_sha256: self.archive_sha256,
@@ -380,7 +347,6 @@ fn fallback_release(config: &AppConfig) -> ReleaseMetadata {
         minecraft_version: config.minecraft_version.clone(),
         prune: None,
         java: java_from_env(config),
-        forge: forge_from_env(config),
         source: None,
         archive_size: None,
         archive_sha256: None,
@@ -395,15 +361,6 @@ fn java_from_env(config: &AppConfig) -> Option<JavaInfo> {
         url: config.java_url.clone()?,
         sha256: config.java_sha256.clone()?,
         size: config.java_size?,
-    })
-}
-
-fn forge_from_env(config: &AppConfig) -> Option<ForgeInfo> {
-    Some(ForgeInfo {
-        version: config.forge_version.clone()?,
-        url: config.forge_url.clone()?,
-        sha256: config.forge_sha256.clone()?,
-        size: config.forge_size?,
     })
 }
 
@@ -466,15 +423,6 @@ fn validate_release(release: &ReleaseMetadata) -> Result<(), String> {
         || !java.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err("Java runtime requires a size and a valid SHA-256 checksum".to_string());
-    }
-    if let Some(forge) = &release.forge {
-        if !forge.url.starts_with("https://")
-            || forge.size == 0
-            || forge.sha256.len() != 64
-            || !forge.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-        {
-            return Err("Forge requires an immutable HTTPS URL, size and SHA-256".to_string());
-        }
     }
     if let Some(prune) = &release.prune {
         for pattern in prune {
@@ -955,7 +903,6 @@ fn build_manifest(
         total_size,
         prune: release.prune.clone(),
         java: release.java.clone(),
-        forge: release.forge.clone(),
     })
 }
 
@@ -2101,10 +2048,6 @@ mod tests {
             java_url: Some("https://example.com/jre-17.0.16.zip".to_string()),
             java_sha256: Some("a".repeat(64)),
             java_size: Some(123),
-            forge_version: Some(DEFAULT_FORGE_VERSION.to_string()),
-            forge_url: Some(DEFAULT_FORGE_URL.to_string()),
-            forge_sha256: Some(DEFAULT_FORGE_SHA256.to_string()),
-            forge_size: Some(DEFAULT_FORGE_SIZE),
             cms_url: None,
             cms_token: None,
             reload_token: Some("r".repeat(32)),
@@ -2212,16 +2155,11 @@ mod tests {
             minecraft_version: Some("1.20.1".to_string()),
             prune: None,
             java: None,
-            forge: None,
             java_version: None,
             java_platform: None,
             java_url: None,
             java_sha256: None,
             java_size: None,
-            forge_version: None,
-            forge_url: None,
-            forge_sha256: None,
-            forge_size: None,
             modpack_zip: None,
             build_zip: None,
             build_file: None,
@@ -2236,17 +2174,6 @@ mod tests {
             release.java.unwrap().url,
             "https://example.com/jre-17.0.16.zip"
         );
-    }
-
-    #[test]
-    fn fallback_release_includes_forge() {
-        let release = fallback_release(&test_config());
-        let forge = release.forge.unwrap();
-
-        assert_eq!(forge.version, DEFAULT_FORGE_VERSION);
-        assert_eq!(forge.url, DEFAULT_FORGE_URL);
-        assert_eq!(forge.sha256, DEFAULT_FORGE_SHA256);
-        assert_eq!(forge.size, DEFAULT_FORGE_SIZE);
     }
 
     #[test]
@@ -2408,7 +2335,6 @@ mod tests {
             total_size: 3,
             prune: None,
             java: None,
-            forge: None,
         };
 
         persist_manifest(&root, &manifest).unwrap();

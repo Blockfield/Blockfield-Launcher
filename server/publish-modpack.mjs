@@ -14,7 +14,7 @@ const API_URL = (process.env.BLOCKFIELD_API_URL ?? 'http://localhost:3000/api/la
   '',
 )
 
-const [zipPath, version, minecraftVersion = '1.20.1'] = process.argv.slice(2)
+const [zipPath, version, minecraftVersion = '1.21.1'] = process.argv.slice(2)
 
 if (!zipPath || !version) {
   console.error('usage: pnpm cms:publish-modpack <zip-path> <version> [minecraft-version]')

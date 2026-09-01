@@ -106,12 +106,12 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const handleDeploy = useCallback(async () => {
     // Don't allow deploy until version check completes
     if (!versionInfo) return
-    // Update needed OR Java not ready OR Forge not installed → go to update screen
-    if (versionInfo.needsUpdate || !versionInfo.javaOk || !versionInfo.forgeOk) {
+    // Update needed OR Java not ready OR Fabric not installed → go to update screen
+    if (versionInfo.needsUpdate || !versionInfo.javaOk || !versionInfo.loaderOk) {
       onPlay()
       return
     }
-    // Confirmed up to date AND Java OK AND Forge installed → launch
+    // Confirmed up to date AND Java OK AND Fabric installed → launch
     if (isTauri()) {
       setLaunching(true)
       setLaunchError(null)
@@ -179,7 +179,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   // Derive display values from version check result
   const isChecked = versionInfo !== null
   const needsUpdate = versionInfo?.needsUpdate ?? false
-  const needsSetup = isChecked && (needsUpdate || !versionInfo.javaOk || !versionInfo.forgeOk)
+  const needsSetup = isChecked && (needsUpdate || !versionInfo.javaOk || !versionInfo.loaderOk)
   const upToDate = isChecked && !needsSetup
   const installedVersion = versionInfo?.installedVersion ?? '...'
   const latestVersion = versionInfo?.remoteVersion ?? '...'

@@ -124,8 +124,9 @@ jobs:
           VITE_COPYRIGHT: ${{ vars.VITE_COPYRIGHT || '2026 BLOCKFIELD COMMAND' }}
           BLOCKFIELD_MOJANG_MANIFEST_URL: ${{ vars.BLOCKFIELD_MOJANG_MANIFEST_URL || 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json' }}
           BLOCKFIELD_MOJANG_ASSET_BASE_URL: ${{ vars.BLOCKFIELD_MOJANG_ASSET_BASE_URL || 'https://resources.download.minecraft.net' }}
+          BLOCKFIELD_FABRIC_META_URL: ${{ vars.BLOCKFIELD_FABRIC_META_URL || 'https://meta.fabricmc.net' }}
           BLOCKFIELD_LAUNCHER_NAME: ${{ vars.BLOCKFIELD_LAUNCHER_NAME || 'BlockfieldLauncher' }}
-          BLOCKFIELD_MINECRAFT_VERSION: ${{ vars.BLOCKFIELD_MINECRAFT_VERSION || '1.20.1' }}
+          BLOCKFIELD_MINECRAFT_VERSION: ${{ vars.BLOCKFIELD_MINECRAFT_VERSION || '1.21.1' }}
           BLOCKFIELD_DEFAULT_RAM_MB: ${{ vars.BLOCKFIELD_DEFAULT_RAM_MB || '8192' }}
           BLOCKFIELD_AUTO_UPDATE: ${{ vars.BLOCKFIELD_AUTO_UPDATE || 'true' }}
           BLOCKFIELD_DEFAULT_LANG: ${{ vars.BLOCKFIELD_DEFAULT_LANG || 'en' }}

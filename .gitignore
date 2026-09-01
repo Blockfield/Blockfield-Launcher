@@ -24,4 +24,3 @@ Thumbs.db
 # Environment
 .env
 .env.local
-forge-installer.jar.log

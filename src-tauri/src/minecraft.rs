@@ -25,6 +25,16 @@ fn asset_base_url() -> String {
         .unwrap_or_else(|| "https://resources.download.minecraft.net".to_string())
 }
 
+fn fabric_meta_url() -> String {
+    std::env::var("BLOCKFIELD_FABRIC_META_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| option_env!("BLOCKFIELD_FABRIC_META_URL").map(String::from))
+        .unwrap_or_else(|| "https://meta.fabricmc.net".to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
 fn launcher_name() -> String {
     std::env::var("BLOCKFIELD_LAUNCHER_NAME")
         .ok()
@@ -40,18 +50,18 @@ struct Artifact {
     size: u64,
 }
 
-/// Version id the Forge installer creates under `versions/`, e.g. `1.20.1-forge-47.4.10`.
-pub fn forge_version_id(minecraft: &str, forge: &str) -> String {
-    format!("{minecraft}-forge-{forge}")
+/// Version id in the Fabric launch profile, e.g. `fabric-loader-0.19.3-1.21.1`.
+pub fn loader_version_id(minecraft: &str, loader: &str) -> String {
+    format!("fabric-loader-{loader}-{minecraft}")
 }
 
-pub fn find_forge_version_id(game_dir: &Path) -> Option<String> {
+pub fn find_loader_version_id(game_dir: &Path) -> Option<String> {
     let versions_dir = game_dir.join("versions");
     let entries = std::fs::read_dir(versions_dir).ok()?;
 
     entries.filter_map(Result::ok).find_map(|entry| {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.contains("-forge-") {
+        if !name.starts_with("fabric-loader-") {
             return None;
         }
 
@@ -60,10 +70,32 @@ pub fn find_forge_version_id(game_dir: &Path) -> Option<String> {
     })
 }
 
+pub fn loader_profile_exists(game_dir: &Path, loader_version_id: &str) -> bool {
+    version_json_path(game_dir, loader_version_id).exists()
+}
+
+/// Fabric ships no installer: the launch profile is a plain version json served by the meta API.
+pub async fn ensure_loader_profile(
+    game_dir: &Path,
+    minecraft: &str,
+    loader: &str,
+) -> Result<(), String> {
+    let id = loader_version_id(minecraft, loader);
+    let path = version_json_path(game_dir, &id);
+    if path.exists() {
+        return Ok(());
+    }
+    let url = format!(
+        "{}/v2/versions/loader/{minecraft}/{loader}/profile/json",
+        fabric_meta_url()
+    );
+    download_text_to(&url, &path).await
+}
+
 pub fn has_launch_dependencies(
     game_dir: &Path,
     minecraft_version: &str,
-    forge_version_id: Option<&str>,
+    loader_version_id: Option<&str>,
 ) -> bool {
     let vanilla_json_path = version_json_path(game_dir, minecraft_version);
     let vanilla_json = match read_json_file(&vanilla_json_path) {
@@ -83,18 +115,14 @@ pub fn has_launch_dependencies(
         return false;
     }
 
-    if let Some(forge_version_id) = forge_version_id {
-        let forge_json_path = version_json_path(game_dir, forge_version_id);
-        let forge_json = match read_json_file(&forge_json_path) {
+    if let Some(loader_version_id) = loader_version_id {
+        let loader_json_path = version_json_path(game_dir, loader_version_id);
+        let loader_json = match read_json_file(&loader_json_path) {
             Ok(json) => json,
             Err(_) => return false,
         };
 
-        if !artifacts_exist(game_dir, &[&forge_json]) {
-            return false;
-        }
-
-        if !forge_processed_jars_exist(game_dir, forge_version_id) {
+        if !artifacts_exist(game_dir, &[&loader_json]) {
             return false;
         }
     }
@@ -107,7 +135,7 @@ pub async fn ensure_launch_dependencies(
     app_handle: &AppHandle,
     game_dir: &Path,
     minecraft_version: &str,
-    forge_version_id: Option<&str>,
+    loader_version_id: Option<&str>,
 ) -> Result<(), String> {
     std::fs::create_dir_all(game_dir).map_err(|e| format!("Failed to create game dir: {e}"))?;
 
@@ -119,16 +147,15 @@ pub async fn ensure_launch_dependencies(
     ensure_client_jar(downloader, game_dir, minecraft_version, &vanilla_json).await?;
 
     let mut jsons = vec![vanilla_json.clone()];
-    if let Some(forge_version_id) = forge_version_id {
-        let forge_json_path = version_json_path(game_dir, forge_version_id);
-        if !forge_json_path.exists() {
+    if let Some(loader_version_id) = loader_version_id {
+        let loader_json_path = version_json_path(game_dir, loader_version_id);
+        if !loader_json_path.exists() {
             return Err(format!(
-                "Forge version JSON missing: {}",
-                forge_json_path.display()
+                "Loader version JSON missing: {}",
+                loader_json_path.display()
             ));
         }
-        ensure_forge_processed_jars(game_dir, forge_version_id)?;
-        jsons.push(read_json_file(&forge_json_path)?);
+        jsons.push(read_json_file(&loader_json_path)?);
     }
 
     let mut libraries = Vec::new();
@@ -176,7 +203,7 @@ pub async fn ensure_launch_dependencies(
 pub async fn prepare_download_plan(
     game_dir: &Path,
     minecraft_version: &str,
-    forge_version_id: Option<&str>,
+    loader_version_id: Option<&str>,
 ) -> Result<u64, String> {
     ensure_version_json(game_dir, minecraft_version).await?;
     let vanilla_json = read_json_file(&version_json_path(game_dir, minecraft_version))?;
@@ -196,10 +223,10 @@ pub async fn prepare_download_plan(
     }
 
     let mut jsons = vec![vanilla_json.clone()];
-    if let Some(forge_version_id) = forge_version_id {
+    if let Some(loader_version_id) = loader_version_id {
         jsons.push(read_json_file(&version_json_path(
             game_dir,
-            forge_version_id,
+            loader_version_id,
         ))?);
     }
     let mut libraries = Vec::new();
@@ -264,17 +291,17 @@ pub fn build_launch_args(
     game_dir: &Path,
     ram_mb: u32,
     minecraft_version: &str,
-    forge_version_id: Option<&str>,
+    loader_version_id: Option<&str>,
     identity: &crate::commands::GameIdentity,
     quick_play_server: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let vanilla_json = read_json_file(&version_json_path(game_dir, minecraft_version))?;
-    let forge_json = forge_version_id
+    let loader_json = loader_version_id
         .map(|id| read_json_file(&version_json_path(game_dir, id)))
         .transpose()?;
 
-    let version_name = forge_version_id.unwrap_or(minecraft_version);
-    let main_class = forge_json
+    let version_name = loader_version_id.unwrap_or(minecraft_version);
+    let main_class = loader_json
         .as_ref()
         .and_then(|json| json["mainClass"].as_str())
         .or_else(|| vanilla_json["mainClass"].as_str())
@@ -284,7 +311,7 @@ pub fn build_launch_args(
         game_dir,
         minecraft_version,
         &vanilla_json,
-        forge_json.as_ref(),
+        loader_json.as_ref(),
     );
     let asset_index = vanilla_json["assetIndex"]["id"]
         .as_str()
@@ -303,8 +330,8 @@ pub fn build_launch_args(
     let mut args = vec![format!("-Xmx{ram_mb}M"), format!("-Xms{ram_mb}M")];
 
     let mut jvm_args = collect_arguments(&vanilla_json, "jvm");
-    if let Some(ref forge_json) = forge_json {
-        jvm_args.extend(collect_arguments(forge_json, "jvm"));
+    if let Some(ref loader_json) = loader_json {
+        jvm_args.extend(collect_arguments(loader_json, "jvm"));
     }
 
     for arg in jvm_args {
@@ -314,8 +341,8 @@ pub fn build_launch_args(
     args.push(main_class.to_string());
 
     let mut game_args = collect_arguments(&vanilla_json, "game");
-    if let Some(ref forge_json) = forge_json {
-        game_args.extend(collect_arguments(forge_json, "game"));
+    if let Some(ref loader_json) = loader_json {
+        game_args.extend(collect_arguments(loader_json, "game"));
     }
 
     for arg in game_args {
@@ -551,7 +578,7 @@ fn collect_library_artifacts(version_json: &Value) -> (Vec<Artifact>, Vec<Artifa
             continue;
         }
 
-        if let Some(artifact) = artifact_from_value(&library["downloads"]["artifact"]) {
+        if let Some(artifact) = artifact_from_library(library) {
             libraries.push(artifact);
         }
 
@@ -593,6 +620,35 @@ fn asset_wanted(name: &str) -> bool {
         Some(lang) => matches!(lang, "en_us.json" | "ru_ru.json" | "uk_ua.json"),
         None => true,
     }
+}
+
+fn artifact_from_library(library: &Value) -> Option<Artifact> {
+    if let Some(artifact) = artifact_from_value(&library["downloads"]["artifact"]) {
+        return Some(artifact);
+    }
+    // Fabric lists libraries as maven coordinates plus a repository base, with no `downloads` block.
+    let path = maven_path(library["name"].as_str()?)?;
+    let base = library["url"].as_str()?.trim_end_matches('/');
+    Some(Artifact {
+        url: format!("{base}/{path}"),
+        path,
+        size: library["size"].as_u64().unwrap_or(0),
+    })
+}
+
+/// `group:artifact:version[:classifier]` -> `group/path/artifact/version/artifact-version[-classifier].jar`
+fn maven_path(name: &str) -> Option<String> {
+    let mut parts = name.split(':');
+    let group = parts.next()?.replace('.', "/");
+    let artifact = parts.next()?;
+    let version = parts.next()?;
+    let classifier = parts.next().map_or(String::new(), |c| format!("-{c}"));
+    let path = format!("{group}/{artifact}/{version}/{artifact}-{version}{classifier}.jar");
+    // The version json is untrusted input that decides where we write files.
+    (!path
+        .split('/')
+        .any(|part| part.is_empty() || part == ".." || part == "."))
+    .then_some(path)
 }
 
 fn artifact_from_value(value: &Value) -> Option<Artifact> {
@@ -693,11 +749,11 @@ fn build_classpath(
     game_dir: &Path,
     minecraft_version: &str,
     vanilla_json: &Value,
-    forge_json: Option<&Value>,
+    loader_json: Option<&Value>,
 ) -> String {
     let mut artifacts = collect_library_artifacts(vanilla_json).0;
-    if let Some(forge_json) = forge_json {
-        artifacts.extend(collect_library_artifacts(forge_json).0);
+    if let Some(loader_json) = loader_json {
+        artifacts.extend(collect_library_artifacts(loader_json).0);
     }
     artifacts = dedupe_artifacts(artifacts);
 
@@ -711,58 +767,13 @@ fn build_classpath(
                 .to_string()
         })
         .collect();
-    if let Some(forge_json) = forge_json {
-        let forge_version_id = forge_json["id"].as_str().unwrap_or_default();
-        paths.extend(
-            forge_processed_jars(game_dir, forge_version_id)
-                .into_iter()
-                .filter(|path| path.exists())
-                .map(|path| path.to_string_lossy().to_string()),
-        );
-    } else {
-        paths.push(
-            version_jar_path(game_dir, minecraft_version)
-                .to_string_lossy()
-                .to_string(),
-        );
-    }
+    paths.push(
+        version_jar_path(game_dir, minecraft_version)
+            .to_string_lossy()
+            .to_string(),
+    );
 
     paths.join(classpath_separator())
-}
-
-fn ensure_forge_processed_jars(game_dir: &Path, forge_version_id: &str) -> Result<(), String> {
-    if forge_processed_jars_exist(game_dir, forge_version_id) {
-        return Ok(());
-    }
-
-    let expected = forge_processed_jars(game_dir, forge_version_id)
-        .into_iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(format!(
-        "Forge processed client jars are missing. Reinstall Forge; expected: {expected}"
-    ))
-}
-
-fn forge_processed_jars_exist(game_dir: &Path, forge_version_id: &str) -> bool {
-    forge_processed_jars(game_dir, forge_version_id)
-        .iter()
-        .all(|path| path.exists())
-}
-
-fn forge_processed_jars(game_dir: &Path, forge_version_id: &str) -> Vec<PathBuf> {
-    let forge_version = forge_version_id.replace("-forge-", "-");
-    let forge_dir = game_dir
-        .join("libraries")
-        .join("net")
-        .join("minecraftforge")
-        .join("forge")
-        .join(&forge_version);
-    vec![
-        forge_dir.join(format!("forge-{forge_version}-client.jar")),
-        forge_dir.join(format!("forge-{forge_version}-universal.jar")),
-    ]
 }
 
 fn collect_arguments(version_json: &Value, kind: &str) -> Vec<String> {
@@ -1027,5 +1038,36 @@ mod tests {
         );
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fabric_maven_libraries_resolve_to_repository_paths() {
+        let json = serde_json::json!({"libraries": [
+            {"name": "org.ow2.asm:asm:9.10.1", "url": "https://maven.fabricmc.net/", "size": 126151},
+            {"name": "net.fabricmc:fabric-loader:0.19.3", "url": "https://maven.fabricmc.net/"},
+            {"name": "no-coordinates", "url": "https://maven.fabricmc.net/"},
+            {"name": "a:b:../../evil", "url": "https://maven.fabricmc.net/"}
+        ]});
+
+        let (libraries, _) = collect_library_artifacts(&json);
+        let paths: Vec<_> = libraries.iter().map(|a| a.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
+                "net/fabricmc/fabric-loader/0.19.3/fabric-loader-0.19.3.jar"
+            ]
+        );
+        assert_eq!(
+            libraries[0].url,
+            "https://maven.fabricmc.net/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar"
+        );
+        assert_eq!(libraries[0].size, 126151);
+        // No size in the profile json: artifact_needs_download falls back to an existence check.
+        assert_eq!(libraries[1].size, 0);
+        assert_eq!(
+            loader_version_id("1.21.1", "0.19.3"),
+            "fabric-loader-0.19.3-1.21.1"
+        );
     }
 }

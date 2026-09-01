@@ -23,7 +23,6 @@ Optional:
 
 - `prune` — JSON array of paths to delete, e.g. `["mods/old.jar", "config/*"]`
 - `java` — JSON: `{ "version", "platform", "url", "sha256", "size" }`
-- `forge` — JSON: `{ "version", "url", "sha256", "size" }`
 
 ### `launcher_content`
 
