@@ -23,9 +23,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(move |app| {
+            // На Linux обновляться умеет только AppImage: голый бинарник (scripts/install-linux.sh)
+            // апдейтер перезаписывает AppImage'ем с чужим WebKitGTK, который на Fedora/Wayland
+            // падает с EGL_BAD_PARAMETER и показывает пустое окно. Без плагина check() в App.tsx
+            // бросает исключение, которое там уже гасится.
+            if !cfg!(target_os = "linux") || std::env::var_os("APPIMAGE").is_some() {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
