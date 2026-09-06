@@ -72,7 +72,14 @@ export function Shell({
     <div className="relative h-full w-full bg-[#070604] flex flex-col">
       <header className="shell-header h-14 shrink-0 border-b border-[#18130D] bg-[#0B0906] flex items-center justify-between gap-4 px-5">
         <div className="flex min-w-0 items-center gap-6">
-          <Logo size={26} withWordmark wordmark={brand} subtitle={brandSubtitle} />
+          <button
+            type="button"
+            onClick={() => onNavigate('main')}
+            aria-label={`${brand} — ${t('nav.deploy')}`}
+            className="shrink-0 text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#F5A524]"
+          >
+            <Logo size={26} withWordmark wordmark={brand} subtitle={brandSubtitle} />
+          </button>
           <nav className="flex items-center gap-1">
             {NAV_ITEMS.map((item) => (
               <NavItem

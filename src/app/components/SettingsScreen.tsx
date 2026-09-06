@@ -647,7 +647,7 @@ function Toggle({
       }`}
     >
       <span
-        className={`absolute top-0.5 size-5 transition-all ${
+        className={`absolute top-1/2 -translate-y-1/2 size-5 transition-all ${
           on
             ? 'left-[30px] bg-[#F5A524] shadow-[0_0_10px_rgba(245,165,36,0.6)]'
             : 'left-0.5 bg-[#3A2C1D]'
