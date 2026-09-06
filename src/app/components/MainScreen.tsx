@@ -1,6 +1,9 @@
+import { useGameState, gameStateLabel, launchGame } from '../../lib/game-state'
+import { checkModpack } from '../../lib/modpack-check'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   Play,
+  Gamepad2,
   Wifi,
   Users,
   Activity,
@@ -9,11 +12,9 @@ import {
   Swords,
   Truck,
   Crosshair,
-  ChevronRight,
   RefreshCw,
   LoaderCircle,
 } from 'lucide-react'
-import { invoke } from '@tauri-apps/api/core'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
@@ -46,53 +47,13 @@ const FEATURE_ICONS: Record<string, ReactNode> = {
   crosshair: <Crosshair size={14} />,
 }
 
-type FeedTone = 'amber' | 'green' | 'sand'
-type FallbackFeedEntry = {
-  tagKey: TKey
-  tone: FeedTone
-  date: string
-  titleKey: TKey
-  bodyKey: TKey
-  vars?: Record<string, string>
-}
-type FeedEntry = { tag: string; tone: FeedTone; date: string; title: string; body: string }
-
-const FEED: FallbackFeedEntry[] = [
-  {
-    tagKey: 'main.tag.patch',
-    tone: 'amber',
-    date: '06.07',
-    titleKey: 'main.feed.patch.title',
-    bodyKey: 'main.feed.patch.body',
-    vars: { v: '...' },
-  },
-  {
-    tagKey: 'main.tag.event',
-    tone: 'green',
-    date: '06.05',
-    titleKey: 'main.feed.event.title',
-    bodyKey: 'main.feed.event.body',
-  },
-  {
-    tagKey: 'main.tag.ops',
-    tone: 'sand',
-    date: '06.02',
-    titleKey: 'main.feed.ops.title',
-    bodyKey: 'main.feed.ops.body',
-  },
-]
-
-const FEED_TAG_KEYS: Record<string, TKey> = {
-  PATCH: 'main.tag.patch',
-  EVENT: 'main.tag.event',
-  OPS: 'main.tag.ops',
-}
-
 /** Whether we're running inside Tauri (vs browser dev). */
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
 export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const { lang, t } = useI18n()
+  const game = useGameState()
+  const gameBusy = game.phase !== 'idle'
   const content = useLauncherContent()
   const [versionInfo, setVersionInfo] = useState<VersionCheckResult | null>(null)
   const [checking, setChecking] = useState(true)
@@ -105,7 +66,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
 
   const handleDeploy = useCallback(async () => {
     // Don't allow deploy until version check completes
-    if (!versionInfo) return
+    if (!versionInfo || checking || launching || gameBusy) return
     // Update needed OR Java not ready OR Fabric not installed → go to update screen
     if (versionInfo.needsUpdate || !versionInfo.javaOk || !versionInfo.loaderOk) {
       onPlay()
@@ -129,7 +90,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           }
           if (p.filePath) setLaunchStatus(p.filePath)
         })
-        await invoke('launch_game')
+        await launchGame()
         setLaunchStatus(t('main.gameStarted'))
       } catch (e) {
         console.error('Launch failed:', e)
@@ -141,18 +102,19 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
         setLaunching(false)
       }
     }
-  }, [versionInfo, onPlay, t])
+  }, [versionInfo, checking, launching, gameBusy, onPlay, t])
 
-  const checkVersion = useCallback(async () => {
+  const checkVersion = useCallback(async (verify = false) => {
     if (!isTauri()) return
     setChecking(true)
     setCheckError(null)
     setLaunchError(null)
     try {
-      const result = await invoke<VersionCheckResult>('check_modpack_version')
+      const result = await checkModpack(verify)
       setVersionInfo(result)
     } catch (e) {
       console.error('Failed to check modpack version:', e)
+      setVersionInfo(null)
       setCheckError(String(e))
     } finally {
       setChecking(false)
@@ -185,24 +147,31 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const latestVersion = versionInfo?.remoteVersion ?? '...'
   const totalSize = versionInfo?.totalSize ? `${(versionInfo.totalSize / 1e9).toFixed(1)} GB` : '—'
   const launchProgressText = launchProgress === null ? '' : ` · ${launchProgress.toFixed(0)}%`
-  const launchSub = launching
-    ? `${launchStatus || t('main.launching')}${launchProgressText}`.slice(0, 64)
-    : launchError
-      ? launchError.slice(0, 64)
-      : !isChecked
-        ? t('main.checking')
-        : needsSetup
-          ? t('main.updateAvailable')
-          : t('main.enterBattlefield')
-  const launchLabel = launching
-    ? t('main.launching')
-    : launchError
-      ? t('main.launchFailed')
-      : !isChecked
-        ? '...'
-        : needsSetup
-          ? t('nav.updates')
-          : t('nav.deploy')
+  const launchSub =
+    game.phase === 'running'
+      ? 'Закройте игру, чтобы запустить снова'
+      : game.phase === 'finishing'
+        ? 'Выполняются команды после выхода'
+        : launching
+          ? `${launchStatus || t('main.launching')}${launchProgressText}`.slice(0, 64)
+          : launchError
+            ? launchError.slice(0, 64)
+            : !isChecked
+              ? t('main.checking')
+              : needsSetup
+                ? t(needsUpdate ? 'main.updateAvailable' : 'main.setupRequired')
+                : t('main.enterBattlefield')
+  const launchLabel = gameBusy
+    ? gameStateLabel(game.phase)
+    : launching
+      ? t('main.launching')
+      : launchError
+        ? t('main.launchFailed')
+        : !isChecked
+          ? '...'
+          : needsSetup
+            ? t(needsUpdate ? 'main.updateAction' : 'main.prepare')
+            : t('update.playNow')
 
   // Modpack status line
   const modpackStatus: { value: string; tone: Tone } = checking
@@ -212,7 +181,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
       : upToDate
         ? { value: t('main.upToDate'), tone: 'ok' }
         : needsSetup
-          ? { value: t('main.updateAvailable'), tone: 'warn' }
+          ? { value: t(needsUpdate ? 'main.updateAvailable' : 'main.setupRequired'), tone: 'warn' }
           : { value: t('main.upToDate'), tone: 'muted' }
   const operationName =
     localizedContentText(
@@ -232,7 +201,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
   const players = serverStatus?.playersOnline?.toString() ?? '—'
   const ping = serverStatus?.serverLatencyMs?.toString() ?? '—'
-  const region = serverStatus?.regionCode ?? '—'
+  const region = serverStatus?.regionCode?.trim() || '—'
   const features =
     content?.features?.flatMap((feature, index) =>
       feature.title && feature.desc
@@ -253,49 +222,27 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           title: t(feature.title),
           desc: t(feature.desc),
         }))
-  const feed =
-    content?.feed?.flatMap((entry, index) => {
-      if (!entry.title || !entry.body) return []
-      const tagKey = entry.tag ? FEED_TAG_KEYS[entry.tag] : undefined
-      return [
-        {
-          tag: tagKey ? t(tagKey) : (entry.tag ?? ''),
-          tone: feedTone(entry.tone),
-          date: entry.date ?? '',
-          title: localizedContentText(content, lang, `feed.${index}.title`) ?? entry.title,
-          body: localizedContentText(content, lang, `feed.${index}.body`) ?? entry.body,
-        },
-      ]
-    }) ?? []
-  const displayFeed =
-    feed.length > 0
-      ? feed
-      : FEED.map((entry) => ({
-          tag: t(entry.tagKey),
-          tone: entry.tone,
-          date: entry.date,
-          title: t(entry.titleKey, entry.vars ? { ...entry.vars, v: latestVersion } : undefined),
-          body: t(entry.bodyKey),
-        }))
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-[#070604]">
+    <div className="relative h-full w-full overflow-y-auto xl:overflow-hidden bg-[#070604]">
       <TopoBackdrop />
       <GridBackdrop intensity={0.5} />
 
-      <div className="relative h-full grid grid-cols-[minmax(0,1fr)_340px] gap-0">
-        <section className="relative p-5 flex flex-col min-h-0">
-          <OperationBar label={t('main.operation')} status={t('main.active')} />
+      <div className="relative xl:h-full w-full max-w-[1600px] mx-auto">
+        <section className="relative xl:h-full p-5 md:p-7 flex flex-col min-h-0">
+          <OperationBar label={t('main.operation')} />
 
-          <div className="flex min-w-0 items-start justify-between gap-6">
-            <div className="max-w-[560px]">
+          <div className="flex flex-col md:flex-row min-w-0 items-start justify-between gap-6">
+            <div className="max-w-[660px]">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
-                <h1 className="tracking-[0.06em] text-[26px] leading-none text-neutral-50">
+                <h1 className="tracking-[0.04em] text-[34px] leading-tight text-neutral-50">
                   {operationName}
                 </h1>
                 <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">{season}</span>
               </div>
-              <p className="text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">{description}</p>
+              <p className="text-[13px] leading-relaxed text-[#C7AE86] max-w-[620px]">
+                {description}
+              </p>
             </div>
 
             <ServerStatus
@@ -306,15 +253,16 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           </div>
 
           {/* PLAY zone */}
-          <GlowPanel className="p-4">
+          <GlowPanel className="p-4 md:p-5">
             <div className="flex flex-wrap items-center justify-between gap-5">
-              <div className="flex min-w-0 items-center gap-4">
+              <div className="flex flex-wrap min-w-0 items-center gap-4">
                 <DeployButton
                   onPlay={handleDeploy}
-                  disabled={!isChecked || launching}
+                  disabled={!isChecked || checking || launching || gameBusy}
                   label={launchLabel}
                   sub={launchSub}
                   busy={launching}
+                  inGame={game.phase === 'running'}
                 />
                 <div className="flex flex-col gap-2 pl-2">
                   <Stat
@@ -346,24 +294,25 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                   icon={<Wifi size={14} />}
                   label={t('main.region')}
                   value={region}
-                  sub={serverStatus?.locationName ?? ''}
+                  sub=""
+                  title={serverStatus?.locationName || t('main.region')}
                 />
               </div>
             </div>
           </GlowPanel>
 
           {/* Briefing + Modpack */}
-          <div className="mt-4 grid grid-cols-[minmax(0,1.35fr)_minmax(270px,1fr)] gap-px bg-[#18130D] border border-[#2A2116] flex-1 min-h-0">
-            <div className="bg-[#0B0906] p-4 min-h-0">
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-[minmax(0,1.6fr)_minmax(300px,1fr)] gap-px bg-[#18130D] border border-[#2A2116] flex-1 min-h-0">
+            <div className="bg-[#0B0906] p-4 md:p-5 min-h-0 overflow-y-auto">
               <SectionHeader label={t('main.briefing')} code="BRF-001" />
-              <div className="grid grid-cols-2 gap-x-5 gap-y-3 mt-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5 mt-5">
                 {displayFeatures.map((f) => (
                   <FeatureItem key={f.title} icon={f.icon} title={f.title} desc={f.desc} />
                 ))}
               </div>
             </div>
 
-            <div className="bg-[#0B0906] p-4 flex flex-col min-h-0">
+            <div className="bg-[#0B0906] p-4 md:p-5 flex flex-col min-h-0">
               <SectionHeader label={t('main.modpackStatus')} code="PKG-LIVE" />
               <div className="mt-3 flex flex-col gap-2 flex-1">
                 <Row label={t('main.installed')} value={installedVersion} />
@@ -371,7 +320,15 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                 <Row label={t('main.size')} value={totalSize} />
                 <Row
                   label={t('main.autoUpdate')}
-                  value={needsSetup ? t('main.updateAvailable') : t('main.upToDate')}
+                  value={
+                    checking
+                      ? t('main.checking')
+                      : checkError
+                        ? 'OFFLINE'
+                        : needsSetup
+                          ? t(needsUpdate ? 'main.updateAvailable' : 'main.setupRequired')
+                          : t('main.upToDate')
+                  }
                   highlight={needsSetup}
                 />
                 {checkError && (
@@ -381,8 +338,8 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                 )}
               </div>
               <button
-                onClick={checkVersion}
-                disabled={checking}
+                onClick={() => checkVersion(true)}
+                disabled={checking || gameBusy}
                 className="mt-3 h-8 border border-[#2A2116] hover:border-[#8A571C] text-[10px] tracking-[0.16em] text-[#C7AE86] hover:text-[#F3E7D0] flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
               >
                 {checking ? (
@@ -390,27 +347,11 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                 ) : (
                   <RefreshCw size={12} />
                 )}
-                {checking ? t('main.checking') : t('nav.updates')}
+                {checking ? t('main.checking') : t('main.verifyFiles')}
               </button>
             </div>
           </div>
         </section>
-
-        {/* Side rail */}
-        <aside className="relative border-l border-[#18130D] bg-[#0B0906]/80 p-4 flex flex-col min-h-0">
-          <SectionHeader label={t('main.fieldReport')} code="OPS-LOG" />
-
-          <div className="mt-3 flex-1 min-h-0 flex flex-col gap-px bg-[#18130D] border border-[#2A2116] overflow-hidden">
-            {displayFeed.map((entry) => (
-              <FeedItem key={`${entry.date}:${entry.title}`} entry={entry} />
-            ))}
-          </div>
-
-          <button className="mt-3 min-h-8 text-left text-[10px] tracking-[0.16em] text-[#8E7A5E] hover:text-[#F3E7D0] flex items-center justify-between gap-2 border-t border-[#18130D] pt-3">
-            <span>{t('main.viewLog')}</span>
-            <ChevronRight size={12} />
-          </button>
-        </aside>
       </div>
     </div>
   )
@@ -422,21 +363,25 @@ function DeployButton({
   sub,
   disabled,
   busy,
+  inGame,
 }: {
   onPlay: () => void
   label: string
   sub: string
   disabled?: boolean
   busy?: boolean
+  inGame?: boolean
 }) {
   return (
     <button
       onClick={onPlay}
       disabled={disabled}
       className={`group relative h-[64px] w-[230px] shrink-0 overflow-hidden border transition-all ${
-        disabled
-          ? 'border-[#2A2116] bg-[#0B0906] opacity-50 cursor-not-allowed'
-          : 'border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524]'
+        inGame
+          ? 'border-[#82D66B]/40 bg-[#0B0906] cursor-default'
+          : disabled
+            ? 'border-[#2A2116] bg-[#0B0906] opacity-50 cursor-not-allowed'
+            : 'border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524]'
       }`}
       style={
         disabled
@@ -461,7 +406,9 @@ function DeployButton({
       />
       <span className="absolute inset-0 bg-[#F5A524]/0 group-hover:bg-[#F5A524]/10 transition-colors" />
       <span className="relative h-full flex items-center justify-center gap-4">
-        {busy ? (
+        {inGame ? (
+          <Gamepad2 size={18} className="text-[#82D66B]" />
+        ) : busy ? (
           <LoaderCircle size={18} className="animate-spin text-[#F3E7D0]" />
         ) : (
           <Play
@@ -503,7 +450,9 @@ function ServerStatus({
         <ShieldCheck size={14} className="text-[#F5A524]" />
         <span className="tracking-[0.18em] text-[13px] text-neutral-100">{serverName}</span>
       </div>
-      <div className="mt-2 text-[10px] tracking-[0.22em] text-[#8E7A5E]">{serverIp}</div>
+      <div title={serverIp} className="mt-2 text-[10px] tracking-[0.08em] text-[#8E7A5E] truncate">
+        {serverIp}
+      </div>
     </div>
   )
 }
@@ -528,14 +477,16 @@ function Metric({
   label,
   value,
   sub,
+  title,
 }: {
   icon: ReactNode
   label: string
   value: string
   sub: string
+  title?: string
 }) {
   return (
-    <div className="flex flex-col items-end gap-1 min-w-[58px]">
+    <div title={title} className="flex flex-col items-end gap-1 min-w-[58px]">
       <span className="flex items-center gap-1.5 text-[9px] tracking-[0.16em] text-[#8E7A5E]">
         {icon} {label}
       </span>
@@ -574,38 +525,6 @@ function Row({ label, value, highlight }: { label: string; value: string; highli
   )
 }
 
-const FEED_TAG_CLASS: Record<FeedTone, string> = {
-  amber: 'text-[#F5A524] border-[#8A571C]',
-  green: 'text-[#82D66B] border-[#3a5a30]',
-  sand: 'text-[#C7AE86] border-[#3A2C1D]',
-}
-
-function FeedItem({ entry }: { entry: FeedEntry }) {
-  return (
-    <details className="group bg-[#0B0906] p-4 hover:bg-[#11100D] transition-colors">
-      <summary className="list-none cursor-pointer [&::-webkit-details-marker]:hidden">
-        <div className="flex items-start justify-between gap-2">
-          <span
-            className={`shrink-0 text-[9px] tracking-[0.16em] border px-1.5 py-0.5 ${FEED_TAG_CLASS[entry.tone]}`}
-          >
-            {entry.tag}
-          </span>
-          <span className="text-[10px] tracking-[0.24em] text-[#5E5040]">{entry.date}</span>
-        </div>
-        <span className="mt-2 flex items-center justify-between gap-2 text-[12px] tracking-[0.04em] text-neutral-100">
-          {entry.title}
-          <ChevronRight size={12} className="shrink-0 transition-transform group-open:rotate-90" />
-        </span>
-      </summary>
-      <p className="mt-2 text-[11px] leading-snug text-[#8E7A5E]">{entry.body}</p>
-    </details>
-  )
-}
-
 function featureIcon(icon?: string) {
   return (icon && FEATURE_ICONS[icon]) || <Flag size={14} />
-}
-
-function feedTone(tone?: string): FeedTone {
-  return tone === 'green' || tone === 'sand' ? tone : 'amber'
 }

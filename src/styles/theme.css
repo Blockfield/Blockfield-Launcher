@@ -218,3 +218,127 @@
 *::-webkit-scrollbar-corner {
   background: #0b0906;
 }
+
+.ram-number {
+  appearance: textfield;
+  color-scheme: dark;
+  font-variant-numeric: tabular-nums;
+}
+
+.ram-number::-webkit-inner-spin-button,
+.ram-number::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+input,
+textarea {
+  caret-color: var(--primary);
+}
+
+input[type='range']:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+}
+
+.command-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.update-layout > *:not(.update-lists) {
+  flex-shrink: 0;
+}
+
+@media (height <= 800px) {
+  .update-summary p {
+    display: none;
+  }
+
+  .update-mirror {
+    padding-block: 8px;
+  }
+
+  .update-stats > div {
+    padding: 8px 12px;
+  }
+}
+
+@media (width < 768px) {
+  .shell-header {
+    height: auto;
+    min-height: 88px;
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .shell-header > div:first-child {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .shell-header nav button {
+    padding-inline: 8px;
+    letter-spacing: 0.08em;
+  }
+
+  .shell-header > div:last-child,
+  .shell-footer > div:last-child,
+  .shell-footer > div:first-child > :not(:first-child) {
+    display: none;
+  }
+
+  .update-summary {
+    align-items: center;
+  }
+
+  .update-mirror {
+    width: 120px;
+    padding: 8px;
+  }
+
+  .update-mirror > div:first-child,
+  .update-layout > div:first-child > span:first-child {
+    display: none;
+  }
+
+  .update-actions {
+    flex-wrap: wrap;
+  }
+
+  .update-actions > div:last-child {
+    margin-left: auto;
+  }
+
+  .update-actions button {
+    width: 160px;
+  }
+
+  .update-actions > div:last-child > div:last-child {
+    font-size: 28px;
+  }
+
+  .update-lists {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.launcher-update-progress {
+  appearance: none;
+  border: 1px solid #2a2116;
+  background: #0b0906;
+  accent-color: #f5a524;
+}
+
+.launcher-update-progress::-webkit-progress-bar {
+  background: #0b0906;
+}
+
+.launcher-update-progress::-webkit-progress-value {
+  background: #f5a524;
+}
+
+.launcher-update-progress::-moz-progress-bar {
+  background: #f5a524;
+}

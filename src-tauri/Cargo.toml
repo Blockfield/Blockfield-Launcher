@@ -1,6 +1,6 @@
 [package]
 name = "blockfield-launcher"
-version = "0.2.2"
+version = "0.3.0"
 description = "Blockfield Launcher"
 authors = ["you"]
 license = ""
@@ -27,6 +27,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-single-instance = "2"
 reqwest = { version = "0.12", features = ["gzip", "json", "stream"] }
 sha2 = "0.10"
 md-5 = "0.10"
@@ -41,3 +42,12 @@ fs2 = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ar = "0.9"
+flate2 = "1"
+tar = "0.4"
+tempfile = "3"
+
+[dev-dependencies]
+tauri = { version = "2.11.2", features = ["test"] }

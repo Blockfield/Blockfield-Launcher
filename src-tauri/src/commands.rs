@@ -23,6 +23,8 @@ pub struct LauncherAppState {
     /// Direct handle to the atomic cancel flag so cancel_download can set it
     /// without any lock contention.
     pub cancel_flag: Arc<AtomicBool>,
+    pub game: Arc<crate::game::GameState>,
+    pub operation: tokio::sync::Mutex<()>,
 }
 
 /// What `check_modpack_version` learned about the hosted pack.
@@ -314,6 +316,13 @@ pub async fn download_modpack(
     app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
 ) -> Result<(), String> {
+    let _operation = state
+        .operation
+        .try_lock()
+        .map_err(|_| "Another launcher operation is in progress")?;
+    if state.game.is_busy() {
+        return Err("Close the game before updating files".to_string());
+    }
     let pack = state
         .pack
         .read()
@@ -624,9 +633,36 @@ fn run_packwiz_installer(
     Ok(())
 }
 
-/// Integrity is enforced by packwiz-installer on every sync; nothing extra to verify here.
 #[tauri::command]
-pub async fn verify_files(_state: State<'_, LauncherAppState>) -> Result<Vec<String>, String> {
+pub async fn verify_files(
+    app_handle: AppHandle,
+    state: State<'_, LauncherAppState>,
+) -> Result<Vec<String>, String> {
+    let _operation = state
+        .operation
+        .try_lock()
+        .map_err(|_| "Another launcher operation is in progress")?;
+    if state.game.is_busy() {
+        return Err("Close the game before verifying files".to_string());
+    }
+    let pack = state
+        .pack
+        .read()
+        .await
+        .clone()
+        .ok_or("Check the modpack first")?;
+    let config = state.config.read().await.clone();
+    let game_dir = PathBuf::from(&config.game_dir);
+    let java = resolved_java_path(&config);
+    ensure_jar(&state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
+    ensure_jar(&state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
+    state.downloader.reset_cancel();
+    let cancel = state.cancel_flag.clone();
+    tokio::task::spawn_blocking(move || {
+        run_packwiz_installer(&app_handle, &cancel, &java, &game_dir, &pack.info.pack)
+    })
+    .await
+    .map_err(|e| format!("Verification task failed: {e}"))??;
     Ok(Vec::new())
 }
 
@@ -645,9 +681,20 @@ pub async fn server_status(state: State<'_, LauncherAppState>) -> Result<ServerS
         None => pack::fetch_launcher_info(&pack_base_url()?).await?.server,
     };
     let (host, port) = crate::status::split_host_port(&target);
-    tokio::task::spawn_blocking(move || crate::status::ping(&host, port))
-        .await
-        .map_err(|e| format!("status task failed: {e}"))
+    let ping_host = host.clone();
+    let (status, (region_code, location_name)) = tokio::join!(
+        tokio::task::spawn_blocking(move || crate::status::ping(&ping_host, port)),
+        crate::status::locate(&host, port),
+    );
+    let mut status = status.map_err(|e| format!("status task failed: {e}"))?;
+    status.region_code = region_code;
+    status.location_name = location_name;
+    Ok(status)
+}
+
+#[tauri::command]
+pub fn game_status(state: State<'_, LauncherAppState>) -> crate::game::GameStatus {
+    state.game.snapshot()
 }
 
 // ── Game launch command ────────────────────────────────────────
@@ -657,6 +704,11 @@ pub async fn launch_game(
     app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
 ) -> Result<(), String> {
+    let _operation = state
+        .operation
+        .try_lock()
+        .map_err(|_| "Another launcher operation is in progress")?;
+    let running = state.game.begin()?;
     let config = state.config.read().await.clone();
     let identity = GameIdentity::offline(&config.username)?;
     let pack = state.pack.read().await.clone();
@@ -739,15 +791,42 @@ pub async fn launch_game(
         quick_play.as_deref(),
     )?;
 
+    if !config.pre_launch_command.trim().is_empty() {
+        emit_status(&app_handle, "launch", "Running pre-launch command", false);
+        let hook_config = config.clone();
+        let hook_java = java.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::launch_hooks::run_hook(
+                &hook_config.pre_launch_command,
+                &hook_config,
+                &hook_java,
+                None,
+            )
+        })
+        .await
+        .map_err(|e| format!("Pre-launch task failed: {e}"))??;
+    }
     emit_status(&app_handle, "launch", "Starting game process", false);
-    let child = std::process::Command::new(&java)
+    let log_dir = game_dir_path.join("logs");
+    std::fs::create_dir_all(&log_dir).map_err(|e| format!("Cannot create log directory: {e}"))?;
+    let output = std::fs::File::create(log_dir.join("launcher-game.log"))
+        .map_err(|e| format!("Cannot create game log: {e}"))?;
+    let mut child = std::process::Command::new(&java)
         .args(&args)
         .current_dir(&game_dir)
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(output.try_clone().map_err(|e| e.to_string())?)
+        .stderr(output)
         .spawn()
         .map_err(|e| format!("Failed to spawn game process: {e}"))?;
+    running.started();
+    if config.hide_while_playing {
+        if let Some(window) = app_handle.get_webview_window("main") {
+            if let Err(error) = window.hide() {
+                log::warn!("Cannot hide launcher: {error}");
+            }
+        }
+    }
     log::info!("Game process spawned (pid {})", child.id());
     emit_status(
         &app_handle,
@@ -755,6 +834,36 @@ pub async fn launch_game(
         format!("Game process started (pid {})", child.id()),
         false,
     );
+    std::thread::spawn(move || {
+        let _running = running;
+        let exit = child.wait();
+        _running.finishing();
+        crate::game::restore_hidden_launcher(&app_handle);
+        match exit {
+            Ok(exit) => {
+                let result = crate::launch_hooks::run_hook(
+                    &config.post_exit_command,
+                    &config,
+                    &java,
+                    exit.code(),
+                );
+                let message = match result {
+                    Ok(()) => format!("Game exited ({exit})"),
+                    Err(error) => {
+                        emit_status(&app_handle, "hook-error", &error, false);
+                        format!("Post-exit command failed: {error}")
+                    }
+                };
+                emit_status(&app_handle, "exited", message, false);
+            }
+            Err(error) => emit_status(
+                &app_handle,
+                "exited",
+                format!("Failed to wait for game: {error}"),
+                false,
+            ),
+        }
+    });
     Ok(())
 }
 

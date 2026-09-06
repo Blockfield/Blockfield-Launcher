@@ -1,3 +1,4 @@
+import { useLauncherUpdate } from '../../lib/launcher-update'
 import type { ReactNode } from 'react'
 import { Settings, Gamepad2, Download, LifeBuoy } from 'lucide-react'
 import { useI18n, type TKey } from '../i18n'
@@ -19,16 +20,34 @@ export function Shell({
   active,
   user,
   onNavigate,
+  onLauncherUpdate,
   children,
 }: {
   active: Screen
   user: { username: string; role: string }
   onNavigate: (s: Screen) => void
+  onLauncherUpdate: () => void
   children: ReactNode
 }) {
   const { lang, t } = useI18n()
   const content = useLauncherContent()
   const launcherVersion = useLauncherVersion()
+  const update = useLauncherUpdate()
+  const updateLabel = update.installed
+    ? 'Перезапустить'
+    : update.phase === 'available'
+      ? `Доступна ${update.update?.version}`
+      : update.phase === 'downloading'
+        ? `Загрузка ${update.total ? Math.min(100, Math.round((update.downloaded / update.total) * 100)) + '%' : '…'}`
+        : update.phase === 'checking'
+          ? 'Проверка…'
+          : update.phase === 'verifying'
+            ? 'Проверка подписи…'
+            : update.phase === 'installing'
+              ? 'Установка…'
+              : update.phase === 'error'
+                ? 'Ошибка обновления'
+                : null
   const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
   const operatorHandle = user.username
   const operatorInitials = user.username.slice(0, 2).toUpperCase()
@@ -49,7 +68,7 @@ export function Shell({
 
   return (
     <div className="relative h-full w-full bg-[#070604] flex flex-col">
-      <header className="h-14 shrink-0 border-b border-[#18130D] bg-[#0B0906] flex items-center justify-between gap-4 px-5">
+      <header className="shell-header h-14 shrink-0 border-b border-[#18130D] bg-[#0B0906] flex items-center justify-between gap-4 px-5">
         <div className="flex min-w-0 items-center gap-6">
           <Logo size={26} withWordmark wordmark={brand} subtitle={brandSubtitle} />
           <nav className="flex items-center gap-1">
@@ -83,11 +102,18 @@ export function Shell({
         </div>
       </header>
 
-      <div className="flex-1 relative overflow-hidden">{children}</div>
+      <div className="flex-1 min-h-0 relative overflow-hidden">{children}</div>
 
-      <footer className="h-8 shrink-0 border-t border-[#18130D] bg-[#0B0906] flex items-center justify-between gap-4 px-5 text-[10px] tracking-[0.16em] text-[#5E5040]">
+      <footer className="shell-footer h-8 shrink-0 border-t border-[#18130D] bg-[#0B0906] flex items-center justify-between gap-4 px-5 text-[10px] tracking-[0.16em] text-[#5E5040]">
         <div className="flex shrink-0 items-center gap-3">
-          <span>{t('shell.launcherVersion', { v: launcherVersion })}</span>
+          <button
+            onClick={onLauncherUpdate}
+            aria-label="Открыть обновление лаунчера"
+            className="flex min-w-0 items-center gap-2 hover:text-[#F3E7D0] focus-visible:outline-2 focus-visible:outline-[#F5A524]"
+          >
+            <span>{t('shell.launcherVersion', { v: launcherVersion })}</span>
+            {updateLabel && <span className="text-[#F5A524] tracking-normal">· {updateLabel}</span>}
+          </button>
           <span className="h-3 w-px bg-[#18130D]" />
           <span>{t('shell.ip', { ip: serverIp })}</span>
         </div>

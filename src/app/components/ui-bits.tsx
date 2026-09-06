@@ -33,7 +33,7 @@ export function OperationBar({
   align = 'left',
 }: {
   label: string
-  status: ReactNode
+  status?: ReactNode
   statusColor?: string
   align?: 'left' | 'right'
 }) {
@@ -43,13 +43,15 @@ export function OperationBar({
         <>
           <span className="shrink-0 text-[10px] tracking-[0.28em] text-[#8E7A5E]">{label}</span>
           <span className="h-px min-w-4 flex-1 bg-[#18130D]" />
-          <span
-            className="inline-flex min-w-0 shrink-0 items-center gap-2 whitespace-nowrap text-[10px] leading-none tracking-[0.24em]"
-            style={{ color: statusColor }}
-          >
-            <StatusDot color={statusColor} pulse />
-            {status}
-          </span>
+          {status != null && (
+            <span
+              className="inline-flex min-w-0 shrink-0 items-center gap-2 whitespace-nowrap text-[10px] leading-none tracking-[0.24em]"
+              style={{ color: statusColor }}
+            >
+              <StatusDot color={statusColor} pulse />
+              {status}
+            </span>
+          )}
         </>
       ) : (
         <>

@@ -1,20 +1,16 @@
-name: Dokploy Dev
+name: Launcher Release
 
 on:
   push:
-    branches: ['dev']
+    branches: ['main']
   workflow_dispatch:
 
 concurrency:
-  group: dokploy-dev-${{ github.ref }}
+  group: launcher-release-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  packages: write
-
-env:
-  BACKEND_IMAGE_NAME: ghcr.io/netherg-io/blockfield-launcher-backend
 
 jobs:
   quality:
@@ -127,7 +123,7 @@ jobs:
           BLOCKFIELD_FABRIC_META_URL: ${{ vars.BLOCKFIELD_FABRIC_META_URL || 'https://meta.fabricmc.net' }}
           BLOCKFIELD_LAUNCHER_NAME: ${{ vars.BLOCKFIELD_LAUNCHER_NAME || 'BlockfieldLauncher' }}
           BLOCKFIELD_MINECRAFT_VERSION: ${{ vars.BLOCKFIELD_MINECRAFT_VERSION || '1.21.1' }}
-          BLOCKFIELD_DEFAULT_RAM_MB: ${{ vars.BLOCKFIELD_DEFAULT_RAM_MB || '8192' }}
+          BLOCKFIELD_DEFAULT_RAM_MB: ${{ vars.BLOCKFIELD_DEFAULT_RAM_MB || '4096' }}
           BLOCKFIELD_AUTO_UPDATE: ${{ vars.BLOCKFIELD_AUTO_UPDATE || 'true' }}
           BLOCKFIELD_DEFAULT_LANG: ${{ vars.BLOCKFIELD_DEFAULT_LANG || 'en' }}
         with:
@@ -135,7 +131,9 @@ jobs:
           args: --config src-tauri/tauri.prod.conf.json ${{ matrix.args }}
           tagName: launcher-v__VERSION__
           releaseName: Launcher v__VERSION__
-          releaseBody: Dev build for ${{ github.sha }}
+          releaseBody: Stable release built from main (${{ github.sha }})
+          releaseDraft: false
+          prerelease: false
           includeUpdaterJson: true
 
   publish-launcher:
@@ -174,5 +172,19 @@ jobs:
           token: ${{ secrets.RELEASES_TOKEN }} # PAT with contents:write on the releases repo
           tag_name: launcher-v${{ env.VERSION }}
           name: Launcher v${{ env.VERSION }}
-          body: Built from ${{ github.repository }}@${{ github.sha }}
+          body: |
+            Основная версия Blockfield Launcher ${{ env.VERSION }}.
+
+            - Переработан главный экран, убран раздел новостей.
+            - Настройки разделены на вкладки, устранена прокрутка всего окна.
+            - Добавлены автоматическая проверка файлов и определение региона сервера.
+            - Память по умолчанию снижена до 4 ГБ; добавлены команды перед запуском и после выхода.
+            - Добавлены состояние «В игре», защита от повторного запуска и скрытие окна на время игры.
+            - Добавлен прогресс обновления лаунчера и обновление пользовательской Linux-установки.
+            - Исправлено зависание экрана обновления после завершения проверки файлов.
+
+            Built from ${{ github.repository }}@${{ github.sha }}
+          draft: false
+          prerelease: false
+          make_latest: true
           files: release/*

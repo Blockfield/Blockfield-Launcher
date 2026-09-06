@@ -3,9 +3,13 @@ import { WindowChrome } from './components/WindowChrome'
 import { Shell } from './components/Shell'
 import { MainScreen } from './components/MainScreen'
 import { UpdateScreen } from './components/UpdateScreen'
-import { SettingsScreen } from './components/SettingsScreen'
+import { SettingsScreen, type SettingsTab } from './components/SettingsScreen'
 import { I18nContext, translate } from './i18n'
 import type { LauncherConfig } from '../lib/api'
+import { checkModpack } from '../lib/modpack-check'
+import { checkLauncherUpdate } from '../lib/launcher-update'
+import { watchGameState } from '../lib/game-state'
+import { listenLauncherStatus } from '../lib/events'
 
 type Screen = 'main' | 'update' | 'settings'
 
@@ -13,8 +17,34 @@ type Screen = 'main' | 'update' | 'settings'
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
 export default function App() {
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general')
   const [screen, setScreen] = useState<Screen>('main')
   const [username, setUsername] = useState('')
+  const [updatesVisited, setUpdatesVisited] = useState(false)
+  const [commandError, setCommandError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isTauri()) return
+    const subscription = watchGameState()
+    void subscription.catch((error) => console.error('Failed to read game state:', error))
+    return () => {
+      void subscription.then((stop) => stop()).catch(() => {})
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    const subscription = listenLauncherStatus((status) => {
+      if (status.phase === 'hook-error') setCommandError(status.message)
+    })
+    return () => {
+      void subscription.then((unlisten) => unlisten())
+    }
+  }, [])
+  const navigate = (next: Screen) => {
+    if (next === 'update') setUpdatesVisited(true)
+    setScreen(next)
+  }
 
   const i18n = useMemo(() => ({ lang: 'ru' as const, t: translate }), [])
 
@@ -25,6 +55,7 @@ export default function App() {
       .then(({ invoke }) => invoke<LauncherConfig>('load_settings'))
       .then((cfg) => {
         setUsername(cfg.username)
+        checkModpack().catch((error) => console.error('Startup check failed:', error))
         if (!cfg.username) setScreen('settings')
       })
       .catch((e) => console.error('Failed to load settings:', e))
@@ -34,31 +65,7 @@ export default function App() {
   useEffect(() => {
     if (!isTauri()) return
 
-    const checkLauncherUpdate = async () => {
-      try {
-        const { check } = await import('@tauri-apps/plugin-updater')
-        const update = await check()
-
-        if (update?.available) {
-          const { ask } = await import('@tauri-apps/plugin-dialog')
-          const shouldUpdate = await ask(
-            `Launcher update available: ${update.currentVersion} → ${update.version}\n\n${update.body ?? ''}`,
-            { title: 'Launcher Update', kind: 'info' },
-          )
-
-          if (shouldUpdate) {
-            await update.downloadAndInstall()
-            const { relaunch } = await import('@tauri-apps/plugin-process')
-            await relaunch()
-          }
-        }
-      } catch (e) {
-        // Silently fail — the updater endpoint may not be deployed yet
-        console.log('Launcher update check skipped:', e)
-      }
-    }
-
-    checkLauncherUpdate()
+    checkLauncherUpdate().catch((error) => console.log('Launcher update check skipped:', error))
   }, [])
 
   return (
@@ -67,12 +74,41 @@ export default function App() {
         <Shell
           user={{ username: username || '—', role: 'operator' }}
           active={screen}
-          onNavigate={setScreen}
+          onNavigate={navigate}
+          onLauncherUpdate={() => {
+            setSettingsTab('launcher')
+            navigate('settings')
+          }}
         >
-          {screen === 'main' && <MainScreen onPlay={() => setScreen('update')} />}
-          {screen === 'update' && <UpdateScreen />}
+          {commandError && (
+            <div
+              role="alert"
+              className="absolute bottom-4 inset-x-4 z-50 flex items-start gap-4 border border-[#c98b8b] bg-[#11100D] p-4 text-[12px] text-[#F3E7D0]"
+            >
+              <span className="min-w-0 flex-1 break-words">
+                Ошибка команды после выхода: {commandError}
+              </span>
+              <button
+                onClick={() => setCommandError(null)}
+                className="shrink-0 underline underline-offset-4"
+              >
+                Закрыть
+              </button>
+            </div>
+          )}
+          {screen === 'main' && <MainScreen onPlay={() => navigate('update')} />}
+          {updatesVisited && (
+            <div hidden={screen !== 'update'} className="h-full min-h-0">
+              <UpdateScreen />
+            </div>
+          )}
           {screen === 'settings' && (
-            <SettingsScreen username={username} onUsernameSaved={setUsername} />
+            <SettingsScreen
+              username={username}
+              onUsernameSaved={setUsername}
+              tab={settingsTab}
+              onTabChange={setSettingsTab}
+            />
           )}
         </Shell>
       </WindowChrome>

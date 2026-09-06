@@ -327,17 +327,10 @@ pub fn build_launch_args(
         identity,
     );
 
-    // -Xms=-Xmx заставляло G1 занять весь heap ещё до первой сборки: RSS клиента = весь слайдер RAM.
-    // GC-флаги те же, что ставит официальный лаунчер Mojang.
+    // Let the selected JVM tune GC for the actual heap and hardware, as Prism does by default.
     let mut args = vec![
         format!("-Xmx{ram_mb}M"),
-        format!("-Xms{}M", ram_mb.min(1024)),
-        "-XX:+UnlockExperimentalVMOptions".to_string(),
-        "-XX:+UseG1GC".to_string(),
-        "-XX:G1NewSizePercent=20".to_string(),
-        "-XX:G1ReservePercent=20".to_string(),
-        "-XX:MaxGCPauseMillis=50".to_string(),
-        "-XX:G1HeapRegionSize=32M".to_string(),
+        format!("-Xms{}M", ram_mb.min(512)),
     ];
 
     let mut jvm_args = collect_arguments(&vanilla_json, "jvm");

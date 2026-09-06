@@ -1,13 +1,18 @@
 mod commands;
 mod config;
 mod download;
+mod game;
+mod launch_hooks;
 mod minecraft;
+#[cfg(target_os = "linux")]
+mod native_update;
 mod pack;
 mod status;
+mod updater;
 
 use commands::LauncherAppState;
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -21,18 +26,27 @@ pub fn run() {
     let _ = dotenvy::from_path(&env_path);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            game::show_launcher(app);
+        }))
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window
+                    .try_state::<LauncherAppState>()
+                    .is_some_and(|state| state.game.is_busy())
+                {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .setup(move |app| {
-            // На Linux обновляться умеет только AppImage: голый бинарник (scripts/install-linux.sh)
-            // апдейтер перезаписывает AppImage'ем с чужим WebKitGTK, который на Fedora/Wayland
-            // падает с EGL_BAD_PARAMETER и показывает пустое окно. Без плагина check() в App.tsx
-            // бросает исключение, которое там уже гасится.
-            if !cfg!(target_os = "linux") || std::env::var_os("APPIMAGE").is_some() {
-                app.handle()
-                    .plugin(tauri_plugin_updater::Builder::new().build())?;
-            }
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            app.manage(updater::LauncherUpdater::default());
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -72,6 +86,16 @@ pub fn run() {
             app.manage(LauncherAppState {
                 downloader,
                 cancel_flag,
+                operation: tokio::sync::Mutex::new(()),
+                game: Arc::new(game::GameState::new({
+                    let app = app.handle().clone();
+                    move |status| {
+                        let _ = app.emit("game://status", status);
+                        if status.phase == game::GamePhase::Idle {
+                            game::restore_hidden_launcher(&app);
+                        }
+                    }
+                })),
                 pack: tokio::sync::RwLock::new(None),
                 config: tokio::sync::RwLock::new(loaded_config),
                 app_data_dir,
@@ -80,6 +104,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            updater::check_launcher_update,
+            updater::install_launcher_update,
             commands::load_settings,
             commands::save_settings,
             commands::check_modpack_version,
@@ -87,6 +113,7 @@ pub fn run() {
             commands::verify_files,
             commands::cancel_download,
             commands::launch_game,
+            commands::game_status,
             commands::server_status,
         ])
         .run(tauri::generate_context!())

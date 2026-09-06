@@ -18,6 +18,12 @@ pub struct LauncherConfig {
     /// Offline-mode Minecraft username (3-16 chars: letters, digits, underscore)
     #[serde(default)]
     pub username: String,
+    #[serde(default)]
+    pub pre_launch_command: String,
+    #[serde(default)]
+    pub post_exit_command: String,
+    #[serde(default)]
+    pub hide_while_playing: bool,
 }
 
 impl Default for LauncherConfig {
@@ -30,7 +36,7 @@ impl Default for LauncherConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .or_else(|| option_env!("BLOCKFIELD_DEFAULT_RAM_MB").and_then(|v| v.parse().ok()))
-                .unwrap_or(8192),
+                .unwrap_or(4096),
             auto_update: std::env::var("BLOCKFIELD_AUTO_UPDATE")
                 .ok()
                 .map(|v| v == "true" || v == "1")
@@ -42,6 +48,9 @@ impl Default for LauncherConfig {
                 .or_else(|| option_env!("BLOCKFIELD_DEFAULT_LANG").map(String::from))
                 .unwrap_or_else(|| "en".to_string()),
             username: String::new(),
+            pre_launch_command: String::new(),
+            post_exit_command: String::new(),
+            hide_while_playing: false,
         }
     }
 }
@@ -161,6 +170,20 @@ fn total_memory_mb() -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn older_settings_load_with_empty_commands() {
+        let mut value = serde_json::to_value(LauncherConfig::default()).unwrap();
+        value.as_object_mut().unwrap().remove("preLaunchCommand");
+        value.as_object_mut().unwrap().remove("postExitCommand");
+        value.as_object_mut().unwrap().remove("hideWhilePlaying");
+        value["ramMb"] = serde_json::json!(6144);
+        let config: LauncherConfig = serde_json::from_value(value).unwrap();
+        assert!(config.pre_launch_command.is_empty());
+        assert!(config.post_exit_command.is_empty());
+        assert!(!config.hide_while_playing);
+        assert_eq!(config.ram_mb, 6144);
+    }
 
     #[test]
     fn rejects_relative_root_and_unsafe_ram_settings() {

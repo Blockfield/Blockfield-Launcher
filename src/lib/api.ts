@@ -119,4 +119,7 @@ export interface LauncherConfig {
   autoUpdate: boolean
   lang: string
   username: string
+  preLaunchCommand: string
+  postExitCommand: string
+  hideWhilePlaying: boolean
 }

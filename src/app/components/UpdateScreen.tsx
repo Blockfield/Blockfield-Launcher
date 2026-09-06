@@ -1,6 +1,9 @@
+import { useGameState, gameStateLabel, launchGame } from '../../lib/game-state'
+import { checkModpack, invalidateModpackCheck } from '../../lib/modpack-check'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Play,
+  Gamepad2,
   Pause,
   Download,
   HardDrive,
@@ -78,6 +81,8 @@ const freshSteps = () => INITIAL_STEPS.map((step) => ({ ...step }))
 
 export function UpdateScreen() {
   const { lang, t } = useI18n()
+  const game = useGameState()
+  const gameBusy = game.phase !== 'idle'
   const content = useLauncherContent()
   const [phase, setPhase] = useState<Phase>('checking')
   const [statusMessage, setStatusMessage] = useState('')
@@ -93,7 +98,6 @@ export function UpdateScreen() {
   const [mirrorOnline, setMirrorOnline] = useState<boolean | null>(null)
   const [logLines, setLogLines] = useState<LogEntry[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [verifyFailed, setVerifyFailed] = useState<string[]>([])
   const [manifestVersion, setManifestVersion] = useState('')
   const [launching, setLaunching] = useState(false)
   const [steps, setSteps] = useState<Array<{ label: TKey; status: StepStatus }>>(freshSteps)
@@ -217,7 +221,7 @@ export function UpdateScreen() {
       setStep(0, 'active')
       let versionResult: VersionCheckResult
       try {
-        versionResult = await invoke<VersionCheckResult>('check_modpack_version')
+        versionResult = await checkModpack()
         setMirror(formatMirror(versionResult.mirror))
         setMirrorOnline(true)
         addLog(
@@ -302,31 +306,16 @@ export function UpdateScreen() {
         unlistenRef.current = null
       }
 
-      // Step 5: Verify integrity
+      invalidateModpackCheck()
+      // packwiz-installer verifies hashes during the sync above.
       setStep(4, 'active')
       setPhase('verifying')
       setStatusMessage('')
       setCanCancel(false)
-      addLog('Verifying file integrity (SHA-256)...', 'info')
+      addLog('Finalizing verified files...', 'info')
 
-      try {
-        const failed = await invoke<string[]>('verify_files')
-        setVerifyFailed(failed)
-        if (failed.length > 0) {
-          addLog(`WARNING: ${failed.length} file(s) failed integrity check`, 'warn')
-          failed.slice(0, 10).forEach((f) => addLog(`  ↳ ${f}`, 'dim'))
-          setPhase('error')
-          setError(`${failed.length} file(s) failed verification`)
-          return
-        }
-        addLog(`All ${versionResult.fileCount} file(s) passed integrity check.`, 'ok')
-        setStep(4, 'done')
-      } catch (e) {
-        addLog(`ERROR: Verification failed — ${String(e)}`, 'warn')
-        setPhase('error')
-        setError(String(e))
-        return
-      }
+      addLog('File integrity checked by packwiz-installer during sync.', 'ok')
+      setStep(4, 'done')
 
       addLog(`Modpack ${versionResult.remoteVersion} installed successfully.`, 'ok')
       addLog('Ready for deployment.', 'info')
@@ -334,7 +323,16 @@ export function UpdateScreen() {
       setPhase('complete')
     }
 
-    run()
+    void run()
+      .catch((error) => {
+        setPhase('error')
+        setError(String(error))
+        setCanCancel(false)
+      })
+      .finally(() => {
+        unlistenStatusRef.current?.()
+        unlistenStatusRef.current = null
+      })
 
     return () => {
       unlistenRef.current?.()
@@ -345,10 +343,10 @@ export function UpdateScreen() {
   const handleRetry = useCallback(() => {
     cancelledRef.current = false
     startedRef.current = false
+    invalidateModpackCheck()
     setError(null)
     setStatusMessage('')
     setCanCancel(false)
-    setVerifyFailed([])
     setLogLines([])
     setProgress(0)
     setMirror('—')
@@ -373,7 +371,7 @@ export function UpdateScreen() {
   }, [])
 
   const handleLaunch = useCallback(async () => {
-    if (!isTauri() || launching) return
+    if (!isTauri() || launching || gameBusy) return
     setLaunching(true)
     setPhase('launching')
     setStatusMessage(t('main.launching'))
@@ -381,10 +379,11 @@ export function UpdateScreen() {
     resetSpeed()
     addLog('Launching game...', 'info')
     try {
+      unlistenStatusRef.current = await listenLauncherStatus(applyBackendStatus)
       unlistenRef.current = await listenDownloadProgress(applyProgress)
-      await invoke('launch_game')
+      await launchGame()
       addLog('Game process started.', 'ok')
-      setStatusMessage(t('main.gameStarted'))
+      setStatusMessage('')
       setPhase('complete')
     } catch (e) {
       addLog(`ERROR: Launch failed — ${String(e)}`, 'warn')
@@ -393,11 +392,14 @@ export function UpdateScreen() {
     } finally {
       unlistenRef.current?.()
       unlistenRef.current = null
+      unlistenStatusRef.current?.()
+      unlistenStatusRef.current = null
       setLaunching(false)
     }
-  }, [addLog, applyProgress, launching, resetSpeed, t])
+  }, [addLog, applyBackendStatus, applyProgress, launching, gameBusy, resetSpeed, t])
 
   const statusText = () => {
+    if (gameBusy) return gameStateLabel(game.phase)
     switch (phase) {
       case 'checking':
         return t('update.checking')
@@ -445,18 +447,18 @@ export function UpdateScreen() {
     ) ?? t('update.description')
 
   return (
-    <div className="relative h-full w-full overflow-y-auto bg-[#070604]">
+    <div className="update-screen relative h-full min-h-0 w-full overflow-hidden bg-[#070604]">
       <TopoBackdrop />
       <GridBackdrop intensity={0.5} />
 
-      <div className="relative min-h-[700px] p-5 flex flex-col">
+      <div className="update-layout relative h-full min-h-0 p-3 md:p-5 flex flex-col">
         <OperationBar
           label={t('update.packageSync')}
           status={statusText()}
           statusColor={phase === 'error' ? '#c98b8b' : '#F5A524'}
         />
 
-        <div className="flex items-start justify-between gap-6 min-w-0">
+        <div className="update-summary flex items-start justify-between gap-4 min-w-0 shrink-0">
           <div>
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
               <h1 className="tracking-[0.06em] text-[26px] leading-none text-neutral-50">
@@ -466,11 +468,11 @@ export function UpdateScreen() {
                 {t('update.patch', { v: manifestVersion || '...' })}
               </span>
             </div>
-            <p className="text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">
+            <p className="hidden md:block text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">
               {error ? error.slice(0, 200) : updateDescription}
             </p>
           </div>
-          <div className="shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-[240px]">
+          <div className="update-mirror shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-[240px]">
             <div className="text-[10px] tracking-[0.16em] text-[#8E7A5E]">{t('update.mirror')}</div>
             <div className="mt-2 tracking-[0.18em] text-[13px] text-neutral-100 truncate">
               {mirror}
@@ -482,9 +484,21 @@ export function UpdateScreen() {
         </div>
 
         <GlowPanel className="p-4">
-          <div className="flex items-center justify-between mb-3">
+          <div className="update-actions flex items-center justify-between gap-3 mb-3">
             <div className="flex items-center gap-4">
-              {phase === 'launching' ? (
+              {gameBusy ? (
+                <DeployButton
+                  inGame={game.phase === 'running'}
+                  label={gameStateLabel(game.phase)}
+                  sub={
+                    game.phase === 'running'
+                      ? 'Закройте игру, чтобы запустить снова'
+                      : 'Дождитесь завершения операции'
+                  }
+                  onClick={handleLaunch}
+                  disabled
+                />
+              ) : phase === 'launching' ? (
                 <DeployButton
                   label={t('main.launching')}
                   sub={statusMessage || '...'}
@@ -494,7 +508,7 @@ export function UpdateScreen() {
               ) : phase === 'downloading' && canCancel ? (
                 <button
                   onClick={handleCancel}
-                  className="relative h-[64px] w-[230px] shrink-0 overflow-hidden border border-[#3a2828] bg-[#1a0e0e] hover:border-[#7a3838] transition-colors"
+                  className="relative h-[64px] w-[160px] md:w-[230px] shrink-0 overflow-hidden border border-[#3a2828] bg-[#1a0e0e] hover:border-[#7a3838] transition-colors"
                 >
                   <span className="h-full flex items-center justify-center gap-4">
                     <Pause size={18} className="text-[#c98b8b]" />
@@ -510,7 +524,7 @@ export function UpdateScreen() {
                 <LockedButton lockedLabel="..." subLabel={statusText()} />
               ) : phase === 'complete' || phase === 'uptodate' ? (
                 <DeployButton
-                  label={launching ? t('main.launching') : 'PLAY'}
+                  label={launching ? t('main.launching') : t('update.playNow')}
                   sub={launching ? statusMessage || '...' : t('main.enterBattlefield')}
                   onClick={handleLaunch}
                   disabled={launching}
@@ -549,7 +563,7 @@ export function UpdateScreen() {
 
           <ProgressBar progress={progress} />
 
-          <div className="mt-4 grid grid-cols-4 gap-px bg-[#18130D] border border-[#2A2116] min-w-0">
+          <div className="update-stats mt-4 grid grid-cols-2 md:grid-cols-4 gap-px bg-[#18130D] border border-[#2A2116] min-w-0">
             <SubStat
               icon={<FileBox size={13} />}
               label={t('update.currentFile')}
@@ -605,19 +619,23 @@ export function UpdateScreen() {
               </span>
             </div>
             <span className="shrink-0 text-right text-[#8E7A5E]">
-              {verifyFailed.length > 0
-                ? `${verifyFailed.length} FAILED`
-                : phase === 'complete' || phase === 'uptodate'
-                  ? 'SHA256 VERIFIED'
+              {phase === 'complete'
+                ? t('update.filesVerified')
+                : phase === 'uptodate'
+                  ? t('update.versionChecked')
                   : t('update.integrity')}
             </span>
           </div>
         </GlowPanel>
 
-        <div className="mt-3 min-h-0 flex-1 grid grid-cols-[minmax(0,1.35fr)_minmax(300px,1fr)] gap-px bg-[#18130D] border border-[#2A2116] overflow-hidden">
-          <div className="bg-[#0B0906] p-4 min-h-0 overflow-hidden">
+        <div className="update-lists mt-3 min-h-0 flex-1 grid grid-cols-1 md:grid-cols-[minmax(0,1.35fr)_minmax(250px,1fr)] gap-px bg-[#18130D] border border-[#2A2116] overflow-hidden">
+          <div className="bg-[#0B0906] p-3 md:p-4 min-h-0 flex flex-col overflow-hidden">
             <SectionHeader label={t('update.opLog')} code="SYNC-PHASE-2" />
-            <div className="mt-3 font-mono text-[11px] leading-relaxed text-[#C7AE86] space-y-1 overflow-y-auto max-h-[calc(100%-2rem)]">
+            <div
+              tabIndex={0}
+              aria-label={t('update.opLog')}
+              className="mt-3 min-h-0 flex-1 font-mono text-[11px] leading-relaxed text-[#C7AE86] space-y-1 overflow-y-auto overscroll-contain break-words"
+            >
               {logLines.length === 0 && (
                 <LogLine ts="--:--:--" tone="dim" msg="Waiting for connection..." />
               )}
@@ -628,7 +646,11 @@ export function UpdateScreen() {
           </div>
           <div className="bg-[#0B0906] p-4 flex flex-col min-h-0">
             <SectionHeader label={t('update.steps')} code="SEQ" />
-            <div className="mt-3 flex flex-col gap-2 flex-1">
+            <div
+              tabIndex={0}
+              aria-label={t('update.steps')}
+              className="mt-3 flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain"
+            >
               {steps.map((step) => (
                 <Step key={step.label} label={t(step.label)} status={step.status} t={t} />
               ))}
@@ -645,19 +667,23 @@ function DeployButton({
   sub,
   onClick,
   disabled,
+  inGame,
 }: {
   label: string
   sub: string
   onClick: () => void
   disabled?: boolean
+  inGame?: boolean
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className="group relative h-[64px] w-[230px] shrink-0 overflow-hidden border border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-all disabled:opacity-60 disabled:cursor-wait"
+      className={`group relative h-[64px] w-[160px] md:w-[230px] shrink-0 overflow-hidden border border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-all ${inGame ? 'border-[#82D66B]/40 cursor-default' : 'disabled:opacity-60 disabled:cursor-not-allowed'}`}
       style={{
-        boxShadow: 'inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)',
+        boxShadow: inGame
+          ? undefined
+          : 'inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)',
       }}
     >
       <span className="absolute top-0 left-0 w-3 h-3 border-l border-t border-[#F5A524]" />
@@ -666,7 +692,13 @@ function DeployButton({
       <span className="absolute bottom-0 right-0 w-3 h-3 border-r border-b border-[#F5A524]" />
       <span className="absolute inset-0 bg-[#F5A524]/0 group-hover:bg-[#F5A524]/10 transition-colors" />
       <span className="relative h-full flex items-center justify-center gap-4">
-        <Play size={18} className="text-[#F3E7D0] fill-[#F3E7D0]" />
+        <>
+          {inGame ? (
+            <Gamepad2 size={18} className="text-[#82D66B]" />
+          ) : (
+            <Play size={18} className="text-[#F3E7D0] fill-[#F3E7D0]" />
+          )}
+        </>
         <span className="flex flex-col items-start leading-none">
           <span className="tracking-[0.26em] text-[17px] text-[#F3E7D0]">{label}</span>
           <span className="tracking-[0.16em] text-[9px] text-[#C7AE86] mt-1 text-left">{sub}</span>
@@ -680,7 +712,7 @@ function RetryButton({ onClick, label }: { onClick: () => void; label: string })
   return (
     <button
       onClick={onClick}
-      className="relative h-[64px] w-[230px] shrink-0 overflow-hidden border border-[#8A571C] bg-[#1a1008] hover:border-[#F5A524] transition-colors"
+      className="relative h-[64px] w-[160px] md:w-[230px] shrink-0 overflow-hidden border border-[#8A571C] bg-[#1a1008] hover:border-[#F5A524] transition-colors"
     >
       <span className="h-full flex items-center justify-center gap-4">
         <RefreshCw size={18} className="text-[#F5A524]" />
@@ -717,7 +749,7 @@ function LockedButton({ lockedLabel, subLabel }: { lockedLabel: string; subLabel
   return (
     <button
       disabled
-      className="relative h-[64px] w-[230px] shrink-0 overflow-hidden border border-[#2A2116] bg-[#0B0906] opacity-60 cursor-not-allowed"
+      className="relative h-[64px] w-[160px] md:w-[230px] shrink-0 overflow-hidden border border-[#2A2116] bg-[#0B0906] opacity-60 cursor-not-allowed"
     >
       <span className="absolute top-0 left-0 w-3 h-3 border-l border-t border-[#3A2C1D]" />
       <span className="absolute top-0 right-0 w-3 h-3 border-r border-t border-[#3A2C1D]" />
@@ -750,7 +782,7 @@ function SubStat({
   accent?: boolean
 }) {
   return (
-    <div className="bg-[#0B0906] p-4 min-w-0">
+    <div className="bg-[#0B0906] px-3 py-2 md:p-4 min-w-0">
       <div className="flex items-center gap-2 text-[9px] tracking-[0.14em] text-[#8E7A5E]">
         {icon} {label}
       </div>
@@ -784,7 +816,7 @@ function LogLine({
   return (
     <div className="flex gap-4 min-w-0">
       <span className="text-[#5E5040] shrink-0">[{ts}]</span>
-      <span className={LOG_TONE[tone]}>{msg}</span>
+      <span className={`min-w-0 [overflow-wrap:anywhere] ${LOG_TONE[tone]}`}>{msg}</span>
     </div>
   )
 }

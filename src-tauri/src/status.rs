@@ -1,5 +1,5 @@
 //! Minecraft Server List Ping over plain TCP (std only), run on a blocking thread.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -21,6 +21,119 @@ pub struct ServerStatus {
     pub location_name: String,
     pub server_latency_ms: Option<u64>,
     pub checked_at: u64,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct GeoLocation {
+    #[serde(default)]
+    success: bool,
+    #[serde(default)]
+    country_code: String,
+    #[serde(default)]
+    country: String,
+    #[serde(default)]
+    city: String,
+}
+
+struct CachedLocation {
+    host: String,
+    checked: Instant,
+    location: GeoLocation,
+}
+
+static LOCATION_CACHE: tokio::sync::Mutex<Option<CachedLocation>> =
+    tokio::sync::Mutex::const_new(None);
+
+pub async fn locate(host: &str, port: u16) -> (String, String) {
+    let mut cache = LOCATION_CACHE.lock().await;
+    if let Some(entry) = cache.as_ref() {
+        let ttl = if entry.location.success { 86_400 } else { 300 };
+        if entry.host == host && entry.checked.elapsed().as_secs() < ttl {
+            return location_labels(&entry.location);
+        }
+    }
+    let target = (host.to_string(), port);
+    let address = tokio::task::spawn_blocking(move || {
+        (target.0.as_str(), target.1)
+            .to_socket_addrs()
+            .ok()?
+            .map(|addr| addr.ip())
+            .find(|ip| public_address(*ip))
+    })
+    .await
+    .ok()
+    .flatten();
+    let location = match address {
+        Some(ip) => async {
+            reqwest::Client::builder()
+                .timeout(TIMEOUT)
+                .build()
+                .ok()?
+                .get(format!("https://ipwho.is/{ip}"))
+                .query(&[("fields", "success,country_code,country,city")])
+                .send()
+                .await
+                .ok()?
+                .error_for_status()
+                .ok()?
+                .json::<GeoLocation>()
+                .await
+                .ok()
+        }
+        .await
+        .unwrap_or_default(),
+        None => GeoLocation::default(),
+    };
+    let labels = location_labels(&location);
+    *cache = Some(CachedLocation {
+        host: host.to_string(),
+        checked: Instant::now(),
+        location,
+    });
+    labels
+}
+
+fn public_address(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            !ip.is_private()
+                && !ip.is_loopback()
+                && !ip.is_link_local()
+                && !ip.is_unspecified()
+                && !ip.is_multicast()
+                && !ip.is_broadcast()
+                && !ip.is_documentation()
+        }
+        std::net::IpAddr::V6(ip) => ip
+            .to_ipv4_mapped()
+            .map(|ip| public_address(ip.into()))
+            .unwrap_or_else(|| {
+                !ip.is_loopback()
+                    && !ip.is_unspecified()
+                    && !ip.is_unique_local()
+                    && !ip.is_unicast_link_local()
+                    && !ip.is_multicast()
+            }),
+    }
+}
+
+fn location_labels(location: &GeoLocation) -> (String, String) {
+    if !location.success
+        || location.country_code.len() != 2
+        || !location
+            .country_code
+            .bytes()
+            .all(|b| b.is_ascii_alphabetic())
+    {
+        return (String::new(), String::new());
+    }
+    let name = [&location.city, &location.country]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    (location.country_code.to_uppercase(), name)
 }
 
 pub fn split_host_port(target: &str) -> (String, u16) {
@@ -153,6 +266,30 @@ fn read_varint(data: &[u8], cursor: &mut usize) -> Result<i32, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn location_errors_and_private_addresses_do_not_produce_a_region() {
+        for ip in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "192.168.1.1",
+            "::1",
+            "fc00::1",
+            "::ffff:127.0.0.1",
+        ] {
+            assert!(!public_address(ip.parse().unwrap()));
+        }
+        assert!(public_address("8.8.8.8".parse().unwrap()));
+        assert_eq!(
+            location_labels(&GeoLocation::default()),
+            (String::new(), String::new())
+        );
+        let location: GeoLocation = serde_json::from_value(serde_json::json!({"success": true, "country_code": "ua", "country": "Ukraine", "city": "Kyiv"})).unwrap();
+        assert_eq!(
+            location_labels(&location),
+            ("UA".into(), "Kyiv, Ukraine".into())
+        );
+    }
 
     #[test]
     fn varint_roundtrip_and_host_port_split() {

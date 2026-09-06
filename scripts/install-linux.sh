@@ -14,7 +14,14 @@ scripts/rust-env.sh cargo build --release -p blockfield-launcher --features taur
 
 APP="$HOME/.local/lib/blockfield-launcher"
 mkdir -p "$APP" "$HOME/.local/share/applications"
-install -m 755 "$TARGET/release/blockfield-launcher" "$APP/blockfield-launcher"
+if [ -f "$APP/blockfield-launcher" ]; then
+    cp -p "$APP/blockfield-launcher" "$APP/blockfield-launcher.previous"
+fi
+staged_binary=$(mktemp "$APP/.blockfield-install.XXXXXX")
+trap 'rm -f "$staged_binary"' EXIT
+install -m 755 "$TARGET/release/blockfield-launcher" "$staged_binary"
+mv -f "$staged_binary" "$APP/blockfield-launcher"
+printf '1\n' > "$APP/.blockfield-native-install"
 install -m 644 src-tauri/icons/256x256.png "$APP/icon.png"
 cat > "$HOME/.local/share/applications/blockfield-launcher.desktop" <<DESKTOP
 [Desktop Entry]

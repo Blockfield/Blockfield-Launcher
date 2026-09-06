@@ -10,30 +10,42 @@ import {
   Minus,
   Plus,
   LoaderCircle,
+  Terminal,
+  EyeOff,
 } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
+import { LauncherUpdatePanel } from './LauncherUpdatePanel'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
-import { GlowPanel } from './ui-bits'
 import { useI18n } from '../i18n'
 import type { LauncherConfig } from '../../lib/api'
+import { invalidateModpackCheck } from '../../lib/modpack-check'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
 
 /** Detect whether we're running inside Tauri. */
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
+export type SettingsTab = 'general' | 'runtime' | 'commands' | 'launcher'
+
 export function SettingsScreen({
   username,
   onUsernameSaved,
+  tab,
+  onTabChange: setTab,
 }: {
   username: string
   onUsernameSaved: (name: string) => void
+  tab: SettingsTab
+  onTabChange: (tab: SettingsTab) => void
 }) {
   const { lang, t } = useI18n()
   const content = useLauncherContent()
   const [dir, setDir] = useState('')
   const [java, setJava] = useState('')
   const [name, setName] = useState(username)
-  const [ram, setRam] = useState(8)
+  const [ram, setRam] = useState(4)
+  const [preLaunchCommand, setPreLaunchCommand] = useState('')
+  const [postExitCommand, setPostExitCommand] = useState('')
+  const [hideWhilePlaying, setHideWhilePlaying] = useState(false)
   const [autoUpdate, setAutoUpdate] = useState(true)
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -62,6 +74,9 @@ export function SettingsScreen({
         setName(cfg.username)
         setRam(Math.max(2, Math.round(cfg.ramMb / 1024)))
         setAutoUpdate(cfg.autoUpdate)
+        setHideWhilePlaying(cfg.hideWhilePlaying ?? false)
+        setPreLaunchCommand(cfg.preLaunchCommand ?? '')
+        setPostExitCommand(cfg.postExitCommand ?? '')
       })
       .catch((e) => console.error('Failed to load settings:', e))
       .finally(() => setLoading(false))
@@ -80,10 +95,14 @@ export function SettingsScreen({
           javaPath: java,
           ramMb: ram * 1024,
           autoUpdate,
+          hideWhilePlaying,
+          preLaunchCommand,
+          postExitCommand,
           lang,
           username: name.trim(),
         } satisfies LauncherConfig,
       })
+      invalidateModpackCheck()
       onUsernameSaved(name.trim())
       setDirty(false)
       setSaveMessage(t('settings.saved'))
@@ -94,7 +113,19 @@ export function SettingsScreen({
     } finally {
       setSaving(false)
     }
-  }, [dir, java, name, ram, autoUpdate, lang, t, onUsernameSaved])
+  }, [
+    dir,
+    java,
+    name,
+    ram,
+    autoUpdate,
+    hideWhilePlaying,
+    preLaunchCommand,
+    postExitCommand,
+    lang,
+    t,
+    onUsernameSaved,
+  ])
 
   const handleReset = useCallback(() => {
     invoke<LauncherConfig>('load_settings')
@@ -104,6 +135,9 @@ export function SettingsScreen({
         setName(cfg.username)
         setRam(Math.max(2, Math.round(cfg.ramMb / 1024)))
         setAutoUpdate(cfg.autoUpdate)
+        setHideWhilePlaying(cfg.hideWhilePlaying ?? false)
+        setPreLaunchCommand(cfg.preLaunchCommand ?? '')
+        setPostExitCommand(cfg.postExitCommand ?? '')
       })
       .catch(console.error)
     setDirty(false)
@@ -144,107 +178,209 @@ export function SettingsScreen({
       <TopoBackdrop />
       <GridBackdrop intensity={0.4} />
 
-      <div className="relative h-full p-6 flex flex-col overflow-y-auto">
-        <div className="flex items-center gap-3 mb-5">
-          <span className="shrink-0 text-[10px] tracking-[0.22em] text-[#8E7A5E]">
-            {t('settings.configuration')}
-          </span>
-          <span className="h-px flex-1 bg-[#18130D]" />
-          <span className="shrink-0 text-[10px] tracking-[0.22em] text-[#8E7A5E]">
-            {t('settings.operator', { handle: name || '—' })}
-          </span>
-        </div>
-
-        <div className="flex items-baseline gap-3">
-          <h1 className="tracking-[0.06em] text-[34px] leading-none text-neutral-50">
+      <div className="settings-layout relative h-full min-h-0 p-3 md:p-5 flex flex-col gap-4 overflow-hidden">
+        <div className="shrink-0 flex flex-wrap items-baseline gap-3">
+          <h1 className="tracking-[0.06em] text-[26px] leading-none text-neutral-50">
             {t('nav.settings')}
           </h1>
           <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">{preferences}</span>
         </div>
 
-        <GlowPanel glow={false} className="mt-5">
-          <Group title={t('settings.runtime')} code="ENV-001">
-            <Setting
-              icon={<UserRound size={14} />}
-              label={t('settings.username')}
-              hint={t('settings.usernameHint')}
-            >
-              <input
-                value={name}
-                maxLength={16}
-                onChange={(e) => {
-                  setName(e.target.value)
-                  markDirty()
+        <div className="min-h-0 flex-1 flex flex-col border border-[#2A2116] bg-[#11100D] overflow-hidden">
+          <div
+            role="tablist"
+            aria-label={t('nav.settings')}
+            className="shrink-0 grid grid-cols-2 md:grid-cols-4 border-b border-[#2A2116] bg-[#0B0906]"
+          >
+            {(['general', 'runtime', 'commands', 'launcher'] as const).map((id, index, tabs) => (
+              <button
+                key={id}
+                id={`settings-tab-${id}`}
+                role="tab"
+                aria-selected={tab === id}
+                aria-controls={`settings-panel-${id}`}
+                tabIndex={tab === id ? 0 : -1}
+                onClick={() => setTab(id)}
+                onKeyDown={(event) => {
+                  const next =
+                    event.key === 'ArrowRight'
+                      ? (index + 1) % tabs.length
+                      : event.key === 'ArrowLeft'
+                        ? (index + tabs.length - 1) % tabs.length
+                        : event.key === 'Home'
+                          ? 0
+                          : event.key === 'End'
+                            ? tabs.length - 1
+                            : null
+                  if (next === null) return
+                  event.preventDefault()
+                  const nextTab = tabs[next]!
+                  setTab(nextTab)
+                  document.getElementById(`settings-tab-${nextTab}`)?.focus()
                 }}
-                className="w-full h-10 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 outline-none focus:border-[#F5A524]/60 transition-colors"
-              />
-            </Setting>
-            <Setting
-              icon={<Folder size={14} />}
-              label={t('settings.gameDir')}
-              hint={t('settings.gameDirHint')}
-            >
-              <PathInput
-                value={dir}
-                onChange={(v) => {
-                  setDir(v)
-                  markDirty()
-                }}
-                browseLabel={t('settings.browse')}
-                onBrowse={() => handleBrowse('dir')}
-              />
-            </Setting>
-            <Setting
-              icon={<Coffee size={14} />}
-              label={t('settings.java')}
-              hint={t('settings.javaHint')}
-            >
-              <PathInput
-                value={java}
-                onChange={(v) => {
-                  setJava(v)
-                  markDirty()
-                }}
-                browseLabel={t('settings.browse')}
-                onBrowse={() => handleBrowse('java')}
-              />
-            </Setting>
-            <Setting
-              icon={<Cpu size={14} />}
-              label={t('settings.ram')}
-              hint={t('settings.ramHint', { gb: ram })}
-            >
-              <RamSlider
-                ram={ram}
-                onChange={(v) => {
-                  setRam(v)
-                  markDirty()
-                }}
-              />
-            </Setting>
-          </Group>
-
-          <Group title={t('settings.launcher')} code="LCH-002">
-            <Setting
-              icon={<RefreshCw size={14} />}
-              label={t('settings.autoUpdate')}
-              hint={t('settings.autoUpdateHint')}
-            >
-              <Toggle
-                on={autoUpdate}
-                onChange={(v) => {
-                  setAutoUpdate(v)
-                  markDirty()
-                }}
-                onLabel={t('settings.enabled')}
-                offLabel={t('settings.disabled')}
-              />
-            </Setting>
-          </Group>
-
-          <div className="px-6 py-4 flex items-center justify-between border-t border-[#18130D] bg-[#0B0906]">
-            <span />
-            <div className="flex items-center gap-3">
+                className={`min-h-11 px-2 py-3 text-[11px] tracking-[0.08em] border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-[#F5A524] focus-visible:-outline-offset-2 ${tab === id ? 'border-[#F5A524] text-[#F3E7D0] bg-[#18130D]' : 'border-transparent text-[#C7AE86] hover:text-[#F3E7D0] hover:bg-[#11100D]'}`}
+              >
+                {t(`settings.tab.${id}`)}
+              </button>
+            ))}
+          </div>
+          <div
+            id={`settings-panel-${tab}`}
+            role="tabpanel"
+            aria-labelledby={`settings-tab-${tab}`}
+            className="settings-panel min-h-0 flex-1 px-3 md:px-5 py-2"
+          >
+            {tab === 'launcher' && <LauncherUpdatePanel />}
+            {tab === 'general' && (
+              <>
+                <Setting
+                  icon={<UserRound size={14} />}
+                  label={t('settings.username')}
+                  hint={t('settings.usernameHint')}
+                >
+                  <input
+                    aria-label={t('settings.username')}
+                    value={name}
+                    maxLength={16}
+                    onChange={(e) => {
+                      setName(e.target.value)
+                      markDirty()
+                    }}
+                    className="w-full h-10 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 outline-none focus:border-[#F5A524]/60 transition-colors"
+                  />
+                </Setting>
+                <Setting
+                  icon={<Folder size={14} />}
+                  label={t('settings.gameDir')}
+                  hint={t('settings.gameDirHint')}
+                >
+                  <PathInput
+                    label={t('settings.gameDir')}
+                    value={dir}
+                    onChange={(v) => {
+                      setDir(v)
+                      markDirty()
+                    }}
+                    browseLabel={t('settings.browse')}
+                    onBrowse={() => handleBrowse('dir')}
+                  />
+                </Setting>
+                <Setting
+                  compact
+                  icon={<RefreshCw size={14} />}
+                  label={t('settings.autoUpdate')}
+                  hint={t('settings.autoUpdateHint')}
+                >
+                  <Toggle
+                    label={t('settings.autoUpdate')}
+                    on={autoUpdate}
+                    onChange={(v) => {
+                      setAutoUpdate(v)
+                      markDirty()
+                    }}
+                    onLabel={t('settings.enabled')}
+                    offLabel={t('settings.disabled')}
+                  />
+                </Setting>
+                <Setting
+                  compact
+                  icon={<EyeOff size={14} />}
+                  label="СКРЫВАТЬ ВО ВРЕМЯ ИГРЫ"
+                  hint="Окно вернётся после выхода. Открыть его раньше можно через ярлык лаунчера."
+                >
+                  <Toggle
+                    label="Скрывать лаунчер во время игры"
+                    on={hideWhilePlaying}
+                    onChange={(value) => {
+                      setHideWhilePlaying(value)
+                      markDirty()
+                    }}
+                    onLabel={t('settings.enabled')}
+                    offLabel={t('settings.disabled')}
+                  />
+                </Setting>
+              </>
+            )}
+            {tab === 'runtime' && (
+              <>
+                <Setting
+                  icon={<Coffee size={14} />}
+                  label={t('settings.java')}
+                  hint={t('settings.javaHint')}
+                >
+                  <PathInput
+                    label={t('settings.java')}
+                    value={java}
+                    onChange={(v) => {
+                      setJava(v)
+                      markDirty()
+                    }}
+                    browseLabel={t('settings.browse')}
+                    onBrowse={() => handleBrowse('java')}
+                  />
+                </Setting>
+                <Setting
+                  icon={<Cpu size={14} />}
+                  label={t('settings.ram')}
+                  hint={t('settings.ramHint', { gb: ram })}
+                >
+                  <RamSlider
+                    ram={ram}
+                    onEdit={markDirty}
+                    onChange={(v) => {
+                      setRam(v)
+                      markDirty()
+                    }}
+                  />
+                </Setting>
+              </>
+            )}
+            {tab === 'commands' && (
+              <>
+                <Setting
+                  icon={<Terminal size={14} />}
+                  label={t('settings.preLaunch')}
+                  hint={t('settings.preLaunchHint')}
+                >
+                  <textarea
+                    aria-label={t('settings.preLaunch')}
+                    value={preLaunchCommand}
+                    rows={3}
+                    spellCheck={false}
+                    placeholder={t('settings.commandPlaceholder')}
+                    onChange={(e) => {
+                      setPreLaunchCommand(e.target.value)
+                      markDirty()
+                    }}
+                    className="command-input w-full min-w-0 resize-none border border-[#2A2116] bg-[#0B0906] p-3 text-[12px] font-mono text-neutral-200 focus-visible:outline-2 focus-visible:outline-[#F5A524]"
+                  />
+                </Setting>
+                <Setting
+                  icon={<Terminal size={14} />}
+                  label={t('settings.postExit')}
+                  hint={t('settings.postExitHint')}
+                >
+                  <textarea
+                    aria-label={t('settings.postExit')}
+                    value={postExitCommand}
+                    rows={3}
+                    spellCheck={false}
+                    placeholder={t('settings.commandPlaceholder')}
+                    onChange={(e) => {
+                      setPostExitCommand(e.target.value)
+                      markDirty()
+                    }}
+                    className="command-input w-full min-w-0 resize-none border border-[#2A2116] bg-[#0B0906] p-3 text-[12px] font-mono text-neutral-200 focus-visible:outline-2 focus-visible:outline-[#F5A524]"
+                  />
+                </Setting>
+                <p className="pt-2 text-[11px] leading-relaxed text-[#C7AE86]">
+                  {t('settings.commandsHint')}
+                </p>
+              </>
+            )}
+          </div>
+          <div className="settings-actions shrink-0 px-3 md:px-5 py-3 flex flex-wrap items-center justify-end gap-2 border-t border-[#18130D] bg-[#0B0906]">
+            <div className="flex flex-wrap items-center justify-end gap-3">
               <button
                 type="button"
                 onClick={handleReset}
@@ -252,10 +388,11 @@ export function SettingsScreen({
               >
                 {t('settings.reset')}
               </button>
-              <div className="flex items-center gap-2">
-                {saveMessage && (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {saveMessage && saveMessage !== t('settings.saved') && (
                   <span
-                    className={`text-[9px] tracking-[0.16em] ${
+                    role="status"
+                    className={`max-w-[320px] break-words text-[11px] ${
                       saveMessage === t('settings.saved') ? 'text-[#8E7A5E]' : 'text-[#c98b8b]'
                     }`}
                   >
@@ -286,47 +423,41 @@ export function SettingsScreen({
                     <Save size={13} className="text-[#F3E7D0]" />
                   )}
                   <span className="text-[11px] tracking-[0.18em] text-[#F3E7D0]">
-                    {saving ? t('settings.saving') : t('settings.save')}
+                    {saving
+                      ? t('settings.saving')
+                      : saveMessage === t('settings.saved')
+                        ? 'СОХРАНЕНО'
+                        : t('settings.save')}
                   </span>
                 </button>
               </div>
             </div>
           </div>
-        </GlowPanel>
+        </div>
       </div>
-    </div>
-  )
-}
-
-function Group({ title, code, children }: { title: string; code: string; children: ReactNode }) {
-  return (
-    <div className="border-b border-[#18130D] last:border-b-0">
-      <div className="px-6 pt-4 pb-2 flex items-center gap-3">
-        <span className="size-1.5 bg-[#F5A524]" />
-        <span className="text-[10px] tracking-[0.18em] text-[#F3E7D0]">{title}</span>
-        <span className="h-px flex-1 bg-[#18130D]" />
-        <span className="text-[9px] tracking-[0.28em] text-[#5E5040]">{code}</span>
-      </div>
-      <div className="px-6 pb-1">{children}</div>
     </div>
   )
 }
 
 function Setting({
+  compact = false,
   icon,
   label,
   hint,
   children,
 }: {
+  compact?: boolean
   icon: ReactNode
   label: string
   hint: string
   children: ReactNode
 }) {
   return (
-    <div className="grid grid-cols-[minmax(230px,280px)_minmax(0,1fr)] gap-6 py-3 border-b border-dashed border-[#18130D] last:border-b-0">
+    <div
+      className={`grid ${compact ? 'grid-cols-[minmax(0,1fr)_64px]' : 'grid-cols-1'} md:grid-cols-[minmax(200px,260px)_minmax(0,1fr)] gap-3 md:gap-6 py-2 md:py-3 border-b border-dashed border-[#18130D] last:border-b-0`}
+    >
       <div className="flex min-w-0 gap-3">
-        <div className="mt-0.5 size-7 grid place-items-center border border-[#2A2116] bg-[#0B0906] text-[#F5A524]">
+        <div className="mt-0.5 size-7 shrink-0 grid place-items-center border border-[#2A2116] bg-[#0B0906] text-[#F5A524]">
           {icon}
         </div>
         <div className="flex min-w-0 flex-col">
@@ -340,11 +471,13 @@ function Setting({
 }
 
 function PathInput({
+  label,
   value,
   onChange,
   browseLabel,
   onBrowse,
 }: {
+  label: string
   value: string
   onChange: (v: string) => void
   browseLabel: string
@@ -353,9 +486,10 @@ function PathInput({
   return (
     <div className="flex w-full">
       <input
+        aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="flex-1 h-10 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 outline-none focus:border-[#F5A524]/60 transition-colors"
+        className="min-w-0 flex-1 h-10 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 outline-none focus:border-[#F5A524]/60 transition-colors"
       />
       <button
         type="button"
@@ -378,7 +512,15 @@ function clampRam(v: number) {
   return Math.min(RAM_MAX, Math.max(RAM_MIN, Math.round(v)))
 }
 
-function RamSlider({ ram, onChange }: { ram: number; onChange: (v: number) => void }) {
+function RamSlider({
+  ram,
+  onChange,
+  onEdit,
+}: {
+  ram: number
+  onChange: (v: number) => void
+  onEdit: () => void
+}) {
   const pct = ((ram - RAM_MIN) / (RAM_MAX - RAM_MIN)) * 100
   const set = (v: number) => onChange(clampRam(v))
 
@@ -389,12 +531,13 @@ function RamSlider({ ram, onChange }: { ram: number; onChange: (v: number) => vo
           type="button"
           onClick={() => set(ram - RAM_STEP)}
           className="size-9 shrink-0 grid place-items-center border border-[#2A2116] bg-[#0B0906] text-[#C7AE86] hover:border-[#8A571C] hover:text-[#F3E7D0] transition-colors"
-          aria-label="decrease"
+          aria-label="Уменьшить память"
+          disabled={ram <= RAM_MIN}
         >
           <Minus size={12} />
         </button>
 
-        <div className="relative flex-1 h-1.5 bg-[#0B0906] border border-[#2A2116]">
+        <div className="relative flex-1 min-w-8 h-1.5 bg-[#0B0906] border border-[#2A2116]">
           <div
             className="absolute top-0 left-0 h-full bg-gradient-to-r from-[#8A571C] to-[#F5A524]"
             style={{ width: `${pct}%` }}
@@ -408,12 +551,13 @@ function RamSlider({ ram, onChange }: { ram: number; onChange: (v: number) => vo
           />
           <input
             type="range"
+            aria-label="Выделенная память, ГБ"
             min={RAM_MIN}
             max={RAM_MAX}
             step={RAM_STEP}
             value={ram}
-            onChange={(e) => set(parseInt(e.target.value))}
-            className="absolute inset-0 w-full opacity-0 cursor-pointer"
+            onChange={(e) => set(Number(e.target.value))}
+            className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-9 w-full opacity-0 cursor-pointer"
           />
         </div>
 
@@ -421,7 +565,8 @@ function RamSlider({ ram, onChange }: { ram: number; onChange: (v: number) => vo
           type="button"
           onClick={() => set(ram + RAM_STEP)}
           className="size-9 shrink-0 grid place-items-center border border-[#2A2116] bg-[#0B0906] text-[#C7AE86] hover:border-[#8A571C] hover:text-[#F3E7D0] transition-colors"
-          aria-label="increase"
+          aria-label="Увеличить память"
+          disabled={ram >= RAM_MAX}
         >
           <Plus size={12} />
         </button>
@@ -429,11 +574,21 @@ function RamSlider({ ram, onChange }: { ram: number; onChange: (v: number) => vo
         <div className="shrink-0 flex items-baseline gap-1 w-20 justify-end">
           <input
             type="number"
+            aria-label="Память, ГБ"
             min={RAM_MIN}
             max={RAM_MAX}
-            value={ram}
-            onChange={(e) => set(parseInt(e.target.value))}
-            className="w-12 h-9 border border-[#2A2116] bg-[#0B0906] px-2 text-[12px] font-mono text-[#F3E7D0] text-right outline-none focus:border-[#F5A524]/60 transition-colors"
+            key={ram}
+            defaultValue={ram}
+            onChange={onEdit}
+            onBlur={(e) => {
+              const next = e.target.value.trim() ? clampRam(Number(e.target.value)) : ram
+              e.target.value = String(next)
+              if (next !== ram) set(next)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+            }}
+            className="ram-number w-12 h-9 border border-[#2A2116] bg-[#0B0906] px-2 text-[12px] font-mono text-[#F3E7D0] text-right outline-none focus:border-[#F5A524]/60 transition-colors"
           />
           <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">GB</span>
         </div>
@@ -468,11 +623,13 @@ function RamSlider({ ram, onChange }: { ram: number; onChange: (v: number) => vo
 }
 
 function Toggle({
+  label,
   on,
   onChange,
   onLabel,
   offLabel,
 }: {
+  label: string
   on: boolean
   onChange: (v: boolean) => void
   onLabel: string
@@ -481,6 +638,9 @@ function Toggle({
   return (
     <button
       type="button"
+      role="switch"
+      aria-label={label}
+      aria-checked={on}
       onClick={() => onChange(!on)}
       className={`relative h-7 w-14 border transition-colors ${
         on ? 'border-[#F5A524]/60 bg-[#2A2116]' : 'border-[#2A2116] bg-[#0B0906]'
