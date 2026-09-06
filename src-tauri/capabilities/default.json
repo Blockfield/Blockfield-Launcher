@@ -17,7 +17,6 @@
     "dialog:allow-message",
     "updater:allow-check",
     "updater:allow-download-and-install",
-    "process:allow-restart",
-    "shell:allow-open"
+    "process:allow-restart"
   ]
 }

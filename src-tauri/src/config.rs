@@ -131,7 +131,7 @@ pub fn validate_config(config: &LauncherConfig) -> Result<(), String> {
         if !path.is_file() {
             return Err("Selected Java executable does not exist".to_string());
         }
-        let output = std::process::Command::new(path)
+        let output = crate::host_env::command(path)
             .arg("-version")
             .output()
             .map_err(|e| format!("Failed to run selected Java: {e}"))?;

@@ -67,8 +67,8 @@ export async function fetchServerStatus(): Promise<ServerStatus> {
 /** Open an external URL in the system's default browser. */
 export async function openExternalUrl(url: string): Promise<void> {
   try {
-    const { open } = await import('@tauri-apps/plugin-shell')
-    await open(url)
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('open_url', { url })
   } catch {
     if (typeof window !== 'undefined' && typeof window.open === 'function') {
       window.open(url, '_blank', 'noopener,noreferrer')

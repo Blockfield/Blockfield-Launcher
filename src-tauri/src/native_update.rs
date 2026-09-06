@@ -91,7 +91,7 @@ fn replace_binary(binary: &[u8], executable: &Path) -> std::io::Result<()> {
         .set_permissions(fs::Permissions::from_mode(0o755))?;
     staged.as_file().sync_all()?;
 
-    let check = std::process::Command::new("ldd")
+    let check = crate::host_env::command("ldd")
         .arg(staged.path())
         .env("LC_ALL", "C")
         .output()?;
@@ -191,7 +191,7 @@ mod tests {
             fs::read(directory.path().join("blockfield-launcher.previous")).unwrap(),
             old
         );
-        assert!(std::process::Command::new(executable)
+        assert!(crate::host_env::command(executable)
             .status()
             .unwrap()
             .success());

@@ -122,6 +122,16 @@ jobs:
               echo "X-AppImage-Version=$APP_VER" >> "\$d"
             fi
           done
+
+          # Custom patch: undo the plugin's GDK_BACKEND=x11 in the hook that ships inside the AppImage.
+          # x11 was a workaround for the Wayland backend crashing on the bundled libwayland, which we
+          # no longer ship (see patch above). Under XWayland mutter scales the window twice (1280x720
+          # arrives as 2560x1514) and claims a 74px decoration frame the window never asked for, so
+          # clicks land next to the UI instead of on it.
+          # Fail the build rather than ship a silent no-op if the plugin moves its hook.
+          gtk_hook="\$APPDIR/apprun-hooks/linuxdeploy-plugin-gtk.sh"
+          [ -f "\$gtk_hook" ] || { echo "GTK AppRun hook missing at \$gtk_hook" >&2; exit 1; }
+          echo 'unset GDK_BACKEND' >> "\$gtk_hook"
           EOF
           chmod +x ~/.cache/tauri/linuxdeploy-plugin-gtk.sh
       - uses: tauri-apps/tauri-action@v0
@@ -195,13 +205,9 @@ jobs:
           body: |
             Основная версия Blockfield Launcher ${{ env.VERSION }}.
 
-            - Переработан главный экран, убран раздел новостей.
-            - Настройки разделены на вкладки, устранена прокрутка всего окна.
-            - Добавлены автоматическая проверка файлов и определение региона сервера.
-            - Память по умолчанию снижена до 4 ГБ; добавлены команды перед запуском и после выхода.
-            - Добавлены состояние «В игре», защита от повторного запуска и скрытие окна на время игры.
-            - Добавлен прогресс обновления лаунчера и обновление пользовательской Linux-установки.
-            - Исправлено зависание экрана обновления после завершения проверки файлов.
+            - Linux: окно снова принимает клики — AppImage больше не форсирует X11-бэкенд, из-за которого на Wayland окно масштабировалось дважды.
+            - Исправлены команды перед запуском и после выхода: окружение AppImage больше не ломает python3 и другие программы системы.
+            - Кнопка поддержки снова открывает ссылку в браузере.
 
           draft: false
           prerelease: false

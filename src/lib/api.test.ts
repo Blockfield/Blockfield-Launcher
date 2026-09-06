@@ -4,14 +4,8 @@ import { fetchServerStatus, openExternalUrl } from './api'
 const invoke = vi.fn()
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }))
 
-const mockShellOpen = vi.fn()
-vi.mock('@tauri-apps/plugin-shell', () => ({
-  open: (...args: unknown[]) => mockShellOpen(...args),
-}))
-
 afterEach(() => {
   invoke.mockReset()
-  mockShellOpen.mockReset()
   vi.restoreAllMocks()
 })
 
@@ -48,16 +42,16 @@ describe('fetchServerStatus', () => {
 })
 
 describe('openExternalUrl', () => {
-  it('opens URL via plugin-shell when available', async () => {
-    mockShellOpen.mockResolvedValue(undefined)
+  it('opens URL through the launcher backend when available', async () => {
+    invoke.mockResolvedValue(undefined)
     await openExternalUrl('https://github.com/netherg-io/blockfield-launcher-releases')
-    expect(mockShellOpen).toHaveBeenCalledWith(
-      'https://github.com/netherg-io/blockfield-launcher-releases',
-    )
+    expect(invoke).toHaveBeenCalledWith('open_url', {
+      url: 'https://github.com/netherg-io/blockfield-launcher-releases',
+    })
   })
 
-  it('falls back to window.open if plugin-shell fails', async () => {
-    mockShellOpen.mockRejectedValue(new Error('Shell plugin disabled'))
+  it('falls back to window.open if the backend cannot open it', async () => {
+    invoke.mockRejectedValue(new Error('Cannot open link'))
     const mockWindowOpen = vi.fn()
     vi.stubGlobal('window', { open: mockWindowOpen })
 

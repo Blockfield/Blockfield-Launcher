@@ -212,7 +212,7 @@ fn try_javaw(path: &Path) -> Option<PathBuf> {
 }
 
 fn system_java_available() -> bool {
-    std::process::Command::new("java")
+    crate::host_env::command("java")
         .arg("-version")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -532,7 +532,7 @@ fn run_packwiz_installer(
     pack_url: &str,
 ) -> Result<(), String> {
     use std::io::BufRead;
-    let mut child = std::process::Command::new(java)
+    let mut child = crate::host_env::command(java)
         // The bootstrap normally fetches the installer from GitHub; both jars come from the pack host instead.
         .args([
             "-jar",
@@ -697,6 +697,35 @@ pub fn game_status(state: State<'_, LauncherAppState>) -> crate::game::GameStatu
     state.game.snapshot()
 }
 
+/// Opens a link in the user's browser. The URL can come from remote launcher content, so only
+/// plain https links are accepted — never a local path, a `file:`/`javascript:` URL or an option.
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") || url.contains(char::is_whitespace) {
+        return Err(format!("Refusing to open {url}"));
+    }
+    #[cfg(windows)]
+    let mut command = {
+        // Empty title argument: `start` treats a lone quoted argument as the window title.
+        let mut command = crate::host_env::command("cmd.exe");
+        command.args(["/D", "/S", "/C", "start", "", url.as_str()]);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = crate::host_env::command("xdg-open");
+        command.arg(&url);
+        command
+    };
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Cannot open link: {e}"))
+}
+
 // ── Game launch command ────────────────────────────────────────
 
 #[tauri::command]
@@ -811,7 +840,7 @@ pub async fn launch_game(
     std::fs::create_dir_all(&log_dir).map_err(|e| format!("Cannot create log directory: {e}"))?;
     let output = std::fs::File::create(log_dir.join("launcher-game.log"))
         .map_err(|e| format!("Cannot create game log: {e}"))?;
-    let mut child = std::process::Command::new(&java)
+    let mut child = crate::host_env::command(&java)
         .args(&args)
         .current_dir(&game_dir)
         .stdin(std::process::Stdio::null())
@@ -963,7 +992,7 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
 
 /// System `tar` keeps the executable bits; it exists on every Linux/macOS install.
 fn extract_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
-    let output = std::process::Command::new("tar")
+    let output = crate::host_env::command("tar")
         .arg("-xzf")
         .arg(archive_path)
         .arg("-C")
