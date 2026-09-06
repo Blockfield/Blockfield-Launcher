@@ -726,6 +726,22 @@ pub fn open_url(url: String) -> Result<(), String> {
         .map_err(|e| format!("Cannot open link: {e}"))
 }
 
+/// Server defaults for a first launch. Minecraft fills in every other option itself and rewrites
+/// the whole file on exit, so a partial file is enough. An existing file is the player's own
+/// settings and is never touched — and the modpack cannot carry these, the pack host treats
+/// options.txt as a private file.
+fn seed_game_options(game_dir: &Path) -> std::io::Result<()> {
+    let path = game_dir.join("options.txt");
+    if path.exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(game_dir)?;
+    std::fs::write(
+        path,
+        "fullscreen:true\nrenderDistance:20\nsimulationDistance:20\n",
+    )
+}
+
 // ── Game launch command ────────────────────────────────────────
 
 #[tauri::command]
@@ -808,6 +824,10 @@ pub async fn launch_game(
             loader_version_id.as_deref(),
         )
         .await?;
+    }
+
+    if let Err(error) = seed_game_options(&game_dir_path) {
+        log::warn!("Cannot write default game options: {error}");
     }
 
     emit_status(&app_handle, "launch", "Building launch command", false);
@@ -1178,6 +1198,27 @@ fn archive_limits() -> blockfield_shared::ArchiveLimits {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn game_options_are_seeded_once_and_never_overwrite_the_player() {
+        let dir = std::env::temp_dir().join(format!("blockfield-options-{}", std::process::id()));
+        let options = dir.join("options.txt");
+
+        seed_game_options(&dir).unwrap();
+        let seeded = std::fs::read_to_string(&options).unwrap();
+        assert!(seeded.contains("fullscreen:true"));
+        assert!(seeded.contains("renderDistance:20"));
+        assert!(seeded.contains("simulationDistance:20"));
+
+        std::fs::write(&options, "renderDistance:8\n").unwrap();
+        seed_game_options(&dir).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&options).unwrap(),
+            "renderDistance:8\n"
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
         let file = std::fs::File::create(path).unwrap();

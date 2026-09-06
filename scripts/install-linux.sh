@@ -28,8 +28,7 @@ cat > "$HOME/.local/share/applications/blockfield-launcher.desktop" <<DESKTOP
 Type=Application
 Name=Blockfield Launcher
 Comment=Blockfield modpack launcher
-# WEBKIT_DISABLE_DMABUF_RENDERER: transparent Tauri windows render invisible with WebKitGTK's DMA-BUF path on some Wayland/GPU combos
-Exec=env WEBKIT_DISABLE_DMABUF_RENDERER=1 $APP/blockfield-launcher
+Exec=$APP/blockfield-launcher
 Icon=$APP/icon.png
 Terminal=false
 Categories=Game;
