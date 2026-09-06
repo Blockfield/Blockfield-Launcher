@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' customprotocol: asset:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; connect-src 'self' ipc: http://ipc.localhost http://localhost:5173 https://modpack.dev.nether.pp.ua; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'"
+      "csp": "default-src 'self' customprotocol: asset:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; connect-src 'self' ipc: http://ipc.localhost http://localhost:5173 https://modpack.nether.pp.ua; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'"
     }
   },
   "plugins": {

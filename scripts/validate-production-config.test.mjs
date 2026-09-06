@@ -10,13 +10,13 @@ const run = (value) => spawnSync(process.execPath, [script], {
 })
 
 test('accepts the configured production origin', () => {
-  assert.equal(run('https://modpack.dev.nether.pp.ua').status, 0)
+  assert.equal(run('https://modpack.nether.pp.ua').status, 0)
 })
 
 test('rejects missing, insecure, private, and mismatching origins', () => {
   for (const value of [
     '',
-    'http://modpack.dev.nether.pp.ua',
+    'http://modpack.nether.pp.ua',
     'https://localhost/pack',
     'https://10.0.0.1/pack',
     'https://other.example.com',
