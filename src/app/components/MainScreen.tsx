@@ -436,7 +436,7 @@ function ServerStatus({
 }) {
   const { t } = useI18n()
   return (
-    <div className="shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-[240px]">
+    <div className="shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-full md:w-[340px] max-w-full">
       <div className="flex items-start justify-between gap-2">
         <span className="text-[10px] tracking-[0.14em] text-[#8E7A5E]">{t('main.server')}</span>
         <span
@@ -447,8 +447,13 @@ function ServerStatus({
         </span>
       </div>
       <div className="mt-2 flex items-center gap-2">
-        <ShieldCheck size={14} className="text-[#F5A524]" />
-        <span className="tracking-[0.18em] text-[13px] text-neutral-100">{serverName}</span>
+        <ShieldCheck size={14} className="shrink-0 text-[#F5A524]" />
+        <span
+          title={serverName}
+          className="min-w-0 truncate tracking-[0.18em] text-[13px] text-neutral-100"
+        >
+          {serverName}
+        </span>
       </div>
       <div title={serverIp} className="mt-2 text-[10px] tracking-[0.08em] text-[#8E7A5E] truncate">
         {serverIp}
