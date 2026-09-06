@@ -178,7 +178,7 @@ export function SettingsScreen({
       <TopoBackdrop />
       <GridBackdrop intensity={0.4} />
 
-      <div className="settings-layout relative h-full min-h-0 p-3 md:p-5 flex flex-col gap-4 overflow-hidden">
+      <div className="settings-layout screen-layout relative h-full min-h-0 flex flex-col gap-4 overflow-hidden">
         <div className="shrink-0 flex flex-wrap items-baseline gap-3">
           <h1 className="tracking-[0.06em] text-[26px] leading-none text-neutral-50">
             {t('nav.settings')}

@@ -342,3 +342,16 @@ input[type='range']:focus-visible {
 .launcher-update-progress::-moz-progress-bar {
   background: #f5a524;
 }
+
+.screen-layout {
+  width: 100%;
+  max-width: 1600px;
+  margin-inline: auto;
+  padding: 12px;
+}
+
+@media (width >= 768px) {
+  .screen-layout {
+    padding: 20px;
+  }
+}

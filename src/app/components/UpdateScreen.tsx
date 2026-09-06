@@ -79,7 +79,7 @@ const INITIAL_STEPS: Array<{ label: TKey; status: StepStatus }> = [
 
 const freshSteps = () => INITIAL_STEPS.map((step) => ({ ...step }))
 
-export function UpdateScreen() {
+export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
   const { lang, t } = useI18n()
   const game = useGameState()
   const gameBusy = game.phase !== 'idle'
@@ -108,6 +108,8 @@ export function UpdateScreen() {
   const speedSampleRef = useRef<SpeedSample | null>(null)
   const cancelledRef = useRef(false)
   const startedRef = useRef(false)
+  const runningRef = useRef(false)
+  const lastRequestRef = useRef(updateRequest)
 
   const addLog = useCallback((msg: string, tone: LogEntry['tone'] = 'info') => {
     setLogLines((prev) => [...prev.slice(-49), { ts: timestamp(), tone, msg }])
@@ -208,6 +210,7 @@ export function UpdateScreen() {
     // Guard against React StrictMode double-mount in dev
     if (startedRef.current) return
     startedRef.current = true
+    runningRef.current = true
 
     const run = async () => {
       unlistenStatusRef.current = await listenLauncherStatus(applyBackendStatus)
@@ -330,6 +333,7 @@ export function UpdateScreen() {
         setCanCancel(false)
       })
       .finally(() => {
+        runningRef.current = false
         unlistenStatusRef.current?.()
         unlistenStatusRef.current = null
       })
@@ -349,6 +353,12 @@ export function UpdateScreen() {
     setCanCancel(false)
     setLogLines([])
     setProgress(0)
+    setCurrentFile('')
+    setFileIdx(0)
+    setFileCount(0)
+    setDownloadedBytes(0)
+    setTotalBytes(0)
+    setManifestVersion('')
     setMirror('—')
     setMirrorOnline(null)
     setPhase('checking')
@@ -356,6 +366,13 @@ export function UpdateScreen() {
     setSteps(freshSteps())
     setRunToken((value) => value + 1)
   }, [resetSpeed])
+
+  useEffect(() => {
+    if (lastRequestRef.current === updateRequest) return
+    lastRequestRef.current = updateRequest
+    // The screen stays mounted to preserve downloads while navigating between tabs.
+    if (!runningRef.current && !gameBusy && !launching) handleRetry()
+  }, [updateRequest, gameBusy, launching, handleRetry])
 
   const handleCancel = useCallback(async () => {
     cancelledRef.current = true
@@ -451,7 +468,7 @@ export function UpdateScreen() {
       <TopoBackdrop />
       <GridBackdrop intensity={0.5} />
 
-      <div className="update-layout relative h-full min-h-0 p-3 md:p-5 flex flex-col">
+      <div className="update-layout screen-layout relative h-full min-h-0 flex flex-col">
         <OperationBar
           label={t('update.packageSync')}
           status={statusText()}
@@ -741,13 +758,6 @@ function ProgressBar({ progress }: { progress: number }) {
       <div
         className="h-full bg-gradient-to-r from-[#8A571C] via-[#F5A524] to-[#FFC861] transition-all duration-200"
         style={{ width: `${progress}%`, boxShadow: '0 0 16px rgba(245,165,36,0.55)' }}
-      />
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          backgroundImage:
-            'repeating-linear-gradient(to right, transparent 0 calc(2.5% - 1px), rgba(7,6,4,0.6) calc(2.5% - 1px) 2.5%)',
-        }}
       />
     </div>
   )

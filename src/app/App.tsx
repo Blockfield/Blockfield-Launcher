@@ -21,6 +21,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('main')
   const [username, setUsername] = useState('')
   const [updatesVisited, setUpdatesVisited] = useState(false)
+  const [updateRequest, setUpdateRequest] = useState(0)
   const [commandError, setCommandError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -96,10 +97,17 @@ export default function App() {
               </button>
             </div>
           )}
-          {screen === 'main' && <MainScreen onPlay={() => navigate('update')} />}
+          {screen === 'main' && (
+            <MainScreen
+              onPlay={() => {
+                setUpdateRequest((value) => value + 1)
+                navigate('update')
+              }}
+            />
+          )}
           {updatesVisited && (
             <div hidden={screen !== 'update'} className="h-full min-h-0">
-              <UpdateScreen />
+              <UpdateScreen updateRequest={updateRequest} />
             </div>
           )}
           {screen === 'settings' && (

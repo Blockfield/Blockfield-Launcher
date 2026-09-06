@@ -228,8 +228,8 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
       <TopoBackdrop />
       <GridBackdrop intensity={0.5} />
 
-      <div className="relative xl:h-full w-full max-w-[1600px] mx-auto">
-        <section className="relative xl:h-full p-5 md:p-7 flex flex-col min-h-0">
+      <div className="screen-layout relative xl:h-full">
+        <section className="relative xl:h-full flex flex-col min-h-0">
           <OperationBar label={t('main.operation')} />
 
           <div className="flex flex-col md:flex-row min-w-0 items-start justify-between gap-6">
