@@ -1,10 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchServerStatus } from './api'
+import { fetchServerStatus, openExternalUrl } from './api'
 
 const invoke = vi.fn()
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }))
 
-afterEach(() => invoke.mockReset())
+const mockShellOpen = vi.fn()
+vi.mock('@tauri-apps/plugin-shell', () => ({
+  open: (...args: unknown[]) => mockShellOpen(...args),
+}))
+
+afterEach(() => {
+  invoke.mockReset()
+  mockShellOpen.mockReset()
+  vi.restoreAllMocks()
+})
 
 describe('fetchServerStatus', () => {
   it('keeps explicit offline telemetry unavailable', async () => {
@@ -35,5 +44,33 @@ describe('fetchServerStatus', () => {
     invoke.mockRejectedValue(new Error('VITE_BLOCKFIELD_PACK_URL is required'))
 
     await expect(fetchServerStatus()).rejects.toThrow('VITE_BLOCKFIELD_PACK_URL is required')
+  })
+})
+
+describe('openExternalUrl', () => {
+  it('opens URL via plugin-shell when available', async () => {
+    mockShellOpen.mockResolvedValue(undefined)
+    await openExternalUrl('https://github.com/netherg-io/blockfield-launcher-releases')
+    expect(mockShellOpen).toHaveBeenCalledWith(
+      'https://github.com/netherg-io/blockfield-launcher-releases',
+    )
+  })
+
+  it('falls back to window.open if plugin-shell fails', async () => {
+    mockShellOpen.mockRejectedValue(new Error('Shell plugin disabled'))
+    const mockWindowOpen = vi.fn()
+    vi.stubGlobal('window', { open: mockWindowOpen })
+
+    try {
+      await openExternalUrl('https://github.com/netherg-io/blockfield-launcher-releases')
+
+      expect(mockWindowOpen).toHaveBeenCalledWith(
+        'https://github.com/netherg-io/blockfield-launcher-releases',
+        '_blank',
+        'noopener,noreferrer',
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

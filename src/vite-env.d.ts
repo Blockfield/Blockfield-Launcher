@@ -26,6 +26,7 @@ interface ImportMetaEnv {
   readonly VITE_OPERATOR_INITIALS?: string
   readonly VITE_COORDINATES?: string
   readonly VITE_COPYRIGHT?: string
+  readonly VITE_RELEASES_REPO_URL?: string
 }
 
 interface ImportMeta {

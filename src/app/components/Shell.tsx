@@ -4,9 +4,10 @@ import { Settings, Gamepad2, Download, LifeBuoy } from 'lucide-react'
 import { useI18n, type TKey } from '../i18n'
 import { Logo } from './Logo'
 import { StatusDot } from './ui-bits'
-import { BRAND, SERVER_IP } from '../constants'
+import { BRAND, RELEASES_REPO_URL, SERVER_IP } from '../constants'
 import { contentText, localizedContentText, useLauncherContent } from '../../lib/content'
 import { useLauncherVersion } from '../../lib/version'
+import { openExternalUrl } from '../../lib/api'
 
 type Screen = 'main' | 'update' | 'settings'
 
@@ -55,6 +56,7 @@ export function Shell({
   const supportLabel =
     localizedContentText(content, lang, 'content.supportLabel', 'supportLabel', 'support_label') ??
     t('shell.support')
+  const supportUrl = contentText(content, 'supportUrl', 'support_url') ?? RELEASES_REPO_URL
   const networkStatus = t('shell.offlineMode')
   const brand = contentText(content, 'brand') ?? BRAND
   const brandSubtitle =
@@ -118,7 +120,17 @@ export function Shell({
           <span>{t('shell.ip', { ip: serverIp })}</span>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          <a className="flex items-center gap-1.5 hover:text-[#F5A524] cursor-pointer">
+          <a
+            href={supportUrl}
+            onClick={(e) => {
+              e.preventDefault()
+              void openExternalUrl(supportUrl)
+            }}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Поддержка Blockfield"
+            className="flex items-center gap-1.5 hover:text-[#F5A524] cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-[#F5A524]"
+          >
             <LifeBuoy size={11} /> {supportLabel}
           </a>
           <span className="h-3 w-px bg-[#18130D]" />

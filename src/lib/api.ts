@@ -20,7 +20,7 @@ export interface VersionCheckResult {
   loaderOk: boolean
 }
 
-// ── Download progress ────────────────────────────────────────────
+// ── Download progress ────────────────────────────────────────────────────────
 
 /** Progress payload emitted by the backend during download. */
 export interface DownloadProgress {
@@ -64,6 +64,18 @@ export async function fetchServerStatus(): Promise<ServerStatus> {
   return { ...status, apiLatencyMs: Math.round(performance.now() - started) }
 }
 
+/** Open an external URL in the system's default browser. */
+export async function openExternalUrl(url: string): Promise<void> {
+  try {
+    const { open } = await import('@tauri-apps/plugin-shell')
+    await open(url)
+  } catch {
+    if (typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }
+}
+
 export interface LauncherContentFeature {
   icon?: string
   title?: string
@@ -100,6 +112,8 @@ export interface LauncherContent {
   login_slogan?: string
   supportLabel?: string
   support_label?: string
+  supportUrl?: string
+  support_url?: string
   updateDescription?: string
   update_description?: string
   settingsPreferences?: string
@@ -109,7 +123,7 @@ export interface LauncherContent {
   feed?: LauncherContentFeedEntry[]
 }
 
-// ── Launcher config ──────────────────────────────────────────────
+// ── Launcher config ──────────────────────────────────────────────────────────
 
 /** Launcher configuration persisted to disk. */
 export interface LauncherConfig {

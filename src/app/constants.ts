@@ -4,3 +4,6 @@ export const SERVER_IP = import.meta.env.VITE_SERVER_IP ?? 'play.blockfield.gg:2
 export const BRAND = import.meta.env.VITE_BRAND ?? 'BLOCKFIELD'
 export const OPERATION_NAME = import.meta.env.VITE_OPERATION_NAME ?? 'IRON FRONT'
 export const COPYRIGHT = import.meta.env.VITE_COPYRIGHT ?? '© 2026 BLOCKFIELD COMMAND'
+export const RELEASES_REPO_URL =
+  import.meta.env.VITE_RELEASES_REPO_URL ??
+  'https://github.com/netherg-io/blockfield-launcher-releases'
