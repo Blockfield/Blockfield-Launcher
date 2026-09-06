@@ -127,7 +127,12 @@ pub fn has_launch_dependencies(
         }
     }
 
-    natives_dir(game_dir, minecraft_version).exists()
+    let (_, native_libraries) = collect_library_artifacts(&vanilla_json);
+    if !native_libraries.is_empty() && !natives_dir(game_dir, minecraft_version).exists() {
+        return false;
+    }
+
+    true
 }
 
 pub async fn ensure_launch_dependencies(
@@ -178,6 +183,8 @@ pub async fn ensure_launch_dependencies(
     );
 
     let libs_dir = game_dir.join("libraries");
+    let dest_natives_dir = natives_dir(game_dir, minecraft_version);
+    let _ = std::fs::create_dir_all(&dest_natives_dir);
     let vanilla = &vanilla_json;
 
     let (lib_result, asset_result) = tokio::join!(
@@ -1073,5 +1080,34 @@ mod tests {
             loader_version_id("1.21.1", "0.19.3"),
             "fabric-loader-0.19.3-1.21.1"
         );
+    }
+
+    #[test]
+    fn has_launch_dependencies_passes_when_no_native_libraries() {
+        let root = std::env::temp_dir().join("blockfield_has_launch_deps_test");
+        let _ = std::fs::remove_dir_all(&root);
+        let version = "1.21.1";
+        let v_dir = root.join("versions").join(version);
+        std::fs::create_dir_all(&v_dir).unwrap();
+        std::fs::write(
+            v_dir.join(format!("{version}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "libraries": [],
+                "assetIndex": { "id": "test" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(v_dir.join(format!("{version}.jar")), b"test").unwrap();
+        let idx_dir = root.join("assets").join("indexes");
+        std::fs::create_dir_all(&idx_dir).unwrap();
+        std::fs::write(
+            idx_dir.join("test.json"),
+            serde_json::to_vec(&serde_json::json!({ "objects": {} })).unwrap(),
+        )
+        .unwrap();
+
+        assert!(has_launch_dependencies(&root, version, None));
+        let _ = std::fs::remove_dir_all(root);
     }
 }
