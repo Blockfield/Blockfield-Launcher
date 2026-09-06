@@ -183,7 +183,6 @@ jobs:
             - Добавлен прогресс обновления лаунчера и обновление пользовательской Linux-установки.
             - Исправлено зависание экрана обновления после завершения проверки файлов.
 
-            Built from ${{ github.repository }}@${{ github.sha }}
           draft: false
           prerelease: false
           make_latest: true
