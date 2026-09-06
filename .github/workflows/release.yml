@@ -104,6 +104,18 @@ jobs:
       - run: pnpm config:check
         env:
           VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
+      - name: Patch linuxdeploy GTK plugin to exclude conflicting Wayland libraries
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p ~/.cache/tauri
+          curl -sSL -o ~/.cache/tauri/linuxdeploy-plugin-gtk.sh https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
+          cat << 'EOF' >> ~/.cache/tauri/linuxdeploy-plugin-gtk.sh
+
+          # Custom patch: exclude bundled Wayland client libraries so host Mesa/Wayland graphics stack is used instead.
+          # This prevents "Could not create default EGL display: EGL_BAD_PARAMETER" white screen crash on modern Wayland environments.
+          rm -f "$APPDIR"/usr/lib/libwayland*.so* "$APPDIR"/usr/lib/*/libwayland*.so* || true
+          EOF
+          chmod +x ~/.cache/tauri/linuxdeploy-plugin-gtk.sh
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
