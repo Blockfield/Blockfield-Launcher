@@ -149,9 +149,9 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const launchProgressText = launchProgress === null ? '' : ` · ${launchProgress.toFixed(0)}%`
   const launchSub =
     game.phase === 'running'
-      ? 'Закройте игру, чтобы запустить снова'
+      ? 'Игра запущена'
       : game.phase === 'finishing'
-        ? 'Выполняются команды после выхода'
+        ? 'Команды после выхода'
         : launching
           ? `${launchStatus || t('main.launching')}${launchProgressText}`.slice(0, 64)
           : launchError

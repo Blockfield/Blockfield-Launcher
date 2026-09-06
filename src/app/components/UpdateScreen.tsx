@@ -675,23 +675,26 @@ function DeployButton({
   disabled?: boolean
   inGame?: boolean
 }) {
+  const accent = inGame ? 'border-[#82D66B]' : 'border-[#F5A524]'
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`group relative h-[64px] w-[160px] md:w-[230px] shrink-0 overflow-hidden border border-[#F5A524]/50 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] transition-all ${inGame ? 'border-[#82D66B]/40 cursor-default' : 'disabled:opacity-60 disabled:cursor-not-allowed'}`}
+      className={`group relative h-[64px] w-[160px] md:w-[230px] shrink-0 overflow-hidden border bg-gradient-to-b from-[#2A2116] to-[#11100D] transition-all ${inGame ? 'border-[#82D66B]/60 cursor-default' : 'border-[#F5A524]/50 hover:border-[#F5A524] disabled:opacity-60 disabled:cursor-not-allowed'}`}
       style={{
         boxShadow: inGame
           ? undefined
           : 'inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)',
       }}
     >
-      <span className="absolute top-0 left-0 w-3 h-3 border-l border-t border-[#F5A524]" />
-      <span className="absolute top-0 right-0 w-3 h-3 border-r border-t border-[#F5A524]" />
-      <span className="absolute bottom-0 left-0 w-3 h-3 border-l border-b border-[#F5A524]" />
-      <span className="absolute bottom-0 right-0 w-3 h-3 border-r border-b border-[#F5A524]" />
-      <span className="absolute inset-0 bg-[#F5A524]/0 group-hover:bg-[#F5A524]/10 transition-colors" />
-      <span className="relative h-full flex items-center justify-center gap-4">
+      <span className={`absolute top-0 left-0 w-3 h-3 border-l border-t ${accent}`} />
+      <span className={`absolute top-0 right-0 w-3 h-3 border-r border-t ${accent}`} />
+      <span className={`absolute bottom-0 left-0 w-3 h-3 border-l border-b ${accent}`} />
+      <span className={`absolute bottom-0 right-0 w-3 h-3 border-r border-b ${accent}`} />
+      {!inGame && (
+        <span className="absolute inset-0 bg-[#F5A524]/0 group-hover:bg-[#F5A524]/10 transition-colors" />
+      )}
+      <span className="relative h-full flex items-center justify-center gap-4 px-4">
         <>
           {inGame ? (
             <Gamepad2 size={18} className="text-[#82D66B]" />
@@ -699,9 +702,14 @@ function DeployButton({
             <Play size={18} className="text-[#F3E7D0] fill-[#F3E7D0]" />
           )}
         </>
-        <span className="flex flex-col items-start leading-none">
+        <span className="flex min-w-0 flex-col items-start leading-none">
           <span className="tracking-[0.26em] text-[17px] text-[#F3E7D0]">{label}</span>
-          <span className="tracking-[0.16em] text-[9px] text-[#C7AE86] mt-1 text-left">{sub}</span>
+          <span
+            className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap tracking-[0.16em] text-[9px] text-[#C7AE86] mt-1 text-left"
+            title={sub}
+          >
+            {sub}
+          </span>
         </span>
       </span>
     </button>
