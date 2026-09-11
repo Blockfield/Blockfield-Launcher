@@ -16,10 +16,13 @@ import {
 import { invoke } from '@tauri-apps/api/core'
 import { LauncherUpdatePanel } from './LauncherUpdatePanel'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
+import { ErrorDetail } from './ui-bits'
 import { useI18n } from '../i18n'
 import type { LauncherConfig } from '../../lib/api'
 import { invalidateModpackCheck } from '../../lib/modpack-check'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
+import { friendlyError } from '../../lib/errors'
+import { isValidUsername } from '../../lib/username'
 
 /** Detect whether we're running inside Tauri. */
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -51,6 +54,8 @@ export function SettingsScreen({
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
+  const [saveErrorRaw, setSaveErrorRaw] = useState<string | null>(null)
+  const usernameInvalid = name.trim().length > 0 && !isValidUsername(name)
   const preferences =
     localizedContentText(
       content,
@@ -86,8 +91,14 @@ export function SettingsScreen({
 
   const handleSave = useCallback(async () => {
     if (!isTauri()) return
+    if (usernameInvalid) {
+      setSaveMessage(t('settings.usernameHint'))
+      setSaveErrorRaw(null)
+      return
+    }
     setSaving(true)
     setSaveMessage(null)
+    setSaveErrorRaw(null)
     try {
       await invoke('save_settings', {
         config: {
@@ -109,7 +120,9 @@ export function SettingsScreen({
       setTimeout(() => setSaveMessage(null), 3000)
     } catch (e) {
       console.error('Failed to save settings:', e)
-      setSaveMessage(String(e))
+      const friendly = friendlyError(e, 'settings-save')
+      setSaveMessage(friendly.message)
+      setSaveErrorRaw(friendly.raw)
     } finally {
       setSaving(false)
     }
@@ -125,6 +138,7 @@ export function SettingsScreen({
     lang,
     t,
     onUsernameSaved,
+    usernameInvalid,
   ])
 
   const handleReset = useCallback(() => {
@@ -240,13 +254,14 @@ export function SettingsScreen({
                 >
                   <input
                     aria-label={t('settings.username')}
+                    aria-invalid={usernameInvalid}
                     value={name}
                     maxLength={16}
                     onChange={(e) => {
                       setName(e.target.value)
                       markDirty()
                     }}
-                    className="w-full h-10 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 outline-none focus:border-[#F5A524]/60 transition-colors"
+                    className={`w-full h-10 border bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 outline-none transition-colors ${usernameInvalid ? 'border-[#c98b8b] focus:border-[#c98b8b]' : 'border-[#2A2116] focus:border-[#F5A524]/60'}`}
                   />
                 </Setting>
                 <Setting
@@ -390,14 +405,9 @@ export function SettingsScreen({
               </button>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 {saveMessage && saveMessage !== t('settings.saved') && (
-                  <span
-                    role="status"
-                    className={`max-w-[320px] break-words text-[11px] ${
-                      saveMessage === t('settings.saved') ? 'text-[#8E7A5E]' : 'text-[#c98b8b]'
-                    }`}
-                  >
-                    {saveMessage}
-                  </span>
+                  <div className="max-w-[320px]">
+                    <ErrorDetail message={saveMessage} raw={saveErrorRaw} />
+                  </div>
                 )}
                 <button
                   type="button"
@@ -439,7 +449,7 @@ export function SettingsScreen({
   )
 }
 
-function Setting({
+export function Setting({
   compact = false,
   icon,
   label,
@@ -470,7 +480,7 @@ function Setting({
   )
 }
 
-function PathInput({
+export function PathInput({
   label,
   value,
   onChange,
@@ -512,7 +522,7 @@ function clampRam(v: number) {
   return Math.min(RAM_MAX, Math.max(RAM_MIN, Math.round(v)))
 }
 
-function RamSlider({
+export function RamSlider({
   ram,
   onChange,
   onEdit,

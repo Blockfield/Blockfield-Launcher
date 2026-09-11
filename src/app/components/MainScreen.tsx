@@ -17,7 +17,8 @@ import {
 } from 'lucide-react'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
-import { GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
+import { ErrorDetail, GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
+import { friendlyError } from '../../lib/errors'
 import { useI18n, type TKey } from '../i18n'
 import { OPERATION_NAME, SERVER_IP } from '../constants'
 import { listenDownloadProgress, listenLauncherStatus } from '../../lib/events'
@@ -155,7 +156,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
         : launching
           ? `${launchStatus || t('main.launching')}${launchProgressText}`.slice(0, 64)
           : launchError
-            ? launchError.slice(0, 64)
+            ? friendlyError(launchError, 'launch').message
             : !isChecked
               ? t('main.checking')
               : needsSetup
@@ -332,9 +333,16 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                   highlight={needsSetup}
                 />
                 {checkError && (
-                  <div className="text-[10px] tracking-[0.12em] text-[#c98b8b] mt-1">
-                    {checkError.slice(0, 120)}
-                  </div>
+                  <ErrorDetail
+                    message={friendlyError(checkError, 'modpack-check').message}
+                    raw={checkError}
+                  />
+                )}
+                {launchError && (
+                  <ErrorDetail
+                    message={friendlyError(launchError, 'launch').message}
+                    raw={launchError}
+                  />
                 )}
               </div>
               <button

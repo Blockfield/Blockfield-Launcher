@@ -15,12 +15,13 @@ import {
 import { invoke } from '@tauri-apps/api/core'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
-import { GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
+import { ErrorDetail, GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
 import { useI18n, type TKey, type TFunction } from '../i18n'
 import { OPERATION_NAME } from '../constants'
 import { listenDownloadProgress, listenLauncherStatus } from '../../lib/events'
 import type { DownloadProgress, LauncherStatus, VersionCheckResult } from '../../lib/api'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
+import { friendlyError, type ErrorContext } from '../../lib/errors'
 
 type StepStatus = 'done' | 'active' | 'pending'
 type Phase =
@@ -98,6 +99,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
   const [mirrorOnline, setMirrorOnline] = useState<boolean | null>(null)
   const [logLines, setLogLines] = useState<LogEntry[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [errorContext, setErrorContext] = useState<ErrorContext>('modpack-check')
   const [manifestVersion, setManifestVersion] = useState('')
   const [launching, setLaunching] = useState(false)
   const [steps, setSteps] = useState<Array<{ label: TKey; status: StepStatus }>>(freshSteps)
@@ -235,6 +237,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
         setMirrorOnline(false)
         addLog(`ERROR: Failed to fetch manifest — ${String(e)}`, 'warn')
         setPhase('error')
+        setErrorContext('modpack-check')
         setError(String(e))
         return
       }
@@ -301,6 +304,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
         } else {
           addLog(`ERROR: Download failed — ${String(e)}`, 'warn')
           setPhase('error')
+          setErrorContext('modpack-download')
           setError(String(e))
         }
         return
@@ -329,6 +333,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     void run()
       .catch((error) => {
         setPhase('error')
+        setErrorContext('modpack-download')
         setError(String(error))
         setCanCancel(false)
       })
@@ -405,6 +410,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     } catch (e) {
       addLog(`ERROR: Launch failed — ${String(e)}`, 'warn')
       setPhase('error')
+      setErrorContext('launch')
       setError(String(e))
     } finally {
       unlistenRef.current?.()
@@ -431,7 +437,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
       case 'uptodate':
         return t('update.uptodate')
       case 'error':
-        return t('settings.saveError')
+        return error ? friendlyError(error, errorContext).message : t('update.updating')
       default:
         return t('update.updating')
     }
@@ -485,9 +491,13 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
                 {t('update.patch', { v: manifestVersion || '...' })}
               </span>
             </div>
-            <p className="hidden md:block text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">
-              {error ? error.slice(0, 200) : updateDescription}
-            </p>
+            {error ? (
+              <ErrorDetail message={friendlyError(error, errorContext).message} raw={error} />
+            ) : (
+              <p className="hidden md:block text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">
+                {updateDescription}
+              </p>
+            )}
           </div>
           <div className="update-mirror shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-[240px]">
             <div className="text-[10px] tracking-[0.16em] text-[#8E7A5E]">{t('update.mirror')}</div>

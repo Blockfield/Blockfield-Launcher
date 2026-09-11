@@ -7,6 +7,8 @@ import {
   launcherUpdateStatus,
   useLauncherUpdate,
 } from '../../lib/launcher-update'
+import { ErrorDetail } from './ui-bits'
+import { friendlyError } from '../../lib/errors'
 
 function bytes(value: number) {
   return value < 1024 * 1024
@@ -62,9 +64,10 @@ export function LauncherUpdatePanel() {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain text-[12px] leading-relaxed text-[#C7AE86]">
         {state.error ? (
-          <p role="alert" className="break-words text-[#c98b8b]">
-            {state.error}
-          </p>
+          <ErrorDetail
+            message={friendlyError(state.error, 'launcher-update').message}
+            raw={state.error}
+          />
         ) : state.update?.body ? (
           <p className="whitespace-pre-wrap break-words">{state.update.body}</p>
         ) : (

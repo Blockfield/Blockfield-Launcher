@@ -4,12 +4,14 @@ import { Shell } from './components/Shell'
 import { MainScreen } from './components/MainScreen'
 import { UpdateScreen } from './components/UpdateScreen'
 import { SettingsScreen, type SettingsTab } from './components/SettingsScreen'
+import { FirstRunScreen } from './components/FirstRunScreen'
 import { I18nContext, translate } from './i18n'
 import type { LauncherConfig } from '../lib/api'
 import { checkModpack } from '../lib/modpack-check'
 import { checkLauncherUpdate } from '../lib/launcher-update'
 import { watchGameState } from '../lib/game-state'
 import { listenLauncherStatus } from '../lib/events'
+import { LoaderCircle } from 'lucide-react'
 
 type Screen = 'main' | 'update' | 'settings'
 
@@ -23,6 +25,10 @@ export default function App() {
   const [updatesVisited, setUpdatesVisited] = useState(false)
   const [updateRequest, setUpdateRequest] = useState(0)
   const [commandError, setCommandError] = useState<string | null>(null)
+  // First run: no username saved yet. Holding the loaded config here (instead of
+  // just a boolean) lets the setup screen show real defaults (game dir/Java/RAM).
+  const [firstRunConfig, setFirstRunConfig] = useState<LauncherConfig | null>(null)
+  const [configLoaded, setConfigLoaded] = useState(!isTauri())
 
   useEffect(() => {
     if (!isTauri()) return
@@ -57,9 +63,10 @@ export default function App() {
       .then((cfg) => {
         setUsername(cfg.username)
         checkModpack().catch((error) => console.error('Startup check failed:', error))
-        if (!cfg.username) setScreen('settings')
+        if (!cfg.username) setFirstRunConfig(cfg)
       })
       .catch((e) => console.error('Failed to load settings:', e))
+      .finally(() => setConfigLoaded(true))
   }, [])
 
   // Check for launcher updates on mount
@@ -68,6 +75,34 @@ export default function App() {
 
     checkLauncherUpdate().catch((error) => console.log('Launcher update check skipped:', error))
   }, [])
+
+  if (!configLoaded) {
+    return (
+      <I18nContext.Provider value={i18n}>
+        <WindowChrome>
+          <div className="h-full w-full grid place-items-center bg-[#070604]">
+            <LoaderCircle size={24} className="animate-spin text-[#8E7A5E]" />
+          </div>
+        </WindowChrome>
+      </I18nContext.Provider>
+    )
+  }
+
+  if (firstRunConfig) {
+    return (
+      <I18nContext.Provider value={i18n}>
+        <WindowChrome>
+          <FirstRunScreen
+            defaults={firstRunConfig}
+            onComplete={(config) => {
+              setUsername(config.username)
+              setFirstRunConfig(null)
+            }}
+          />
+        </WindowChrome>
+      </I18nContext.Provider>
+    )
+  }
 
   return (
     <I18nContext.Provider value={i18n}>

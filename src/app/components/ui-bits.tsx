@@ -66,6 +66,23 @@ export function OperationBar({
   )
 }
 
+/** Friendly message with the raw backend error tucked behind a spoiler for diagnostics. */
+export function ErrorDetail({ message, raw }: { message: string; raw?: string | null }) {
+  return (
+    <div role="alert" className="text-[11px] leading-relaxed text-[#c98b8b]">
+      <p>{message}</p>
+      {raw && (
+        <details className="mt-1 text-[#8E7A5E]">
+          <summary className="cursor-pointer select-none text-[10px] tracking-[0.1em]">
+            Подробности
+          </summary>
+          <p className="mt-1 break-words font-mono text-[10px]">{raw}</p>
+        </details>
+      )}
+    </div>
+  )
+}
+
 export function GlowPanel({
   children,
   glow = true,
