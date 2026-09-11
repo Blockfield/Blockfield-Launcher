@@ -37,8 +37,8 @@ type FallbackFeature = { icon: ReactNode; title: TKey; desc: TKey }
 const FEATURES: FallbackFeature[] = [
   { icon: <Flag size={14} />, title: 'main.feat.capture', desc: 'main.feat.captureDesc' },
   { icon: <Swords size={14} />, title: 'main.feat.classes', desc: 'main.feat.classesDesc' },
-  { icon: <Truck size={14} />, title: 'main.feat.vehicles', desc: 'main.feat.vehiclesDesc' },
-  { icon: <Crosshair size={14} />, title: 'main.feat.battles', desc: 'main.feat.battlesDesc' },
+  { icon: <Crosshair size={14} />, title: 'main.feat.loadout', desc: 'main.feat.loadoutDesc' },
+  { icon: <Gamepad2 size={14} />, title: 'main.feat.menu', desc: 'main.feat.menuDesc' },
 ]
 
 const FEATURE_ICONS: Record<string, ReactNode> = {
@@ -178,7 +178,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const modpackStatus: { value: string; tone: Tone } = checking
     ? { value: t('main.checking'), tone: 'muted' }
     : checkError
-      ? { value: 'OFFLINE', tone: 'warn' }
+      ? { value: 'НЕ ПРОВЕРЕН', tone: 'warn' }
       : upToDate
         ? { value: t('main.upToDate'), tone: 'ok' }
         : needsSetup
@@ -272,7 +272,6 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                     tone={modpackStatus.tone}
                   />
                   <Stat label={t('main.auth')} value={t('main.verified')} tone="ok" />
-                  <Stat label={t('main.queue')} value={t('main.none')} tone="muted" />
                 </div>
               </div>
 
@@ -325,7 +324,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                     checking
                       ? t('main.checking')
                       : checkError
-                        ? 'OFFLINE'
+                        ? 'НЕ ПРОВЕРЕН'
                         : needsSetup
                           ? t(needsUpdate ? 'main.updateAvailable' : 'main.setupRequired')
                           : t('main.upToDate')
@@ -450,8 +449,8 @@ function ServerStatus({
         <span
           className={`flex items-center gap-1.5 text-[10px] tracking-[0.16em] ${online ? 'text-[#82D66B]' : 'text-[#E36A5D]'}`}
         >
-          <StatusDot pulse={online} />
-          {online ? t('main.online') : 'UNAVAILABLE'}
+          <StatusDot pulse={online} color={online ? '#82D66B' : '#E36A5D'} />
+          {online ? t('main.online') : 'НЕДОСТУПЕН'}
         </span>
       </div>
       <div className="mt-2 flex items-center gap-2">

@@ -137,7 +137,7 @@ export default function App() {
     <I18nContext.Provider value={i18n}>
       <WindowChrome>
         <Shell
-          user={{ username: username || '—', role: 'operator' }}
+          user={{ username: username || '—', role: 'игрок' }}
           active={screen}
           onNavigate={navigate}
           onLauncherUpdate={() => {
