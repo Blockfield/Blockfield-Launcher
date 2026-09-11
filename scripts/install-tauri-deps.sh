@@ -4,7 +4,7 @@ set -euo pipefail
 sudo python3 - <<'PYTHON'
 from pathlib import Path
 
-sources = [Path("/etc/apt/sources.list")]
+sources = [Path("/etc/apt/sources.list"), Path("/etc/apt/blacksmith-ubuntu-mirrors.txt")]
 for pattern in ("*.list", "*.sources"):
     sources.extend(Path("/etc/apt/sources.list.d").glob(pattern))
 for path in sources:
@@ -19,5 +19,5 @@ for path in sources:
 PYTHON
 
 apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
-sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" update
+sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
 sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install --yes "$@"
