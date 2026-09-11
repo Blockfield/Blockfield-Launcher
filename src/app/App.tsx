@@ -12,6 +12,8 @@ import { checkLauncherUpdate } from '../lib/launcher-update'
 import { watchGameState } from '../lib/game-state'
 import { listenLauncherStatus } from '../lib/events'
 import { LoaderCircle } from 'lucide-react'
+import { ErrorDetail } from './components/ui-bits'
+import { friendlyError, type FriendlyError } from '../lib/errors'
 
 type Screen = 'main' | 'update' | 'settings'
 
@@ -28,6 +30,8 @@ export default function App() {
   // First run: no username saved yet. Holding the loaded config here (instead of
   // just a boolean) lets the setup screen show real defaults (game dir/Java/RAM).
   const [firstRunConfig, setFirstRunConfig] = useState<LauncherConfig | null>(null)
+  const [configError, setConfigError] = useState<FriendlyError | null>(null)
+  const [configAttempt, setConfigAttempt] = useState(0)
   const [configLoaded, setConfigLoaded] = useState(!isTauri())
 
   useEffect(() => {
@@ -65,9 +69,9 @@ export default function App() {
         checkModpack().catch((error) => console.error('Startup check failed:', error))
         if (!cfg.username) setFirstRunConfig(cfg)
       })
-      .catch((e) => console.error('Failed to load settings:', e))
+      .catch((e) => setConfigError(friendlyError(e, 'settings-load')))
       .finally(() => setConfigLoaded(true))
-  }, [])
+  }, [configAttempt])
 
   // Check for launcher updates on mount
   useEffect(() => {
@@ -82,6 +86,31 @@ export default function App() {
         <WindowChrome>
           <div className="h-full w-full grid place-items-center bg-[#070604]">
             <LoaderCircle size={24} className="animate-spin text-[#8E7A5E]" />
+          </div>
+        </WindowChrome>
+      </I18nContext.Provider>
+    )
+  }
+
+  if (configError) {
+    return (
+      <I18nContext.Provider value={i18n}>
+        <WindowChrome>
+          <div className="h-full grid place-items-center bg-[#070604] p-6">
+            <div className="max-w-lg space-y-4">
+              <ErrorDetail message={configError.message} raw={configError.raw} />
+              <button
+                type="button"
+                className="border border-[#F5A524]/40 px-4 py-3 text-[12px] text-[#F3E7D0] focus-visible:outline-2 focus-visible:outline-[#F5A524]"
+                onClick={() => {
+                  setConfigLoaded(false)
+                  setConfigError(null)
+                  setConfigAttempt((attempt) => attempt + 1)
+                }}
+              >
+                Повторить
+              </button>
+            </div>
           </div>
         </WindowChrome>
       </I18nContext.Provider>

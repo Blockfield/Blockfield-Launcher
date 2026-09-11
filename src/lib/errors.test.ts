@@ -17,12 +17,18 @@ describe('friendlyError', () => {
     expect(result.raw).toBe('packwiz-installer task failed: exit code 1')
   })
 
+  it('does not mistake local OS errors for network failures', () => {
+    const result = friendlyError('Permission denied (os error 13)', 'launch')
+    expect(result.message).toBe('Не удалось запустить игру.')
+    expect(result.raw).toContain('os error 13')
+  })
+
   it('never invents an error the backend did not report', () => {
     const result = friendlyError(
       'Username must be 3-16 characters: letters, digits or _',
       'settings-save',
     )
-    expect(result.message).toBe('Не удалось сохранить настройки.')
+    expect(result.message).toContain('Не удалось сохранить настройки.')
     expect(result.raw).toBe('Username must be 3-16 characters: letters, digits or _')
   })
 })

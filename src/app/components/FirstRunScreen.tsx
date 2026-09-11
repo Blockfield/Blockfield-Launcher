@@ -42,7 +42,10 @@ export function FirstRunScreen({
         else setJava(selected as string)
       }
     } catch (e) {
-      console.error('Browse failed:', e)
+      setError({
+        message: 'Не удалось открыть выбор файла. Укажите путь вручную или повторите.',
+        raw: String(e),
+      })
     }
   }
 
@@ -69,11 +72,11 @@ export function FirstRunScreen({
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-[#070604]">
+    <div className="relative h-full w-full overflow-y-auto bg-[#070604]">
       <TopoBackdrop />
       <GridBackdrop intensity={0.4} />
 
-      <div className="screen-layout relative h-full min-h-0 flex flex-col items-center justify-center gap-4 px-4">
+      <div className="screen-layout relative min-h-full flex flex-col items-center justify-center gap-4 px-4 py-6">
         <div className="w-full max-w-[640px] flex flex-col gap-4">
           <div className="shrink-0">
             <h1 className="tracking-[0.06em] text-[26px] leading-none text-neutral-50">
@@ -89,7 +92,7 @@ export function FirstRunScreen({
             <Setting
               icon={<UserRound size={14} />}
               label="НИКНЕЙМ"
-              hint="Ник в Minecraft (3-16 букв, цифр или _). Обязателен для входа в игру."
+              hint="Ник в Minecraft (3–16 латинских букв, цифр или _). Обязателен для входа в игру."
             >
               <input
                 aria-label="Никнейм"

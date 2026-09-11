@@ -9,13 +9,15 @@ export type ErrorContext =
   | 'launch'
   | 'launcher-update'
   | 'settings-save'
+  | 'settings-load'
 
 const CONTEXT_FALLBACK: Record<ErrorContext, string> = {
   'modpack-check': 'Не удалось проверить обновление модпака.',
   'modpack-download': 'Не удалось скачать обновление модпака.',
   launch: 'Не удалось запустить игру.',
   'launcher-update': 'Не удалось проверить или установить обновление лаунчера.',
-  'settings-save': 'Не удалось сохранить настройки.',
+  'settings-save': 'Не удалось сохранить настройки. Проверьте доступ к папке настроек и повторите.',
+  'settings-load': 'Не удалось загрузить настройки. Проверьте доступ к папке настроек и повторите.',
 }
 
 const CONTEXT_NETWORK: Record<ErrorContext, string> = {
@@ -25,7 +27,8 @@ const CONTEXT_NETWORK: Record<ErrorContext, string> = {
     'Нет доступа к серверу сборки modpack.nether.pp.ua — проверьте интернет и повторите.',
   launch: 'Нет доступа к серверу сборки modpack.nether.pp.ua — проверьте интернет и повторите.',
   'launcher-update': 'Нет доступа к серверу обновлений лаунчера — проверьте интернет и повторите.',
-  'settings-save': 'Нет доступа к диску настроек — проверьте права и повторите.',
+  'settings-save': 'Не удалось сохранить настройки. Проверьте доступ к папке настроек и повторите.',
+  'settings-load': 'Не удалось загрузить настройки. Проверьте доступ к папке настроек и повторите.',
 }
 
 // Substrings that show up in reqwest/OS network failures surfaced through Rust's
@@ -37,7 +40,6 @@ const NETWORK_HINTS = [
   'connection refused',
   'timed out',
   'network is unreachable',
-  'os error',
   'tcp connect',
 ]
 
