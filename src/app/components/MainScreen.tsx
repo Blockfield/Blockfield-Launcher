@@ -1,5 +1,6 @@
 import { useGameState, gameStateLabel, launchGame } from '../../lib/game-state'
-import { checkModpack } from '../../lib/modpack-check'
+import { checkModpack, invalidateModpackCheck } from '../../lib/modpack-check'
+import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   Play,
@@ -128,6 +129,27 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync: this is an external system subscription (Tauri IPC)
     checkVersion()
   }, [checkVersion])
+
+  // Only the cheap version probe runs periodically; the full check (with file verification) reruns
+  // only when the remote pack version actually changed.
+  useEffect(() => {
+    if (!isTauri()) return
+    const probe = () =>
+      invoke<VersionCheckResult>('check_modpack_version')
+        .then((result) => {
+          if (versionInfo && result.remoteVersion !== versionInfo.remoteVersion) {
+            invalidateModpackCheck()
+            checkVersion()
+          }
+        })
+        .catch(() => {})
+    const interval = window.setInterval(probe, 60_000)
+    window.addEventListener('focus', probe)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', probe)
+    }
+  }, [versionInfo, checkVersion])
 
   useEffect(() => {
     const refresh = () =>
