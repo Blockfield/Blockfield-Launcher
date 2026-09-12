@@ -24,6 +24,8 @@ pub struct LauncherConfig {
     pub post_exit_command: String,
     #[serde(default)]
     pub hide_while_playing: bool,
+    #[serde(default = "presence_enabled")]
+    pub discord_presence: bool,
 }
 
 impl Default for LauncherConfig {
@@ -51,6 +53,7 @@ impl Default for LauncherConfig {
             pre_launch_command: String::new(),
             post_exit_command: String::new(),
             hide_while_playing: false,
+            discord_presence: true,
         }
     }
 }
@@ -165,6 +168,10 @@ fn total_memory_mb() -> Option<u32> {
             .ok()
     })?;
     Some((kb / 1024).min(u64::from(u32::MAX)) as u32)
+}
+
+fn presence_enabled() -> bool {
+    true
 }
 
 #[cfg(test)]

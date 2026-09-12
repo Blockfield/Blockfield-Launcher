@@ -41,7 +41,18 @@ export interface LauncherStatus {
   cancelable: boolean
 }
 
+export interface GameRoom {
+  id: string
+  name: string
+  mode: string
+  map: string
+  phase: string
+  players: number
+  joinable: boolean
+}
+
 export interface ServerStatus {
+  rooms?: GameRoom[] | null
   online: boolean
   playersOnline: number | null
   playersMax: number | null
@@ -136,4 +147,5 @@ export interface LauncherConfig {
   preLaunchCommand: string
   postExitCommand: string
   hideWhilePlaying: boolean
+  discordPresence?: boolean
 }

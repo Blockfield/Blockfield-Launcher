@@ -66,7 +66,7 @@ export function Shell({
       'content.brandSubtitle',
       'brandSubtitle',
       'brand_subtitle',
-    ) ?? 'TACTICAL OPS'
+    ) ?? 'КОМАНДНЫЕ БОИ'
 
   return (
     <div className="relative h-full w-full bg-[#070604] flex flex-col">

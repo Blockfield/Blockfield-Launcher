@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod discord_ipc;
 mod download;
 mod game;
 mod host_env;
@@ -8,7 +9,10 @@ mod minecraft;
 #[cfg(target_os = "linux")]
 mod native_update;
 mod pack;
+mod presence;
+mod rooms;
 mod status;
+use tauri_plugin_deep_link::DeepLinkExt;
 mod updater;
 
 use commands::LauncherAppState;
@@ -41,6 +45,7 @@ pub fn run() {
                 }
             }
         })
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .setup(move |app| {
@@ -101,6 +106,25 @@ pub fn run() {
                 app_data_dir,
             });
 
+            app.manage(rooms::PendingRoom::default());
+            #[cfg(target_os = "linux")]
+            if !cfg!(debug_assertions) {
+                if let Err(error) = app.deep_link().register_all() {
+                    log::warn!("Cannot register room links: {error}");
+                }
+            }
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                for url in urls {
+                    rooms::receive(app.handle(), url.as_str());
+                }
+            }
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    rooms::receive(&handle, url.as_str());
+                }
+            });
+            presence::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -116,6 +140,9 @@ pub fn run() {
             commands::game_status,
             commands::server_status,
             commands::open_url,
+            rooms::pending_room,
+            rooms::select_room,
+            rooms::join_running_room,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

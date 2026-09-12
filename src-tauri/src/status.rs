@@ -11,6 +11,7 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 #[serde(rename_all = "camelCase")]
 pub struct ServerStatus {
     pub online: bool,
+    pub rooms: Option<Vec<GameRoom>>,
     pub players_online: Option<u64>,
     pub players_max: Option<u64>,
     pub minecraft_version: Option<String>,
@@ -21,6 +22,17 @@ pub struct ServerStatus {
     pub location_name: String,
     pub server_latency_ms: Option<u64>,
     pub checked_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameRoom {
+    pub id: String,
+    pub name: String,
+    pub mode: String,
+    pub map: String,
+    pub phase: String,
+    pub players: u32,
+    pub joinable: bool,
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -149,6 +161,7 @@ pub fn ping(host: &str, port: u16) -> ServerStatus {
         .map_or(0, |d| d.as_secs());
     let offline = ServerStatus {
         online: false,
+        rooms: None,
         players_online: None,
         players_max: None,
         minecraft_version: None,
@@ -163,6 +176,7 @@ pub fn ping(host: &str, port: u16) -> ServerStatus {
     match query(host, port) {
         Ok((json, latency)) => ServerStatus {
             online: true,
+            rooms: room_snapshot(&json),
             players_online: json["players"]["online"].as_u64(),
             players_max: json["players"]["max"].as_u64(),
             minecraft_version: json["version"]["name"].as_str().map(str::to_string),
@@ -263,9 +277,51 @@ fn read_varint(data: &[u8], cursor: &mut usize) -> Result<i32, String> {
     Err("varint too long".to_string())
 }
 
+fn room_snapshot(json: &serde_json::Value) -> Option<Vec<GameRoom>> {
+    let value = &json["blockfield"];
+    let checked = value["checkedAt"].as_u64()?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
+    if now.abs_diff(checked) > 30_000 || !value["rooms"].is_array() {
+        return None;
+    }
+    let rooms: Vec<GameRoom> = serde_json::from_value(value["rooms"].clone()).ok()?;
+    if rooms.len() > 100
+        || rooms.iter().any(|room| {
+            !crate::rooms::valid_id(&room.id)
+                || !["IDLE", "VOTING", "PREPARING", "GAME", "MATCH_END"]
+                    .contains(&room.phase.as_str())
+                || room.name.is_empty()
+                || room.name.len() > 256
+                || room.mode.len() > 256
+                || room.map.len() > 256
+        })
+    {
+        return None;
+    }
+    Some(rooms)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_and_malformed_rooms_are_unavailable() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let mut json = serde_json::json!({"blockfield": {"checkedAt": now, "rooms": []}});
+        assert!(room_snapshot(&json).unwrap().is_empty());
+        json["blockfield"]["rooms"] = serde_json::json!([null]);
+        assert!(room_snapshot(&json).is_none());
+        json["blockfield"]["rooms"] = serde_json::json!([]);
+        json["blockfield"]["checkedAt"] = serde_json::json!(now - 60_000);
+        assert!(room_snapshot(&json).is_none());
+    }
 
     #[test]
     fn location_errors_and_private_addresses_do_not_produce_a_region() {

@@ -135,17 +135,18 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BLOCKFIELD_DISCORD_APPLICATION_ID: ${{ vars.BLOCKFIELD_DISCORD_APPLICATION_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
           VITE_BRAND: ${{ vars.VITE_BRAND || 'BLOCKFIELD' }}
-          VITE_BRAND_SUBTITLE: ${{ vars.VITE_BRAND_SUBTITLE || 'TACTICAL OPS' }}
+          VITE_BRAND_SUBTITLE: ${{ vars.VITE_BRAND_SUBTITLE || 'КОМАНДНЫЕ БОИ' }}
           VITE_CHROME_TITLE: ${{ vars.VITE_CHROME_TITLE || 'BLOCKFIELD LAUNCHER' }}
           VITE_OPERATION_NAME: ${{ vars.VITE_OPERATION_NAME || 'BLOCKFIELD' }}
           VITE_SEASON: ${{ vars.VITE_SEASON || 'Minecraft 1.21.1 · Fabric' }}
           VITE_SERVER_NAME: ${{ vars.VITE_SERVER_NAME || 'BLOCKFIELD - PRIMARY' }}
           VITE_SERVER_IP: ${{ vars.VITE_SERVER_IP || 'minecraft.play.nether.pp.ua:25565' }}
-          VITE_COPYRIGHT: ${{ vars.VITE_COPYRIGHT || '2026 BLOCKFIELD COMMAND' }}
+          VITE_COPYRIGHT: ${{ vars.VITE_COPYRIGHT || '2026 BLOCKFIELD' }}
           BLOCKFIELD_MOJANG_MANIFEST_URL: ${{ vars.BLOCKFIELD_MOJANG_MANIFEST_URL || 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json' }}
           BLOCKFIELD_MOJANG_ASSET_BASE_URL: ${{ vars.BLOCKFIELD_MOJANG_ASSET_BASE_URL || 'https://resources.download.minecraft.net' }}
           BLOCKFIELD_FABRIC_META_URL: ${{ vars.BLOCKFIELD_FABRIC_META_URL || 'https://meta.fabricmc.net' }}

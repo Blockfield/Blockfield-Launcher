@@ -19,10 +19,11 @@ if ! podman image exists "$IMAGE"; then
 fi
 mkdir -p "$HOME/.cargo/registry" "${BLOCKFIELD_CARGO_TARGET:=$HOME/.cache/bf-cargo-target}"
 TTY=(); [ -t 0 ] && TTY=(-it)
-exec podman run --rm "${TTY[@]}" \
+exec podman run --rm "${TTY[@]}" --tmpfs /tmp:rw,size=4g \
     -v "$ROOT:/work:z" \
     -v "$HOME/.cargo/registry:/usr/local/cargo/registry:z" \
     -v "$BLOCKFIELD_CARGO_TARGET:/work/target:z" \
     -w /work -e CARGO_TERM_COLOR=always \
+    -e "BLOCKFIELD_DISCORD_APPLICATION_ID=${BLOCKFIELD_DISCORD_APPLICATION_ID:-}" \
     -e "VITE_BLOCKFIELD_PACK_URL=${VITE_BLOCKFIELD_PACK_URL:-}" \
     "$IMAGE" "$@"

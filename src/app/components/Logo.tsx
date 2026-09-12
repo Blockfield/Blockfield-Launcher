@@ -12,7 +12,7 @@ export function Logo({
   size = 28,
   withWordmark = false,
   wordmark = 'BLOCKFIELD',
-  subtitle = 'TACTICAL OPS',
+  subtitle = 'КОМАНДНЫЕ БОИ',
   className = '',
 }: LogoProps) {
   return (

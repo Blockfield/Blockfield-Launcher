@@ -1,3 +1,4 @@
+import { listen } from '@tauri-apps/api/event'
 import { useEffect, useMemo, useState } from 'react'
 import { WindowChrome } from './components/WindowChrome'
 import { Shell } from './components/Shell'
@@ -33,6 +34,16 @@ export default function App() {
   const [configError, setConfigError] = useState<FriendlyError | null>(null)
   const [configAttempt, setConfigAttempt] = useState(0)
   const [configLoaded, setConfigLoaded] = useState(!isTauri())
+
+  useEffect(() => {
+    if (!isTauri()) return
+    const subscription = listen('room://pending', () =>
+      setScreen((current) => (current === 'update' ? current : 'main')),
+    )
+    return () => {
+      void subscription.then((stop) => stop())
+    }
+  }, [])
 
   useEffect(() => {
     if (!isTauri()) return

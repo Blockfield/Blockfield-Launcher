@@ -1,7 +1,8 @@
+import { RoomList } from './RoomList'
 import { useGameState, gameStateLabel, launchGame } from '../../lib/game-state'
 import { checkModpack, invalidateModpackCheck } from '../../lib/modpack-check'
 import { invoke } from '@tauri-apps/api/core'
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, useRef, type ReactNode } from 'react'
 import {
   Play,
   Gamepad2,
@@ -16,7 +17,7 @@ import {
   RefreshCw,
   LoaderCircle,
 } from 'lucide-react'
-import type { UnlistenFn } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { ErrorDetail, GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
 import { friendlyError } from '../../lib/errors'
@@ -64,6 +65,9 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const [launchStatus, setLaunchStatus] = useState('')
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchProgress, setLaunchProgress] = useState<number | null>(null)
+  const [roomMessage, setRoomMessage] = useState('')
+  const handledRoom = useRef<string | null>(null)
+  const [pendingRoom, setPendingRoom] = useState<string | null>(null)
   const [serverStatus, setServerStatus] = useState<ServerStatusData | null>(null)
 
   const handleDeploy = useCallback(async () => {
@@ -105,6 +109,60 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
       }
     }
   }, [versionInfo, checking, launching, gameBusy, onPlay, t])
+
+  const handleJoin = useCallback(
+    async (id: string) => {
+      try {
+        if (game.phase === 'running') {
+          await invoke('join_running_room', { id })
+          await invoke('select_room', { id: null })
+          setRoomMessage('Запрос передан игре. Результат входа появится в игровом меню.')
+        } else {
+          await invoke('select_room', { id })
+          setRoomMessage(
+            id === 'lobby'
+              ? 'После подготовки игра подключится к лобби.'
+              : 'После подготовки игра подключится к выбранной комнате.',
+          )
+          await handleDeploy()
+        }
+      } catch (error) {
+        setRoomMessage(`Не удалось принять приглашение. ${String(error)}`)
+      }
+    },
+    [game.phase, handleDeploy],
+  )
+
+  useEffect(() => {
+    if (!isTauri()) return
+    let active = true
+    const refresh = () =>
+      invoke<string | null>('pending_room').then((id) => {
+        if (active) setPendingRoom(id)
+      })
+    const subscription = listen('room://pending', () => {
+      handledRoom.current = null
+      void refresh()
+    })
+    void subscription.then(refresh).catch(console.error)
+    return () => {
+      active = false
+      void subscription.then((stop) => stop())
+    }
+  }, [])
+
+  useEffect(() => {
+    if (
+      !pendingRoom ||
+      (game.phase !== 'running' && (checking || !versionInfo)) ||
+      launching ||
+      (gameBusy && game.phase !== 'running') ||
+      handledRoom.current === pendingRoom
+    )
+      return
+    handledRoom.current = pendingRoom
+    void handleJoin(pendingRoom)
+  }, [pendingRoom, checking, versionInfo, launching, gameBusy, game.phase, handleJoin])
 
   const checkVersion = useCallback(async (verify = false) => {
     if (!isTauri()) return
@@ -152,13 +210,28 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   }, [versionInfo, checkVersion])
 
   useEffect(() => {
-    const refresh = () =>
-      fetchServerStatus()
-        .then(setServerStatus)
-        .catch(() => setServerStatus(null))
-    refresh()
-    const interval = window.setInterval(refresh, 10_000)
-    return () => window.clearInterval(interval)
+    let active = true
+    let refreshing = false
+    const refresh = async () => {
+      if (refreshing) return
+      refreshing = true
+      try {
+        const status = await fetchServerStatus()
+        if (active) setServerStatus(status)
+      } catch {
+        if (active) setServerStatus(null)
+      } finally {
+        refreshing = false
+      }
+    }
+    void refresh()
+    const interval = window.setInterval(() => {
+      void refresh()
+    }, 10_000)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+    }
   }, [])
 
   // Derive display values from version check result
@@ -247,12 +320,12 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
         }))
 
   return (
-    <div className="relative h-full w-full overflow-y-auto xl:overflow-hidden bg-[#070604]">
+    <div className="relative h-full w-full overflow-y-auto bg-[#070604]">
       <TopoBackdrop />
       <GridBackdrop intensity={0.5} />
 
-      <div className="screen-layout relative xl:h-full">
-        <section className="relative xl:h-full flex flex-col min-h-0">
+      <div className="screen-layout relative">
+        <section className="relative flex flex-col min-h-0">
           <OperationBar label={t('main.operation')} />
 
           <div className="flex flex-col md:flex-row min-w-0 items-start justify-between gap-6">
@@ -322,6 +395,21 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
               </div>
             </div>
           </GlowPanel>
+
+          <RoomList
+            rooms={serverStatus?.rooms}
+            onJoin={(id) => {
+              void handleJoin(id)
+            }}
+            disabled={
+              launching || (game.phase !== 'running' && (checking || !versionInfo || gameBusy))
+            }
+          />
+          {roomMessage && (
+            <p role="status" className="mt-2 text-[12px] text-[#C7AE86]">
+              {roomMessage}
+            </p>
+          )}
 
           {/* Briefing + Modpack */}
           <div className="mt-4 grid grid-cols-1 md:grid-cols-[minmax(0,1.6fr)_minmax(300px,1fr)] gap-px bg-[#18130D] border border-[#2A2116] flex-1 min-h-0">

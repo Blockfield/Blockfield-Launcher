@@ -48,6 +48,7 @@ export function SettingsScreen({
   const [ram, setRam] = useState(4)
   const [preLaunchCommand, setPreLaunchCommand] = useState('')
   const [postExitCommand, setPostExitCommand] = useState('')
+  const [discordPresence, setDiscordPresence] = useState(true)
   const [hideWhilePlaying, setHideWhilePlaying] = useState(false)
   const [autoUpdate, setAutoUpdate] = useState(true)
   const [dirty, setDirty] = useState(false)
@@ -80,6 +81,7 @@ export function SettingsScreen({
         setRam(Math.max(2, Math.round(cfg.ramMb / 1024)))
         setAutoUpdate(cfg.autoUpdate)
         setHideWhilePlaying(cfg.hideWhilePlaying ?? false)
+        setDiscordPresence(cfg.discordPresence ?? true)
         setPreLaunchCommand(cfg.preLaunchCommand ?? '')
         setPostExitCommand(cfg.postExitCommand ?? '')
       })
@@ -107,6 +109,7 @@ export function SettingsScreen({
           ramMb: ram * 1024,
           autoUpdate,
           hideWhilePlaying,
+          discordPresence,
           preLaunchCommand,
           postExitCommand,
           lang,
@@ -133,6 +136,7 @@ export function SettingsScreen({
     ram,
     autoUpdate,
     hideWhilePlaying,
+    discordPresence,
     preLaunchCommand,
     postExitCommand,
     lang,
@@ -150,6 +154,7 @@ export function SettingsScreen({
         setRam(Math.max(2, Math.round(cfg.ramMb / 1024)))
         setAutoUpdate(cfg.autoUpdate)
         setHideWhilePlaying(cfg.hideWhilePlaying ?? false)
+        setDiscordPresence(cfg.discordPresence ?? true)
         setPreLaunchCommand(cfg.preLaunchCommand ?? '')
         setPostExitCommand(cfg.postExitCommand ?? '')
       })
@@ -291,6 +296,23 @@ export function SettingsScreen({
                     on={autoUpdate}
                     onChange={(v) => {
                       setAutoUpdate(v)
+                      markDirty()
+                    }}
+                    onLabel={t('settings.enabled')}
+                    offLabel={t('settings.disabled')}
+                  />
+                </Setting>
+                <Setting
+                  compact
+                  icon={<EyeOff size={14} />}
+                  label="DISCORD RICH PRESENCE"
+                  hint="Показывать в Discord состояние игры, карту и комнату."
+                >
+                  <Toggle
+                    label="Показывать активность в Discord"
+                    on={discordPresence}
+                    onChange={(value) => {
+                      setDiscordPresence(value)
                       markDirty()
                     }}
                     onLabel={t('settings.enabled')}

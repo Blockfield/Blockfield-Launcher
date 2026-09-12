@@ -345,11 +345,11 @@ pub async fn download_modpack(
     state
         .downloader
         .set_grand_total(java_bytes + 64 * 1024 * 1024);
-    emit_status(&app_handle, "setup", "Preparing install tasks", false);
+    emit_status(&app_handle, "setup", "Подготовка установки", false);
 
     if let Some(java) = java {
         if java_runtime_ready(&game_dir, &java.version) {
-            emit_status(&app_handle, "java", "Java runtime ready", false);
+            emit_status(&app_handle, "java", "Java установлена", false);
         } else {
             let java_exe = install_java(&app_handle, &state, &game_dir, &java).await?;
             let java_path = java_exe.to_string_lossy().to_string();
@@ -358,7 +358,7 @@ pub async fn download_modpack(
             config.java_path = java_path.clone();
             let _ = crate::config::save_config(&state.app_data_dir, &cfg);
             log::info!("Java installed, path saved: {java_path}");
-            emit_status(&app_handle, "java", "Java runtime ready", false);
+            emit_status(&app_handle, "java", "Java установлена", false);
         }
     }
 
@@ -377,7 +377,7 @@ pub async fn download_modpack(
             );
             crate::minecraft::ensure_loader_profile(&game_dir, &pack.meta.minecraft, loader)
                 .await?;
-            emit_status(&app_handle, "loader", "Fabric loader ready", false);
+            emit_status(&app_handle, "loader", "Fabric установлен", false);
             Some(crate::minecraft::loader_version_id(
                 &pack.meta.minecraft,
                 loader,
@@ -386,7 +386,7 @@ pub async fn download_modpack(
         None => None,
     };
 
-    emit_status(&app_handle, "modpack", "Syncing modpack files", true);
+    emit_status(&app_handle, "modpack", "Обновление файлов модпака", true);
     ensure_jar(&state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
     ensure_jar(&state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
     let cancel = state.cancel_flag.clone();
@@ -400,7 +400,7 @@ pub async fn download_modpack(
     .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
     std::fs::write(game_dir.join(INSTALLED_VERSION_FILE), &pack.meta.version)
         .map_err(|e| format!("Failed to record installed version: {e}"))?;
-    emit_status(&app_handle, "modpack", "Modpack files ready", false);
+    emit_status(&app_handle, "modpack", "Файлы модпака готовы", false);
 
     emit_status(
         &app_handle,
@@ -423,7 +423,7 @@ pub async fn download_modpack(
         loader_version_id.as_deref(),
     )
     .await?;
-    emit_status(&app_handle, "ready", "Minecraft runtime ready", false);
+    emit_status(&app_handle, "ready", "Игра готова к запуску", false);
     Ok(())
 }
 
@@ -437,7 +437,7 @@ async fn install_java(
     emit_status(
         app_handle,
         "java",
-        format!("Downloading Java {}", java.version),
+        format!("Загрузка Java {}", java.version),
         true,
     );
     if java.sha256.len() != 64 || !java.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -483,7 +483,7 @@ async fn install_java(
     }
     crate::download::activate_partial(&partial, &archive_path)
         .map_err(|e| format!("Failed to activate Java archive: {e}"))?;
-    emit_status(app_handle, "java", "Extracting Java runtime", false);
+    emit_status(app_handle, "java", "Распаковка Java", false);
     let java_exe = install_java_archive(&archive_path, game_dir, &java.version);
     let _ = std::fs::remove_file(&archive_path);
     java_exe
@@ -810,12 +810,7 @@ pub async fn launch_game(
         state.downloader.reset_cancel();
         // Floor so the frontend always has a non-zero denominator for progress.
         state.downloader.set_grand_total(16 * 1024 * 1024);
-        emit_status(
-            &app_handle,
-            "launch",
-            "Preparing launch dependencies",
-            false,
-        );
+        emit_status(&app_handle, "launch", "Проверка компонентов игры", false);
         crate::minecraft::ensure_launch_dependencies(
             &state.downloader,
             &app_handle,
@@ -830,7 +825,7 @@ pub async fn launch_game(
         log::warn!("Cannot write default game options: {error}");
     }
 
-    emit_status(&app_handle, "launch", "Building launch command", false);
+    emit_status(&app_handle, "launch", "Подготовка запуска", false);
     let args = crate::minecraft::build_launch_args(
         &game_dir_path,
         ram_mb,
@@ -841,7 +836,12 @@ pub async fn launch_game(
     )?;
 
     if !config.pre_launch_command.trim().is_empty() {
-        emit_status(&app_handle, "launch", "Running pre-launch command", false);
+        emit_status(
+            &app_handle,
+            "launch",
+            "Выполнение команды перед запуском",
+            false,
+        );
         let hook_config = config.clone();
         let hook_java = java.clone();
         tokio::task::spawn_blocking(move || {
@@ -855,12 +855,26 @@ pub async fn launch_game(
         .await
         .map_err(|e| format!("Pre-launch task failed: {e}"))??;
     }
-    emit_status(&app_handle, "launch", "Starting game process", false);
+    emit_status(&app_handle, "launch", "Запуск игры", false);
     let log_dir = game_dir_path.join("logs");
     std::fs::create_dir_all(&log_dir).map_err(|e| format!("Cannot create log directory: {e}"))?;
     let output = std::fs::File::create(log_dir.join("launcher-game.log"))
         .map_err(|e| format!("Cannot create game log: {e}"))?;
+    let pending_room = app_handle
+        .state::<crate::rooms::PendingRoom>()
+        .0
+        .lock()
+        .unwrap()
+        .clone();
+    if let Some(id) = pending_room.as_ref() {
+        crate::rooms::write_request(&state, id)?;
+    } else {
+        let _ = std::fs::remove_file(state.app_data_dir.join("room-request.json"));
+    }
+    let _ = std::fs::remove_file(state.app_data_dir.join("game-presence.json"));
     let mut child = crate::host_env::command(&java)
+        .env("BLOCKFIELD_BRIDGE_DIR", &state.app_data_dir)
+        .env("BLOCKFIELD_SERVER", quick_play.as_deref().unwrap_or(""))
         .args(&args)
         .current_dir(&game_dir)
         .stdin(std::process::Stdio::null())
@@ -869,6 +883,13 @@ pub async fn launch_game(
         .spawn()
         .map_err(|e| format!("Failed to spawn game process: {e}"))?;
     running.started();
+    {
+        let pending = app_handle.state::<crate::rooms::PendingRoom>();
+        let mut value = pending.0.lock().unwrap();
+        if *value == pending_room {
+            *value = None;
+        }
+    }
     if config.hide_while_playing {
         if let Some(window) = app_handle.get_webview_window("main") {
             if let Err(error) = window.hide() {
@@ -877,12 +898,7 @@ pub async fn launch_game(
         }
     }
     log::info!("Game process spawned (pid {})", child.id());
-    emit_status(
-        &app_handle,
-        "launch",
-        format!("Game process started (pid {})", child.id()),
-        false,
-    );
+    emit_status(&app_handle, "launch", "Игра запущена", false);
     std::thread::spawn(move || {
         let _running = running;
         let exit = child.wait();
