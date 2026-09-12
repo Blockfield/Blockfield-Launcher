@@ -623,7 +623,7 @@ function Metric({
 function FeatureItem({ icon, title, desc }: { icon: ReactNode; title: string; desc: string }) {
   return (
     <div className="flex gap-3">
-      <div className="mt-0.5 size-7 grid place-items-center border border-[#2A2116] bg-[#11100D] text-[#F5A524]">
+      <div className="mt-0.5 size-7 shrink-0 grid place-items-center border border-[#2A2116] bg-[#11100D] text-[#F5A524]">
         {icon}
       </div>
       <div className="flex flex-col gap-1">

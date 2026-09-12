@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Settings, Gamepad2, Download, LifeBuoy } from 'lucide-react'
 import { useI18n, type TKey } from '../i18n'
 import { Logo } from './Logo'
+import { PlayerHead } from './PlayerHead'
 import { StatusDot } from './ui-bits'
 import { BRAND, RELEASES_REPO_URL, SERVER_IP } from '../constants'
 import { contentText, localizedContentText, useLauncherContent } from '../../lib/content'
@@ -51,7 +52,6 @@ export function Shell({
                 : null
   const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
   const operatorHandle = user.username
-  const operatorInitials = user.username.slice(0, 2).toUpperCase()
   const operatorRank = user.role.toUpperCase()
   const supportLabel =
     localizedContentText(content, lang, 'content.supportLabel', 'supportLabel', 'support_label') ??
@@ -95,21 +95,7 @@ export function Shell({
 
         <div className="flex shrink-0 items-center gap-3">
           <div className="flex items-center gap-3 px-3 h-9 border border-[#2A2116] bg-[#11100D]">
-            <div className="relative">
-              <div className="relative size-6 bg-gradient-to-br from-[#8A571C] to-[#2A2116] grid place-items-center text-[10px] text-[#F3E7D0] tracking-widest">
-                {operatorInitials}
-                {/* Server-side SkinRestorer auto-fetches skins from Mojang by nick, so mc-heads shows the same head. */}
-                {user.username.length >= 3 && (
-                  <img
-                    src={`https://mc-heads.net/avatar/${encodeURIComponent(user.username)}/24`}
-                    alt=""
-                    className="absolute inset-0 size-6 [image-rendering:pixelated]"
-                    onError={(e) => e.currentTarget.remove()}
-                  />
-                )}
-              </div>
-              <span className="absolute -bottom-0.5 -right-0.5 size-1.5 rounded-full bg-[#82D66B] ring-2 ring-[#11100D]" />
-            </div>
+            <PlayerHead username={user.username} />
             <div className="flex flex-col leading-none">
               <span className="text-[11px] tracking-widest text-neutral-100">{operatorHandle}</span>
               <span className="text-[9px] tracking-[0.12em] text-[#8E7A5E] mt-0.5">
