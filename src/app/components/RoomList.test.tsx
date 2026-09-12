@@ -20,7 +20,7 @@ describe('RoomList', () => {
     }))
     const html = renderToStaticMarkup(<RoomList rooms={rooms} onJoin={() => {}} disabled={false} />)
     expect(html.match(/<article/g)).toHaveLength(1)
-    expect(html.match(/<option/g)).toHaveLength(20)
+    expect(html.match(/role="option"/g)).toHaveLength(20)
     expect(html).toContain('Войти в комнату: Комната 1')
     expect(html).not.toContain('Войти в комнату: Комната 20')
   })
