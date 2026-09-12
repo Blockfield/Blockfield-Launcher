@@ -1,7 +1,7 @@
 {
   "name": "@figma/my-make-file",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -30,7 +30,8 @@
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2",
-    "lucide-react": "0.487.0"
+    "lucide-react": "0.487.0",
+    "skinview3d": "^3.4.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -142,6 +142,7 @@ pub fn run() {
             commands::server_status,
             commands::open_url,
             skins::upload_skin,
+            skins::preview_skin,
             rooms::pending_room,
             rooms::select_room,
             rooms::join_running_room,

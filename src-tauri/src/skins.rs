@@ -94,6 +94,140 @@ struct Session {
     player_uuid: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkinPreview {
+    /// PNG textures as `data:` URLs so the renderer needs no CSP entry per texture host.
+    pub skin: Option<String>,
+    pub cape: Option<String>,
+    pub slim: bool,
+    /// `custom` when the player has a launcher-uploaded skin, `mojang` for a licensed name, `none` otherwise.
+    pub source: &'static str,
+}
+
+/// Resolve the textures the game server will show for this name: the launcher upload on Drasl
+/// first, then the Mojang skin of the same name (mirrors SkinRestorer's fallback order).
+/// Local PNG paths override the resolved textures so the preview reflects a pending upload.
+#[tauri::command]
+pub async fn preview_skin(
+    state: State<'_, LauncherAppState>,
+    username: String,
+    skin_path: Option<String>,
+    cape_path: Option<String>,
+    slim: bool,
+) -> Result<SkinPreview, String> {
+    let username = username.trim().to_string();
+    let base = state
+        .pack
+        .read()
+        .await
+        .as_ref()
+        .and_then(|p| p.info.skins.clone())
+        .unwrap_or_else(|| DEFAULT_SERVER.to_string());
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut preview = SkinPreview {
+        skin: None,
+        cape: None,
+        slim,
+        source: "none",
+    };
+    if valid_username(&username) {
+        let sources = [
+            (base.as_str(), base.as_str(), "custom"),
+            (
+                "https://api.mojang.com",
+                "https://sessionserver.mojang.com",
+                "mojang",
+            ),
+        ];
+        for (profiles, sessions, source) in sources {
+            if let Some(textures) = yggdrasil_textures(&client, profiles, sessions, &username).await
+            {
+                preview.skin = fetch_data_url(&client, textures["SKIN"]["url"].as_str()).await;
+                preview.cape = fetch_data_url(&client, textures["CAPE"]["url"].as_str()).await;
+                preview.slim = textures["SKIN"]["metadata"]["model"].as_str() == Some("slim");
+                preview.source = source;
+                break;
+            }
+        }
+    }
+    if let Some(path) = skin_path.as_deref().filter(|p| !p.is_empty()) {
+        preview.skin = Some(format!("data:image/png;base64,{}", read_texture(path)?));
+        preview.slim = slim;
+    }
+    if let Some(path) = cape_path.as_deref().filter(|p| !p.is_empty()) {
+        preview.cape = Some(format!("data:image/png;base64,{}", read_texture(path)?));
+    }
+    Ok(preview)
+}
+
+/// `textures` object from a Yggdrasil-compatible session server (Drasl and Mojang share the shape).
+async fn yggdrasil_textures(
+    client: &reqwest::Client,
+    profiles_base: &str,
+    sessions_base: &str,
+    username: &str,
+) -> Option<Value> {
+    let profile: Value = client
+        .get(format!(
+            "{profiles_base}/users/profiles/minecraft/{username}"
+        ))
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    let uuid = profile["id"].as_str()?;
+    let session: Value = client
+        .get(format!("{sessions_base}/session/minecraft/profile/{uuid}"))
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    let encoded = session["properties"]
+        .as_array()?
+        .iter()
+        .find(|p| p["name"] == "textures")?["value"]
+        .as_str()?;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
+    let value: Value = serde_json::from_slice(&decoded).ok()?;
+    value.get("textures").cloned()
+}
+
+async fn fetch_data_url(client: &reqwest::Client, url: Option<&str>) -> Option<String> {
+    let bytes = client
+        .get(url?)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .bytes()
+        .await
+        .ok()?;
+    if bytes.len() as u64 > MAX_TEXTURE_BYTES || !bytes.starts_with(PNG_MAGIC) {
+        return None;
+    }
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    ))
+}
+
 async fn login(
     client: &reqwest::Client,
     base: &str,

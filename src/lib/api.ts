@@ -171,3 +171,11 @@ export interface SkinUploadResult {
   skinUrl: string | null
   capeUrl: string | null
 }
+
+/** Textures shown in the 3D skin preview, as `data:` URLs. */
+export interface SkinPreview {
+  skin: string | null
+  cape: string | null
+  slim: boolean
+  source: 'custom' | 'mojang' | 'none'
+}

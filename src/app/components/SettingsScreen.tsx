@@ -21,7 +21,12 @@ import { LauncherUpdatePanel } from './LauncherUpdatePanel'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { ErrorDetail } from './ui-bits'
 import { useI18n } from '../i18n'
-import type { LauncherConfig, SkinUploadResult } from '../../lib/api'
+import type {
+  LauncherConfig,
+  SkinPreview as SkinPreviewData,
+  SkinUploadResult,
+} from '../../lib/api'
+import { SkinPreview } from './SkinPreview'
 import { invalidateModpackCheck } from '../../lib/modpack-check'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
 import { friendlyError } from '../../lib/errors'
@@ -66,6 +71,7 @@ export function SettingsScreen({
   const [skinBusy, setSkinBusy] = useState(false)
   const [skinMessage, setSkinMessage] = useState<string | null>(null)
   const [skinErrorRaw, setSkinErrorRaw] = useState<string | null>(null)
+  const [skinPreview, setSkinPreview] = useState<SkinPreviewData | null>(null)
   const usernameInvalid = name.trim().length > 0 && !isValidUsername(name)
   const preferences =
     localizedContentText(
@@ -179,6 +185,27 @@ export function SettingsScreen({
       .catch(console.error)
     setDirty(false)
   }, [])
+
+  useEffect(() => {
+    if (tab !== 'skin' || !isTauri()) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      invoke<SkinPreviewData>('preview_skin', {
+        username,
+        skinPath: skinPath || null,
+        capePath: capePath || null,
+        slim,
+      })
+        .then((preview) => {
+          if (!cancelled) setSkinPreview(preview)
+        })
+        .catch(console.error)
+    }, 300)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [tab, username, skinPath, capePath, slim])
 
   const handleSkinUpload = useCallback(async () => {
     if (!isTauri()) return
@@ -475,73 +502,88 @@ export function SettingsScreen({
               </>
             )}
             {tab === 'skin' && (
-              <>
-                <Setting
-                  icon={<Shirt size={14} />}
-                  label={t('settings.skin')}
-                  hint={t('settings.skinHint')}
-                >
-                  <PathInput
+              <div className="flex gap-6">
+                <div className="min-w-0 flex-1">
+                  <Setting
+                    icon={<Shirt size={14} />}
                     label={t('settings.skin')}
-                    value={skinPath}
-                    onChange={setSkinPath}
-                    browseLabel={t('settings.browse')}
-                    onBrowse={() => handleBrowsePng(setSkinPath)}
-                  />
-                </Setting>
-                <Setting
-                  icon={<Shirt size={14} />}
-                  label={t('settings.cape')}
-                  hint={t('settings.capeHint')}
-                >
-                  <PathInput
-                    label={t('settings.cape')}
-                    value={capePath}
-                    onChange={setCapePath}
-                    browseLabel={t('settings.browse')}
-                    onBrowse={() => handleBrowsePng(setCapePath)}
-                  />
-                </Setting>
-                <Setting
-                  compact
-                  icon={<UserRound size={14} />}
-                  label={t('settings.skinModel')}
-                  hint={t('settings.skinModelHint')}
-                >
-                  <Toggle
-                    label={t('settings.skinModel')}
-                    on={slim}
-                    onChange={setSlim}
-                    onLabel={t('settings.enabled')}
-                    offLabel={t('settings.disabled')}
-                  />
-                </Setting>
-                <div className="flex flex-wrap items-center justify-end gap-3 pt-3">
-                  {skinMessage && skinMessage !== t('settings.skinUploaded') && (
-                    <div className="max-w-[320px]">
-                      <ErrorDetail message={skinMessage} raw={skinErrorRaw} />
-                    </div>
-                  )}
-                  {skinMessage === t('settings.skinUploaded') && (
-                    <span className="text-[11px] text-[#F5A524]">{skinMessage}</span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleSkinUpload}
-                    disabled={skinBusy || (!skinPath && !capePath)}
-                    className="h-10 px-6 flex items-center gap-3 border border-[#F5A524]/40 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    hint={t('settings.skinHint')}
                   >
-                    {skinBusy ? (
-                      <LoaderCircle size={13} className="animate-spin text-[#F3E7D0]" />
-                    ) : (
-                      <Upload size={13} className="text-[#F3E7D0]" />
+                    <PathInput
+                      label={t('settings.skin')}
+                      value={skinPath}
+                      onChange={setSkinPath}
+                      browseLabel={t('settings.browse')}
+                      onBrowse={() => handleBrowsePng(setSkinPath)}
+                    />
+                  </Setting>
+                  <Setting
+                    icon={<Shirt size={14} />}
+                    label={t('settings.cape')}
+                    hint={t('settings.capeHint')}
+                  >
+                    <PathInput
+                      label={t('settings.cape')}
+                      value={capePath}
+                      onChange={setCapePath}
+                      browseLabel={t('settings.browse')}
+                      onBrowse={() => handleBrowsePng(setCapePath)}
+                    />
+                  </Setting>
+                  <Setting
+                    compact
+                    icon={<UserRound size={14} />}
+                    label={t('settings.skinModel')}
+                    hint={t('settings.skinModelHint')}
+                  >
+                    <Toggle
+                      label={t('settings.skinModel')}
+                      on={slim}
+                      onChange={setSlim}
+                      onLabel={t('settings.enabled')}
+                      offLabel={t('settings.disabled')}
+                    />
+                  </Setting>
+                  <div className="flex flex-wrap items-center justify-end gap-3 pt-3">
+                    {skinMessage && skinMessage !== t('settings.skinUploaded') && (
+                      <div className="max-w-[320px]">
+                        <ErrorDetail message={skinMessage} raw={skinErrorRaw} />
+                      </div>
                     )}
-                    <span className="text-[11px] tracking-[0.18em] text-[#F3E7D0]">
-                      {skinBusy ? t('settings.skinUploading') : t('settings.skinUpload')}
-                    </span>
-                  </button>
+                    {skinMessage === t('settings.skinUploaded') && (
+                      <span className="text-[11px] text-[#F5A524]">{skinMessage}</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleSkinUpload}
+                      disabled={skinBusy || (!skinPath && !capePath)}
+                      className="h-10 px-6 flex items-center gap-3 border border-[#F5A524]/40 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {skinBusy ? (
+                        <LoaderCircle size={13} className="animate-spin text-[#F3E7D0]" />
+                      ) : (
+                        <Upload size={13} className="text-[#F3E7D0]" />
+                      )}
+                      <span className="text-[11px] tracking-[0.18em] text-[#F3E7D0]">
+                        {skinBusy ? t('settings.skinUploading') : t('settings.skinUpload')}
+                      </span>
+                    </button>
+                  </div>
                 </div>
-              </>
+                <div className="shrink-0 self-start">
+                  <SkinPreview
+                    data={skinPreview}
+                    caption={t(
+                      skinPath
+                        ? 'settings.skinPreview.local'
+                        : skinPreview?.source === 'mojang'
+                          ? 'settings.skinPreview.mojang'
+                          : 'settings.skinPreview.custom',
+                    )}
+                    fallback={t('settings.skinPreview.none')}
+                  />
+                </div>
+              </div>
             )}
           </div>
           <div className="settings-actions shrink-0 px-3 md:px-5 py-3 flex flex-wrap items-center justify-end gap-2 border-t border-[#18130D] bg-[#0B0906]">
