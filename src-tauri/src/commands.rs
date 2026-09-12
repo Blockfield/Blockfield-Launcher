@@ -223,8 +223,16 @@ fn system_java_available() -> bool {
 
 // ── Settings commands ──────────────────────────────────────────
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsResponse {
+    #[serde(flatten)]
+    config: LauncherConfig,
+    max_ram_mb: u32,
+}
+
 #[tauri::command]
-pub fn load_settings(state: State<'_, LauncherAppState>) -> Result<LauncherConfig, String> {
+pub fn load_settings(state: State<'_, LauncherAppState>) -> Result<SettingsResponse, String> {
     let mut config = state.config.blocking_read().clone();
     // Auto-detect bundled Java if path is empty
     if config.java_path.is_empty() {
@@ -232,7 +240,10 @@ pub fn load_settings(state: State<'_, LauncherAppState>) -> Result<LauncherConfi
             config.java_path = bundled.to_string_lossy().to_string();
         }
     }
-    Ok(config)
+    Ok(SettingsResponse {
+        config,
+        max_ram_mb: crate::config::max_ram_mb(),
+    })
 }
 
 #[tauri::command]

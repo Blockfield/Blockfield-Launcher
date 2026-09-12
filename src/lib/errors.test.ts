@@ -32,3 +32,24 @@ describe('friendlyError', () => {
     expect(result.raw).toBe('Username must be 3-16 characters: letters, digits or _')
   })
 })
+
+describe('settings validation errors', () => {
+  it.each([
+    ['Game directory must be a safe absolute path, not a filesystem root', 'а не корень диска'],
+    ['Game directory cannot be created: Access is denied. (os error 5)', 'создать папку игры'],
+    ['Game directory is not writable: Permission denied (os error 13)', 'права на запись'],
+    ['Selected Java executable does not exist', 'файл Java не найден'],
+    ['Failed to run selected Java: Access is denied. (os error 5)', 'запустить выбранную Java'],
+    ['Selected Java must be a working Java 17 or 21 runtime', 'Java 17 или 21'],
+    ['RAM must be between 2048 and 6144 MB', 'объём RAM'],
+  ])('explains %s without blaming the settings directory', (raw, expected) => {
+    const result = friendlyError(raw, 'settings-save')
+    expect(result.message).toContain(expected)
+    expect(result.message).not.toContain('папке настроек')
+    expect(result.raw).toBe(raw)
+  })
+
+  it('does not guess the cause of an unknown save failure', () => {
+    expect(friendlyError('Unexpected failure', 'settings-save').message).not.toContain('доступ')
+  })
+})

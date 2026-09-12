@@ -1,3 +1,4 @@
+import { ramLimitGb, clampRamGb } from '../../lib/ram'
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -46,6 +47,7 @@ export function SettingsScreen({
   const [java, setJava] = useState('')
   const [name, setName] = useState(username)
   const [ram, setRam] = useState(4)
+  const [maxRam, setMaxRam] = useState(32)
   const [preLaunchCommand, setPreLaunchCommand] = useState('')
   const [postExitCommand, setPostExitCommand] = useState('')
   const [discordPresence, setDiscordPresence] = useState(true)
@@ -78,7 +80,8 @@ export function SettingsScreen({
         setDir(cfg.gameDir)
         setJava(cfg.javaPath)
         setName(cfg.username)
-        setRam(Math.max(2, Math.round(cfg.ramMb / 1024)))
+        setMaxRam(ramLimitGb(cfg.maxRamMb))
+        setRam(clampRamGb(cfg.ramMb / 1024, ramLimitGb(cfg.maxRamMb)))
         setAutoUpdate(cfg.autoUpdate)
         setHideWhilePlaying(cfg.hideWhilePlaying ?? false)
         setDiscordPresence(cfg.discordPresence ?? true)
@@ -93,6 +96,11 @@ export function SettingsScreen({
 
   const handleSave = useCallback(async () => {
     if (!isTauri()) return
+    if (maxRam < 2) {
+      setSaveMessage('Недостаточно памяти: для игры нужно выделить минимум 2 ГБ.')
+      setSaveErrorRaw(null)
+      return
+    }
     if (usernameInvalid) {
       setSaveMessage(t('settings.usernameHint'))
       setSaveErrorRaw(null)
@@ -143,6 +151,7 @@ export function SettingsScreen({
     t,
     onUsernameSaved,
     usernameInvalid,
+    maxRam,
   ])
 
   const handleReset = useCallback(() => {
@@ -151,7 +160,8 @@ export function SettingsScreen({
         setDir(cfg.gameDir)
         setJava(cfg.javaPath)
         setName(cfg.username)
-        setRam(Math.max(2, Math.round(cfg.ramMb / 1024)))
+        setMaxRam(ramLimitGb(cfg.maxRamMb))
+        setRam(clampRamGb(cfg.ramMb / 1024, ramLimitGb(cfg.maxRamMb)))
         setAutoUpdate(cfg.autoUpdate)
         setHideWhilePlaying(cfg.hideWhilePlaying ?? false)
         setDiscordPresence(cfg.discordPresence ?? true)
@@ -348,6 +358,7 @@ export function SettingsScreen({
                   <PathInput
                     label={t('settings.java')}
                     value={java}
+                    placeholder={t('settings.javaAuto')}
                     onChange={(v) => {
                       setJava(v)
                       markDirty()
@@ -363,6 +374,7 @@ export function SettingsScreen({
                 >
                   <RamSlider
                     ram={ram}
+                    maxRam={maxRam}
                     onEdit={markDirty}
                     onChange={(v) => {
                       setRam(v)
@@ -508,20 +520,23 @@ export function PathInput({
   onChange,
   browseLabel,
   onBrowse,
+  placeholder,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
   browseLabel: string
   onBrowse: () => void
+  placeholder?: string
 }) {
   return (
     <div className="flex w-full">
       <input
         aria-label={label}
+        placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="min-w-0 flex-1 h-10 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 outline-none focus:border-[#F5A524]/60 transition-colors"
+        className="min-w-0 flex-1 h-10 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 placeholder:text-[#A89373] outline-none focus:border-[#F5A524]/60 transition-colors"
       />
       <button
         type="button"
@@ -535,26 +550,27 @@ export function PathInput({
 }
 
 const RAM_MIN = 2
-const RAM_MAX = 32
 const RAM_STEP = 1
 const RAM_PRESETS = [4, 6, 8, 12, 16, 24]
 
-function clampRam(v: number) {
-  if (Number.isNaN(v)) return RAM_MIN
-  return Math.min(RAM_MAX, Math.max(RAM_MIN, Math.round(v)))
-}
-
 export function RamSlider({
   ram,
+  maxRam,
   onChange,
   onEdit,
 }: {
   ram: number
+  maxRam: number
   onChange: (v: number) => void
   onEdit: () => void
 }) {
-  const pct = ((ram - RAM_MIN) / (RAM_MAX - RAM_MIN)) * 100
+  const clampRam = (value: number) => clampRamGb(value, maxRam)
+  const pct = maxRam > RAM_MIN ? ((ram - RAM_MIN) / (maxRam - RAM_MIN)) * 100 : 0
   const set = (v: number) => onChange(clampRam(v))
+
+  if (maxRam < RAM_MIN) {
+    return <p role="alert">Недостаточно памяти: для игры нужно выделить минимум 2 ГБ.</p>
+  }
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-3">
@@ -585,7 +601,7 @@ export function RamSlider({
             type="range"
             aria-label="Выделенная память, ГБ"
             min={RAM_MIN}
-            max={RAM_MAX}
+            max={maxRam}
             step={RAM_STEP}
             value={ram}
             onChange={(e) => set(Number(e.target.value))}
@@ -598,7 +614,7 @@ export function RamSlider({
           onClick={() => set(ram + RAM_STEP)}
           className="size-9 shrink-0 grid place-items-center border border-[#2A2116] bg-[#0B0906] text-[#C7AE86] hover:border-[#8A571C] hover:text-[#F3E7D0] transition-colors"
           aria-label="Увеличить память"
-          disabled={ram >= RAM_MAX}
+          disabled={ram >= maxRam}
         >
           <Plus size={12} />
         </button>
@@ -608,7 +624,7 @@ export function RamSlider({
             type="number"
             aria-label="Память, ГБ"
             min={RAM_MIN}
-            max={RAM_MAX}
+            max={maxRam}
             key={ram}
             defaultValue={ram}
             onChange={onEdit}
@@ -626,9 +642,8 @@ export function RamSlider({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[9px] tracking-[0.22em] text-[#5E5040] mr-1">PRESET</span>
-        {RAM_PRESETS.map((p) => {
+      <div className="flex min-w-0 items-center gap-1" role="group" aria-label="Пресеты памяти">
+        {RAM_PRESETS.filter((p) => p <= maxRam).map((p) => {
           const active = ram === p
           return (
             <button
@@ -636,7 +651,7 @@ export function RamSlider({
               key={p}
               onClick={() => set(p)}
               aria-pressed={active}
-              className={`h-7 px-2.5 text-[10px] tracking-[0.14em] font-mono border transition-colors ${
+              className={`h-7 min-w-0 flex-1 px-1 text-[10px] tracking-[0.14em] font-mono border transition-colors ${
                 active
                   ? 'border-[#F5A524] bg-[#F5A524] text-[#070604]'
                   : 'border-[#2A2116] bg-[#0B0906] text-[#C7AE86] hover:border-[#8A571C]'
@@ -646,10 +661,10 @@ export function RamSlider({
             </button>
           )
         })}
-        <span className="ml-auto text-[9px] tracking-[0.22em] text-[#5E5040] font-mono">
-          {RAM_MIN}–{RAM_MAX} GB
-        </span>
       </div>
+      <span className="text-right text-[10px] text-[#A89373]">
+        Доступно для игры: {RAM_MIN}–{maxRam} ГБ
+      </span>
     </div>
   )
 }

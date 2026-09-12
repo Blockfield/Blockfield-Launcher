@@ -1,3 +1,4 @@
+import { ramLimitGb, clampRamGb } from '../../lib/ram'
 import { useState } from 'react'
 import { Folder, Coffee, Cpu, UserRound, LoaderCircle, ArrowRight } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
@@ -6,6 +7,7 @@ import { ErrorDetail } from './ui-bits'
 import { Setting, PathInput, RamSlider } from './SettingsScreen'
 import type { LauncherConfig } from '../../lib/api'
 import { friendlyError } from '../../lib/errors'
+import { translate } from '../i18n'
 import { isValidUsername } from '../../lib/username'
 
 /**
@@ -24,7 +26,8 @@ export function FirstRunScreen({
   const [name, setName] = useState('')
   const [dir, setDir] = useState(defaults.gameDir)
   const [java, setJava] = useState(defaults.javaPath)
-  const [ram, setRam] = useState(Math.max(2, Math.round(defaults.ramMb / 1024)))
+  const maxRam = ramLimitGb(defaults.maxRamMb)
+  const [ram, setRam] = useState(clampRamGb(defaults.ramMb / 1024, maxRam))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<{ message: string; raw: string | null } | null>(null)
   const touched = name.length > 0
@@ -50,7 +53,7 @@ export function FirstRunScreen({
   }
 
   const handleContinue = async () => {
-    if (!nameValid || saving) return
+    if (!nameValid || saving || maxRam < 2) return
     setSaving(true)
     setError(null)
     try {
@@ -127,11 +130,12 @@ export function FirstRunScreen({
             <Setting
               icon={<Coffee size={14} />}
               label="СРЕДА JAVA"
-              hint="Рекомендуемое значение по умолчанию — можно изменить."
+              hint={translate('settings.javaHint')}
             >
               <PathInput
                 label="Java"
                 value={java}
+                placeholder={translate('settings.javaAuto')}
                 onChange={setJava}
                 browseLabel="ОБЗОР"
                 onBrowse={() => void handleBrowse('java')}
@@ -142,7 +146,7 @@ export function FirstRunScreen({
               label="ВЫДЕЛЕНИЕ RAM"
               hint={`${ram} ГБ выделено · по умолчанию 4 ГБ`}
             >
-              <RamSlider ram={ram} onChange={setRam} onEdit={() => {}} />
+              <RamSlider maxRam={maxRam} ram={ram} onChange={setRam} onEdit={() => {}} />
             </Setting>
           </div>
 
@@ -152,7 +156,7 @@ export function FirstRunScreen({
             <button
               type="button"
               onClick={() => void handleContinue()}
-              disabled={!nameValid || saving}
+              disabled={!nameValid || saving || maxRam < 2}
               className={`h-10 px-6 flex items-center gap-3 border transition-colors ${
                 nameValid
                   ? 'border-[#F5A524]/40 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524]'

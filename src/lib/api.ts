@@ -154,6 +154,7 @@ export interface LauncherContent {
 export interface LauncherConfig {
   gameDir: string
   javaPath: string
+  maxRamMb?: number
   ramMb: number
   autoUpdate: boolean
   lang: string

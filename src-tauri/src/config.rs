@@ -118,7 +118,7 @@ pub fn validate_config(config: &LauncherConfig) -> Result<(), String> {
         .and_then(|_| std::fs::remove_file(&probe))
         .map_err(|e| format!("Game directory is not writable: {e}"))?;
 
-    let max_ram = total_memory_mb().map_or(32_768, |total| total.saturating_mul(3) / 4);
+    let max_ram = max_ram_mb();
     if config.ram_mb < 2_048 || config.ram_mb > max_ram {
         return Err(format!("RAM must be between 2048 and {max_ram} MB"));
     }
@@ -144,6 +144,10 @@ pub fn validate_config(config: &LauncherConfig) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+pub fn max_ram_mb() -> u32 {
+    total_memory_mb().map_or(32_768, |total| total.saturating_mul(3) / 4)
 }
 
 #[cfg(windows)]
