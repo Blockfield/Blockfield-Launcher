@@ -41,7 +41,21 @@ export interface LauncherStatus {
   cancelable: boolean
 }
 
+export interface RoomBattle {
+  red: number
+  blue: number
+  points: {
+    id: string
+    name: string
+    owner: string
+    claiming: string
+    capturing: string
+    progress: number
+  }[]
+}
+
 export interface GameRoom {
+  battle?: RoomBattle | null
   id: string
   name: string
   mode: string

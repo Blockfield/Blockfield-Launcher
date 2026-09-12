@@ -26,6 +26,8 @@ pub struct ServerStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameRoom {
+    #[serde(default)]
+    pub battle: Option<RoomBattle>,
     pub id: String,
     pub name: String,
     pub mode: String,
@@ -33,6 +35,37 @@ pub struct GameRoom {
     pub phase: String,
     pub players: u32,
     pub joinable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomBattle {
+    pub red: u32,
+    pub blue: u32,
+    pub points: Vec<CapturePoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapturePoint {
+    pub id: String,
+    pub name: String,
+    pub owner: String,
+    pub claiming: String,
+    pub capturing: String,
+    pub progress: u8,
+}
+
+impl RoomBattle {
+    fn valid(&self) -> bool {
+        self.points.len() <= 100
+            && self.points.iter().all(|point| {
+                point.id.len() <= 256
+                    && point.name.len() <= 256
+                    && point.progress <= 100
+                    && ["RED", "BLUE", "NEUTRAL"].contains(&point.owner.as_str())
+                    && ["RED", "BLUE", "NONE"].contains(&point.claiming.as_str())
+                    && ["RED", "BLUE", "NONE"].contains(&point.capturing.as_str())
+            })
+    }
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -290,7 +323,8 @@ fn room_snapshot(json: &serde_json::Value) -> Option<Vec<GameRoom>> {
     let rooms: Vec<GameRoom> = serde_json::from_value(value["rooms"].clone()).ok()?;
     if rooms.len() > 100
         || rooms.iter().any(|room| {
-            !crate::rooms::valid_id(&room.id)
+            room.battle.as_ref().is_some_and(|battle| !battle.valid())
+                || !crate::rooms::valid_id(&room.id)
                 || !["IDLE", "VOTING", "PREPARING", "GAME", "MATCH_END"]
                     .contains(&room.phase.as_str())
                 || room.name.is_empty()
