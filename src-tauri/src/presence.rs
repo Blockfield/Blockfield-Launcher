@@ -64,7 +64,7 @@ async fn session(app: &tauri::AppHandle) -> io::Result<()> {
                 match op {
                     3 => connection.send(4, &value).await?,
                     2 => return Err(io::ErrorKind::ConnectionAborted.into()),
-                    1 if value["cmd"] == "SUBSCRIBE" && value["evt"] == "ACTIVITY_JOIN" => {
+                    1 if confirms_join_subscription(&value) => {
                         native_invites = true;
                     }
                     1 if value["evt"] == "ERROR" && value["cmd"] == "SUBSCRIBE" => {
@@ -117,6 +117,10 @@ fn read_presence(path: &std::path::Path) -> Option<Value> {
     let data: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
     let timestamp = data["updatedAt"].as_i64()?;
     ((now() * 1000).abs_diff(timestamp) < 15_000).then_some(data)
+}
+
+fn confirms_join_subscription(value: &Value) -> bool {
+    value["cmd"] == "SUBSCRIBE" && value["evt"].is_null() && value["data"]["evt"] == "ACTIVITY_JOIN"
 }
 
 fn join_target(value: &Value) -> Option<String> {
@@ -205,6 +209,34 @@ fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn discord_subscription_reply_enables_invites() {
+        let reply =
+            json!({"cmd":"SUBSCRIBE","data":{"evt":"ACTIVITY_JOIN"},"evt":null,"nonce":"1"});
+        let data = json!({"id":"lobby","players":1,"capacity":40,"joinable":true});
+        let value = activity(
+            GamePhase::Running,
+            Some(&data),
+            1,
+            confirms_join_subscription(&reply),
+        );
+        assert_eq!(value["secrets"]["join"], "bf1:lobby");
+        assert!(value.get("buttons").is_none());
+    }
+
+    #[test]
+    fn unrelated_or_failed_replies_do_not_enable_invites() {
+        for reply in [
+            json!({"cmd":"SUBSCRIBE","evt":"ERROR","data":{"evt":"ACTIVITY_JOIN","code":4000}}),
+            json!({"cmd":"SUBSCRIBE","evt":null,"data":{"evt":"ACTIVITY_SPECTATE"}}),
+            json!({"cmd":"DISPATCH","evt":"ACTIVITY_JOIN","data":{"secret":"bf1:lobby"}}),
+            json!({"cmd":"SUBSCRIBE","evt":"ACTIVITY_JOIN"}),
+            json!({}),
+        ] {
+            assert!(!confirms_join_subscription(&reply), "{reply}");
+        }
+    }
+
     #[test]
     fn lobby_and_rooms_have_native_invites_only_while_joinable() {
         for target in ["lobby", "12345678-1234-1234-1234-123456789abc"] {
