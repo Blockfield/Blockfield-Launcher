@@ -355,3 +355,45 @@ input[type='range']:focus-visible {
     padding: 20px;
   }
 }
+
+.main-layout > :not(.main-details) {
+  flex-shrink: 0;
+}
+
+@media (width < 768px) {
+  .main-summary {
+    gap: 8px;
+  }
+
+  .main-summary > div:first-child > p,
+  .main-summary > div:last-child,
+  .main-play > div > div:first-child > div {
+    display: none;
+  }
+
+  .main-summary h1 {
+    font-size: 26px;
+  }
+
+  .main-play > div {
+    gap: 12px;
+  }
+
+  .main-play > div > div:last-child {
+    width: 100%;
+    justify-content: space-between;
+    text-align: left;
+  }
+
+  .main-details {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .main-details[data-view='modpack'] {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .main-details[data-view='modpack'] > div:first-child {
+    padding-bottom: 0;
+  }
+}

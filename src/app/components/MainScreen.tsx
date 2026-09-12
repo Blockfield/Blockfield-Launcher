@@ -66,6 +66,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchProgress, setLaunchProgress] = useState<number | null>(null)
   const [roomMessage, setRoomMessage] = useState('')
+  const [detailsView, setDetailsView] = useState<'rooms' | 'briefing' | 'modpack'>('rooms')
   const handledRoom = useRef<string | null>(null)
   const [pendingRoom, setPendingRoom] = useState<string | null>(null)
   const [serverStatus, setServerStatus] = useState<ServerStatusData | null>(null)
@@ -320,15 +321,15 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
         }))
 
   return (
-    <div className="relative h-full w-full overflow-y-auto bg-[#070604]">
+    <div className="main-screen relative h-full w-full overflow-hidden bg-[#070604]">
       <TopoBackdrop />
       <GridBackdrop intensity={0.5} />
 
-      <div className="screen-layout relative">
-        <section className="relative flex flex-col min-h-0">
+      <div className="screen-layout relative h-full min-h-0">
+        <section className="main-layout relative flex h-full flex-col min-h-0">
           <OperationBar label={t('main.operation')} />
 
-          <div className="flex flex-col md:flex-row min-w-0 items-start justify-between gap-6">
+          <div className="main-summary flex flex-col md:flex-row min-w-0 items-start justify-between gap-6">
             <div className="max-w-[660px]">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
                 <h1 className="tracking-[0.04em] text-[34px] leading-tight text-neutral-50">
@@ -349,7 +350,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           </div>
 
           {/* PLAY zone */}
-          <GlowPanel className="p-4 md:p-5">
+          <GlowPanel className="main-play p-4 md:p-5">
             <div className="flex flex-wrap items-center justify-between gap-5">
               <div className="flex flex-wrap min-w-0 items-center gap-4">
                 <DeployButton
@@ -396,33 +397,79 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
             </div>
           </GlowPanel>
 
-          <RoomList
-            rooms={serverStatus?.rooms}
-            onJoin={(id) => {
-              void handleJoin(id)
-            }}
-            disabled={
-              launching || (game.phase !== 'running' && (checking || !versionInfo || gameBusy))
-            }
-          />
           {roomMessage && (
-            <p role="status" className="mt-2 text-[12px] text-[#C7AE86]">
-              {roomMessage}
-            </p>
+            <div
+              role="status"
+              className="mt-2 flex shrink-0 items-start gap-3 text-[12px] text-[#C7AE86]"
+            >
+              <p className="min-w-0 flex-1 break-words">{roomMessage}</p>
+              <button
+                type="button"
+                onClick={() => setRoomMessage('')}
+                className="shrink-0 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-[#F5A524]"
+              >
+                Закрыть
+              </button>
+            </div>
           )}
 
-          {/* Briefing + Modpack */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-[minmax(0,1.6fr)_minmax(300px,1fr)] gap-px bg-[#18130D] border border-[#2A2116] flex-1 min-h-0">
-            <div className="bg-[#0B0906] p-4 md:p-5 min-h-0 overflow-y-auto">
-              <SectionHeader label={t('main.briefing')} code="BRF-001" />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5 mt-5">
-                {displayFeatures.map((f) => (
-                  <FeatureItem key={f.title} icon={f.icon} title={f.title} desc={f.desc} />
+          <div
+            data-view={detailsView}
+            className="main-details mt-4 grid grid-cols-1 md:grid-cols-[minmax(0,1.6fr)_minmax(300px,1fr)] gap-px bg-[#18130D] border border-[#2A2116] flex-1 min-h-0"
+          >
+            <div className="bg-[#0B0906] p-4 min-h-0 flex flex-col">
+              <div
+                aria-label="Информация об игре"
+                className="mb-2 flex shrink-0 items-center gap-4 border-b border-[#2A2116]"
+              >
+                {(
+                  [
+                    ['rooms', 'Комнаты'],
+                    ['briefing', 'Брифинг'],
+                    ['modpack', 'Сборка'],
+                  ] as const
+                ).map(([view, label]) => (
+                  <button
+                    key={view}
+                    type="button"
+                    aria-pressed={detailsView === view}
+                    onClick={() => setDetailsView(view)}
+                    className={`h-8 border-b text-[12px] transition-colors focus-visible:outline-2 focus-visible:outline-[#F5A524] ${view === 'modpack' ? 'md:hidden' : ''} ${detailsView === view ? 'border-[#F5A524] text-[#F3E7D0]' : 'border-transparent text-[#8E7A5E] hover:text-[#F3E7D0]'}`}
+                  >
+                    {label}
+                    {view === 'rooms' && serverStatus?.rooms
+                      ? ` · ${serverStatus.rooms.length}`
+                      : ''}
+                  </button>
                 ))}
+              </div>
+              <div hidden={detailsView !== 'rooms'} className="min-h-0 flex-1 flex flex-col">
+                <RoomList
+                  rooms={serverStatus?.rooms}
+                  onJoin={(id) => {
+                    void handleJoin(id)
+                  }}
+                  disabled={
+                    launching ||
+                    (game.phase !== 'running' && (checking || !versionInfo || gameBusy))
+                  }
+                />
+              </div>
+              <div
+                hidden={detailsView === 'rooms'}
+                className={`min-h-0 flex-1 ${detailsView === 'modpack' ? 'hidden md:block' : ''}`}
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5">
+                  {displayFeatures.map((f) => (
+                    <FeatureItem key={f.title} icon={f.icon} title={f.title} desc={f.desc} />
+                  ))}
+                </div>
               </div>
             </div>
 
-            <div className="bg-[#0B0906] p-4 md:p-5 flex flex-col min-h-0">
+            <div
+              className={`main-modpack bg-[#0B0906] p-4 md:p-5 flex-col min-h-0 ${detailsView === 'modpack' ? 'flex' : 'hidden md:flex'}`}
+            >
               <SectionHeader label={t('main.modpackStatus')} code="PKG-LIVE" />
               <div className="mt-3 flex flex-col gap-2 flex-1">
                 <Row label={t('main.installed')} value={installedVersion} />

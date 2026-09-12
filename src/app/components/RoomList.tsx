@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { GameRoom } from '../../lib/api'
 
 const phases: Record<string, string> = {
@@ -7,6 +9,10 @@ const phases: Record<string, string> = {
   GAME: 'Бой',
   MATCH_END: 'Матч завершён',
 }
+
+const controlClass =
+  'flex h-8 shrink-0 items-center justify-center gap-2 border border-[#2A2116] px-3 text-[12px] text-[#C7AE86] transition-colors hover:border-[#8A571C] hover:text-[#F3E7D0] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F5A524] disabled:opacity-50 disabled:cursor-not-allowed'
+
 export function RoomList({
   rooms,
   onJoin,
@@ -16,107 +22,164 @@ export function RoomList({
   onJoin: (id: string) => void
   disabled: boolean
 }) {
-  if (rooms?.length === 0) return null
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selectedIndex = Math.max(0, rooms?.findIndex((room) => room.id === selectedId) ?? 0)
+  const room = rooms?.[selectedIndex]
+  const previousRoom = rooms?.[selectedIndex - 1]
+  const nextRoom = rooms?.[selectedIndex + 1]
+
   return (
-    <section aria-labelledby="rooms-title" className="mt-4 border-t border-[#2A2116] pt-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="rooms-title" className="text-[16px] text-[#F3E7D0]">
-          Игровые комнаты
-        </h2>
-        <button
-          type="button"
-          onClick={() => onJoin('lobby')}
-          disabled={disabled}
-          className="border border-[#F5A524] px-4 py-3 text-[12px] text-[#F3E7D0] hover:bg-[#2A2116] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#F5A524] disabled:opacity-50"
-        >
-          Войти в лобби
-        </button>
-      </div>
-      <p role="status" className="mt-2 text-[12px] text-[#C7AE86]">
-        {!rooms
-          ? 'Список комнат недоступен. Повторим запрос автоматически.'
-          : rooms.length === 0
-            ? 'Открытых комнат пока нет. Создать комнату можно в игре.'
-            : 'Состояние обновляется каждые 10 секунд.'}
-      </p>
-      <div className="max-h-96 overflow-y-auto">
-        {rooms?.map((room) => (
-          <article
-            key={room.id}
-            className="flex flex-col items-stretch justify-between gap-3 border-b sm:flex-row sm:items-center border-[#2A2116] py-3"
-          >
-            <div className="min-w-0 flex-1">
-              <h3 className="text-[14px] text-[#F3E7D0]">{room.name}</h3>
-              <p className="mt-1 text-[12px] text-[#C7AE86] break-words">
-                {[room.mode, room.map, phases[room.phase], `Игроков: ${room.players}`]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </p>
-              {room.battle && (
-                <div className="mt-3">
-                  <div
-                    aria-label="Очки команд"
-                    className="flex flex-wrap gap-5 text-[14px] font-semibold tabular-nums"
-                  >
-                    <span className="text-[#FF9D99]">Красные: {room.battle.red}</span>
-                    <span className="text-[#91C8FF]">Синие: {room.battle.blue}</span>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-x-5 gap-y-3">
-                    {room.battle.points.map((point) => {
-                      const team = point.owner === 'NEUTRAL' ? point.claiming : point.owner
-                      const owner =
-                        team === 'RED' ? 'Красные' : team === 'BLUE' ? 'Синие' : 'Нейтральная'
-                      const action =
-                        point.capturing !== 'NONE' && point.capturing !== team
-                          ? ` · ${point.capturing === 'RED' ? 'Красные' : 'Синие'} нейтрализуют`
-                          : ''
-                      const label = `${point.name} · ${owner} · ${point.progress}%${action}`
-                      return (
-                        <div
-                          key={point.id}
-                          className="flex min-w-36 flex-1 flex-col justify-between text-[12px] text-[#C7AE86]"
-                        >
-                          <p>{label}</p>
-                          <div
-                            role="progressbar"
-                            aria-label={label}
-                            aria-valuenow={point.progress}
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                            className="mt-2 h-1.5 bg-[#2A2116]"
-                          >
-                            <div
-                              className="h-full"
-                              style={{
-                                width: `${point.progress}%`,
-                                backgroundColor:
-                                  team === 'RED'
-                                    ? '#FF9D99'
-                                    : team === 'BLUE'
-                                      ? '#91C8FF'
-                                      : '#C7AE86',
-                              }}
-                            />
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
+    <section aria-label="Игровые комнаты" className="flex min-h-0 flex-1 flex-col gap-2">
+      {room ? (
+        <>
+          <div className="flex min-w-0 items-center gap-3">
+            <select
+              aria-label="Выбрать игровую комнату"
+              value={room.id}
+              onChange={(event) => setSelectedId(event.target.value)}
+              className="h-8 min-w-0 flex-1 truncate border border-[#2A2116] bg-[#11100D] px-2 text-[14px] text-[#F3E7D0] focus-visible:outline-2 focus-visible:outline-[#F5A524]"
+            >
+              {rooms?.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               onClick={() => onJoin(room.id)}
               disabled={disabled || !room.joinable}
               aria-label={`Войти в комнату: ${room.name}`}
-              className="shrink-0 border border-[#F5A524] px-4 py-3 text-[12px] text-[#F3E7D0] hover:bg-[#2A2116] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#F5A524] disabled:opacity-50"
+              className={`${controlClass} border-[#F5A524]/50 text-[#F3E7D0]`}
             >
-              Войти в комнату
+              Войти
             </button>
+          </div>
+          <article className="min-h-0 flex-1" aria-label={room.name}>
+            <p
+              className="truncate text-[12px] text-[#C7AE86]"
+              title={[room.mode, room.map, phases[room.phase] ?? room.phase]
+                .filter(Boolean)
+                .join(' · ')}
+            >
+              {[room.mode, room.map, phases[room.phase] ?? room.phase].filter(Boolean).join(' · ')}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px] tabular-nums">
+              <span className="text-[#C7AE86]">Игроков: {room.players}</span>
+              {room.battle && (
+                <div aria-label="Очки команд" className="flex gap-4 font-semibold">
+                  <span className="text-[#FF9D99]">Красные: {room.battle.red}</span>
+                  <span className="text-[#91C8FF]">Синие: {room.battle.blue}</span>
+                </div>
+              )}
+            </div>
+            {room.battle && <BattlePoints key={room.id} points={room.battle.points} />}
           </article>
-        ))}
+        </>
+      ) : (
+        <p role="status" className="flex-1 text-[12px] leading-relaxed text-[#C7AE86]">
+          {!rooms
+            ? 'Список комнат недоступен. Повторим запрос автоматически.'
+            : 'Открытых комнат пока нет. Создать комнату можно в игре.'}
+        </p>
+      )}
+      <div className="mt-auto flex shrink-0 items-center justify-between gap-3 border-t border-[#2A2116] pt-2">
+        <div className="flex items-center gap-2">
+          {room && (
+            <>
+              <button
+                type="button"
+                aria-label="Предыдущая комната"
+                disabled={!previousRoom}
+                onClick={() => previousRoom && setSelectedId(previousRoom.id)}
+                className={controlClass}
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span role="status" className="text-[12px] tabular-nums text-[#C7AE86]">
+                {selectedIndex + 1} / {rooms?.length}
+              </span>
+              <button
+                type="button"
+                aria-label="Следующая комната"
+                disabled={!nextRoom}
+                onClick={() => nextRoom && setSelectedId(nextRoom.id)}
+                className={controlClass}
+              >
+                <ChevronRight size={14} />
+              </button>
+            </>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => onJoin('lobby')}
+          disabled={disabled}
+          className={controlClass}
+        >
+          Войти в лобби
+        </button>
       </div>
     </section>
+  )
+}
+
+function BattlePoints({ points }: { points: NonNullable<GameRoom['battle']>['points'] }) {
+  const [page, setPage] = useState(0)
+  const pages = Math.ceil(points.length / 3)
+  const currentPage = Math.min(page, Math.max(0, pages - 1))
+
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <div className="grid min-w-0 flex-1 grid-cols-3 gap-3">
+        {points.slice(currentPage * 3, currentPage * 3 + 3).map((point) => {
+          const team = point.owner === 'NEUTRAL' ? point.claiming : point.owner
+          const owner = team === 'RED' ? 'Красные' : team === 'BLUE' ? 'Синие' : 'Нейтральная'
+          const action =
+            point.capturing !== 'NONE' && point.capturing !== team
+              ? ` · ${point.capturing === 'RED' ? 'Красные' : 'Синие'} нейтрализуют`
+              : ''
+          const label = `${point.name} · ${owner} · ${point.progress}%${action}`
+          return (
+            <div key={point.id} className="min-w-0 text-[11px] text-[#C7AE86]" title={label}>
+              <p className="truncate">
+                {point.name} · {owner}
+              </p>
+              <div
+                role="progressbar"
+                aria-label={label}
+                aria-valuenow={point.progress}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                className="mt-1 h-1.5 bg-[#2A2116]"
+              >
+                <div
+                  className="h-full"
+                  style={{
+                    width: `${point.progress}%`,
+                    backgroundColor:
+                      team === 'RED' ? '#FF9D99' : team === 'BLUE' ? '#91C8FF' : '#C7AE86',
+                  }}
+                />
+              </div>
+              <p className="mt-1 truncate tabular-nums">
+                {point.progress}%{action}
+              </p>
+            </div>
+          )
+        })}
+      </div>
+      {pages > 1 && (
+        <button
+          type="button"
+          aria-label={`Следующие точки захвата, страница ${currentPage + 1} из ${pages}`}
+          onClick={() => setPage((currentPage + 1) % pages)}
+          className={controlClass}
+        >
+          {currentPage + 1}/{pages}
+          <ChevronRight size={14} />
+        </button>
+      )}
+    </div>
   )
 }
