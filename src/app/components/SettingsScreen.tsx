@@ -694,12 +694,12 @@ export function PathInput({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="min-w-0 flex-1 h-10 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 placeholder:text-[#A89373] outline-none focus:border-[#F5A524]/60 transition-colors"
+        className="relative focus:z-10 min-w-0 flex-1 h-10 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 placeholder:text-[#A89373] outline-none focus:border-[#F5A524]/60 transition-colors"
       />
       <button
         type="button"
         onClick={onBrowse}
-        className="h-10 shrink-0 px-3 border border-l-0 border-[#2A2116] bg-[#11100D] text-[10px] tracking-[0.14em] text-[#C7AE86] hover:text-[#F3E7D0] hover:border-[#8A571C] transition-colors"
+        className="relative -ml-px h-10 shrink-0 px-3 border border-[#2A2116] bg-[#11100D] text-[10px] tracking-[0.14em] text-[#C7AE86] hover:text-[#F3E7D0] hover:border-[#8A571C] transition-colors"
       >
         {browseLabel}
       </button>
