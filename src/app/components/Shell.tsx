@@ -96,8 +96,17 @@ export function Shell({
         <div className="flex shrink-0 items-center gap-3">
           <div className="flex items-center gap-3 px-3 h-9 border border-[#2A2116] bg-[#11100D]">
             <div className="relative">
-              <div className="size-6 bg-gradient-to-br from-[#8A571C] to-[#2A2116] grid place-items-center text-[10px] text-[#F3E7D0] tracking-widest">
+              <div className="relative size-6 bg-gradient-to-br from-[#8A571C] to-[#2A2116] grid place-items-center text-[10px] text-[#F3E7D0] tracking-widest">
                 {operatorInitials}
+                {/* Server-side SkinRestorer auto-fetches skins from Mojang by nick, so mc-heads shows the same head. */}
+                {user.username.length >= 3 && (
+                  <img
+                    src={`https://mc-heads.net/avatar/${encodeURIComponent(user.username)}/24`}
+                    alt=""
+                    className="absolute inset-0 size-6 [image-rendering:pixelated]"
+                    onError={(e) => e.currentTarget.remove()}
+                  />
+                )}
               </div>
               <span className="absolute -bottom-0.5 -right-0.5 size-1.5 rounded-full bg-[#82D66B] ring-2 ring-[#11100D]" />
             </div>
