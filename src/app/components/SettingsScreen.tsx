@@ -13,13 +13,15 @@ import {
   LoaderCircle,
   Terminal,
   EyeOff,
+  Shirt,
+  Upload,
 } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { LauncherUpdatePanel } from './LauncherUpdatePanel'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { ErrorDetail } from './ui-bits'
 import { useI18n } from '../i18n'
-import type { LauncherConfig } from '../../lib/api'
+import type { LauncherConfig, SkinUploadResult } from '../../lib/api'
 import { invalidateModpackCheck } from '../../lib/modpack-check'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
 import { friendlyError } from '../../lib/errors'
@@ -28,7 +30,7 @@ import { isValidUsername } from '../../lib/username'
 /** Detect whether we're running inside Tauri. */
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
-export type SettingsTab = 'general' | 'runtime' | 'commands' | 'launcher'
+export type SettingsTab = 'general' | 'runtime' | 'commands' | 'skin' | 'launcher'
 
 export function SettingsScreen({
   username,
@@ -58,6 +60,12 @@ export function SettingsScreen({
   const [loading, setLoading] = useState(true)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [saveErrorRaw, setSaveErrorRaw] = useState<string | null>(null)
+  const [skinPath, setSkinPath] = useState('')
+  const [capePath, setCapePath] = useState('')
+  const [slim, setSlim] = useState(false)
+  const [skinBusy, setSkinBusy] = useState(false)
+  const [skinMessage, setSkinMessage] = useState<string | null>(null)
+  const [skinErrorRaw, setSkinErrorRaw] = useState<string | null>(null)
   const usernameInvalid = name.trim().length > 0 && !isValidUsername(name)
   const preferences =
     localizedContentText(
@@ -172,6 +180,43 @@ export function SettingsScreen({
     setDirty(false)
   }, [])
 
+  const handleSkinUpload = useCallback(async () => {
+    if (!isTauri()) return
+    if (!isValidUsername(username)) {
+      setSkinMessage(t('settings.skinNeedsUsername'))
+      setSkinErrorRaw(null)
+      return
+    }
+    setSkinBusy(true)
+    setSkinMessage(null)
+    setSkinErrorRaw(null)
+    try {
+      await invoke<SkinUploadResult>('upload_skin', {
+        skinPath: skinPath || null,
+        capePath: capePath || null,
+        slim,
+      })
+      setSkinMessage(t('settings.skinUploaded'))
+    } catch (e) {
+      const friendly = friendlyError(e, 'skin-upload')
+      setSkinMessage(friendly.message)
+      setSkinErrorRaw(friendly.raw)
+    } finally {
+      setSkinBusy(false)
+    }
+  }, [username, skinPath, capePath, slim, t])
+
+  const handleBrowsePng = useCallback(async (set: (path: string) => void) => {
+    if (!isTauri()) return
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const selected = await open({ filters: [{ name: 'PNG', extensions: ['png'] }] })
+      if (selected) set(selected as string)
+    } catch (e) {
+      console.error('Browse failed:', e)
+    }
+  }, [])
+
   const handleBrowse = useCallback(
     async (field: 'dir' | 'java') => {
       if (!isTauri()) return
@@ -219,39 +264,41 @@ export function SettingsScreen({
           <div
             role="tablist"
             aria-label={t('nav.settings')}
-            className="shrink-0 grid grid-cols-2 md:grid-cols-4 border-b border-[#2A2116] bg-[#0B0906]"
+            className="shrink-0 grid grid-cols-2 md:grid-cols-5 border-b border-[#2A2116] bg-[#0B0906]"
           >
-            {(['general', 'runtime', 'commands', 'launcher'] as const).map((id, index, tabs) => (
-              <button
-                key={id}
-                id={`settings-tab-${id}`}
-                role="tab"
-                aria-selected={tab === id}
-                aria-controls={`settings-panel-${id}`}
-                tabIndex={tab === id ? 0 : -1}
-                onClick={() => setTab(id)}
-                onKeyDown={(event) => {
-                  const next =
-                    event.key === 'ArrowRight'
-                      ? (index + 1) % tabs.length
-                      : event.key === 'ArrowLeft'
-                        ? (index + tabs.length - 1) % tabs.length
-                        : event.key === 'Home'
-                          ? 0
-                          : event.key === 'End'
-                            ? tabs.length - 1
-                            : null
-                  if (next === null) return
-                  event.preventDefault()
-                  const nextTab = tabs[next]!
-                  setTab(nextTab)
-                  document.getElementById(`settings-tab-${nextTab}`)?.focus()
-                }}
-                className={`min-h-11 px-2 py-3 text-[11px] tracking-[0.08em] border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-[#F5A524] focus-visible:-outline-offset-2 ${tab === id ? 'border-[#F5A524] text-[#F3E7D0] bg-[#18130D]' : 'border-transparent text-[#C7AE86] hover:text-[#F3E7D0] hover:bg-[#11100D]'}`}
-              >
-                {t(`settings.tab.${id}`)}
-              </button>
-            ))}
+            {(['general', 'runtime', 'commands', 'skin', 'launcher'] as const).map(
+              (id, index, tabs) => (
+                <button
+                  key={id}
+                  id={`settings-tab-${id}`}
+                  role="tab"
+                  aria-selected={tab === id}
+                  aria-controls={`settings-panel-${id}`}
+                  tabIndex={tab === id ? 0 : -1}
+                  onClick={() => setTab(id)}
+                  onKeyDown={(event) => {
+                    const next =
+                      event.key === 'ArrowRight'
+                        ? (index + 1) % tabs.length
+                        : event.key === 'ArrowLeft'
+                          ? (index + tabs.length - 1) % tabs.length
+                          : event.key === 'Home'
+                            ? 0
+                            : event.key === 'End'
+                              ? tabs.length - 1
+                              : null
+                    if (next === null) return
+                    event.preventDefault()
+                    const nextTab = tabs[next]!
+                    setTab(nextTab)
+                    document.getElementById(`settings-tab-${nextTab}`)?.focus()
+                  }}
+                  className={`min-h-11 px-2 py-3 text-[11px] tracking-[0.08em] border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-[#F5A524] focus-visible:-outline-offset-2 ${tab === id ? 'border-[#F5A524] text-[#F3E7D0] bg-[#18130D]' : 'border-transparent text-[#C7AE86] hover:text-[#F3E7D0] hover:bg-[#11100D]'}`}
+                >
+                  {t(`settings.tab.${id}`)}
+                </button>
+              ),
+            )}
           </div>
           <div
             id={`settings-panel-${tab}`}
@@ -425,6 +472,75 @@ export function SettingsScreen({
                 <p className="pt-2 text-[11px] leading-relaxed text-[#C7AE86]">
                   {t('settings.commandsHint')}
                 </p>
+              </>
+            )}
+            {tab === 'skin' && (
+              <>
+                <Setting
+                  icon={<Shirt size={14} />}
+                  label={t('settings.skin')}
+                  hint={t('settings.skinHint')}
+                >
+                  <PathInput
+                    label={t('settings.skin')}
+                    value={skinPath}
+                    onChange={setSkinPath}
+                    browseLabel={t('settings.browse')}
+                    onBrowse={() => handleBrowsePng(setSkinPath)}
+                  />
+                </Setting>
+                <Setting
+                  icon={<Shirt size={14} />}
+                  label={t('settings.cape')}
+                  hint={t('settings.capeHint')}
+                >
+                  <PathInput
+                    label={t('settings.cape')}
+                    value={capePath}
+                    onChange={setCapePath}
+                    browseLabel={t('settings.browse')}
+                    onBrowse={() => handleBrowsePng(setCapePath)}
+                  />
+                </Setting>
+                <Setting
+                  compact
+                  icon={<UserRound size={14} />}
+                  label={t('settings.skinModel')}
+                  hint={t('settings.skinModelHint')}
+                >
+                  <Toggle
+                    label={t('settings.skinModel')}
+                    on={slim}
+                    onChange={setSlim}
+                    onLabel={t('settings.enabled')}
+                    offLabel={t('settings.disabled')}
+                  />
+                </Setting>
+                <div className="flex flex-wrap items-center justify-end gap-3 pt-3">
+                  {skinMessage && skinMessage !== t('settings.skinUploaded') && (
+                    <div className="max-w-[320px]">
+                      <ErrorDetail message={skinMessage} raw={skinErrorRaw} />
+                    </div>
+                  )}
+                  {skinMessage === t('settings.skinUploaded') && (
+                    <span className="text-[11px] text-[#F5A524]">{skinMessage}</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleSkinUpload}
+                    disabled={skinBusy || (!skinPath && !capePath)}
+                    className="h-10 px-6 flex items-center gap-3 border border-[#F5A524]/40 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {skinBusy ? (
+                      <LoaderCircle size={13} className="animate-spin text-[#F3E7D0]" />
+                    ) : (
+                      <Upload size={13} className="text-[#F3E7D0]" />
+                    )}
+                    <span className="text-[11px] tracking-[0.18em] text-[#F3E7D0]">
+                      {skinBusy ? t('settings.skinUploading') : t('settings.skinUpload')}
+                    </span>
+                  </button>
+                </div>
               </>
             )}
           </div>

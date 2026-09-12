@@ -27,6 +27,9 @@ pub struct LauncherInfo {
     pub pack: String,
     /// `host:port` the game auto-connects to.
     pub server: String,
+    /// Drasl skin server base URL; defaults to `skins::DEFAULT_SERVER`.
+    #[serde(default)]
+    pub skins: Option<String>,
     pub installer: Artifact,
     /// packwiz-installer refuses to start without its bootstrap, so both jars are shipped.
     pub bootstrap: Artifact,

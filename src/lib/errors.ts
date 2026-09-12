@@ -10,6 +10,7 @@ export type ErrorContext =
   | 'launcher-update'
   | 'settings-save'
   | 'settings-load'
+  | 'skin-upload'
 
 const CONTEXT_FALLBACK: Record<ErrorContext, string> = {
   'modpack-check': 'Не удалось проверить обновление модпака.',
@@ -18,6 +19,7 @@ const CONTEXT_FALLBACK: Record<ErrorContext, string> = {
   'launcher-update': 'Не удалось проверить или установить обновление лаунчера.',
   'settings-save': 'Не удалось сохранить настройки. Откройте подробности ошибки.',
   'settings-load': 'Не удалось загрузить настройки. Проверьте доступ к папке настроек и повторите.',
+  'skin-upload': 'Не удалось загрузить скин. Откройте подробности ошибки.',
 }
 
 const CONTEXT_NETWORK: Record<ErrorContext, string> = {
@@ -29,6 +31,8 @@ const CONTEXT_NETWORK: Record<ErrorContext, string> = {
   'launcher-update': 'Нет доступа к серверу обновлений лаунчера — проверьте интернет и повторите.',
   'settings-save': 'Не удалось сохранить настройки. Откройте подробности ошибки.',
   'settings-load': 'Не удалось загрузить настройки. Проверьте доступ к папке настроек и повторите.',
+  'skin-upload':
+    'Нет доступа к серверу скинов skins.nether.pp.ua — проверьте интернет и повторите.',
 }
 
 // Substrings that show up in reqwest/OS network failures surfaced through Rust's

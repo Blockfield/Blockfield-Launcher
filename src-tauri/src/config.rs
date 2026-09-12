@@ -26,6 +26,9 @@ pub struct LauncherConfig {
     pub hide_while_playing: bool,
     #[serde(default = "presence_enabled")]
     pub discord_presence: bool,
+    /// Password of the launcher-created account on the skin server, generated on first upload.
+    #[serde(default)]
+    pub skin_password: String,
 }
 
 impl Default for LauncherConfig {
@@ -54,6 +57,7 @@ impl Default for LauncherConfig {
             post_exit_command: String::new(),
             hide_while_playing: false,
             discord_presence: true,
+            skin_password: String::new(),
         }
     }
 }

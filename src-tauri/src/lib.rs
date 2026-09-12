@@ -11,6 +11,7 @@ mod native_update;
 mod pack;
 mod presence;
 mod rooms;
+mod skins;
 mod status;
 use tauri_plugin_deep_link::DeepLinkExt;
 mod updater;
@@ -140,6 +141,7 @@ pub fn run() {
             commands::game_status,
             commands::server_status,
             commands::open_url,
+            skins::upload_skin,
             rooms::pending_room,
             rooms::select_room,
             rooms::join_running_room,

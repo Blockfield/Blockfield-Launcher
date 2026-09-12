@@ -250,16 +250,16 @@ pub fn load_settings(state: State<'_, LauncherAppState>) -> Result<SettingsRespo
 pub fn save_settings(
     app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
-    config: LauncherConfig,
+    mut config: LauncherConfig,
 ) -> Result<(), String> {
     let app_data_dir = app_handle
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
-    crate::config::save_config(&app_data_dir, &config)?;
-
-    // Update in-memory state
     let mut current = state.config.blocking_write();
+    // The settings form does not own the generated skin-server credential.
+    config.skin_password.clone_from(&current.skin_password);
+    crate::config::save_config(&app_data_dir, &config)?;
     *current = config;
     Ok(())
 }

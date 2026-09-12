@@ -163,4 +163,11 @@ export interface LauncherConfig {
   postExitCommand: string
   hideWhilePlaying: boolean
   discordPresence?: boolean
+  skinPassword?: string
+}
+
+/** Result of `upload_skin`: texture URLs on the skin server. */
+export interface SkinUploadResult {
+  skinUrl: string | null
+  capeUrl: string | null
 }
