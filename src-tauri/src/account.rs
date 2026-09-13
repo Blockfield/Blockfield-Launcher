@@ -96,10 +96,11 @@ pub async fn account_status(state: State<'_, LauncherAppState>) -> Result<Accoun
             .await
         };
         match migrated.await {
-            Ok(account) => return update(&state, |c| account.apply(c)).await,
+            Ok(account) => return signed_in(&state, |c| account.apply(c)).await,
             Err(error) => log::warn!("Account migration failed: {error}"),
         }
     }
+    crate::skins::copy_mojang_skin(&state).await;
     Ok(AccountStatus::from(&config))
 }
 
@@ -111,7 +112,7 @@ pub async fn login(
 ) -> Result<AccountStatus, String> {
     let username = checked_username(&username)?;
     let account = sign_in(&drasl_base(&state).await?, username, &password).await?;
-    update(&state, |c| replace_account(c, account)).await
+    signed_in(&state, |c| replace_account(c, account)).await
 }
 
 #[tauri::command]
@@ -132,7 +133,7 @@ pub async fn register(
         })))
     .await?;
     let account = sign_in(&base, username, &password).await?;
-    update(&state, |c| replace_account(c, account)).await
+    signed_in(&state, |c| replace_account(c, account)).await
 }
 
 #[tauri::command]
@@ -272,7 +273,7 @@ async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response, Str
         .map_err(|e| format!("Drasl request failed: {e}"))
 }
 
-fn client() -> reqwest::Client {
+pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(30))
@@ -341,6 +342,15 @@ fn account_from(session: &Value, drasl: &Value) -> Result<Account, String> {
         }
         _ => Err("Drasl returned no Minecraft player for this account".to_string()),
     }
+}
+
+async fn signed_in(
+    state: &LauncherAppState,
+    change: impl FnOnce(&mut LauncherConfig),
+) -> Result<AccountStatus, String> {
+    let status = update(state, change).await?;
+    crate::skins::copy_mojang_skin(state).await;
+    Ok(status)
 }
 
 async fn update(

@@ -1,16 +1,20 @@
 //! Skin and cape upload to the Drasl account of the signed-in player; SkinRestorer on the game
 //! server pulls the textures back by player name, falling back to the Mojang skin of that name.
-use crate::account::{api, drasl_base, SESSION_EXPIRED};
+use crate::account::{api, client, drasl_base, SESSION_EXPIRED};
 use crate::commands::{valid_username, LauncherAppState};
 use base64::Engine;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::Path;
+use std::sync::Mutex;
 use tauri::State;
 
 pub const DEFAULT_SERVER: &str = "https://skins.nether.pp.ua";
 const MAX_TEXTURE_BYTES: u64 = 1024 * 1024;
 const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
+const MOJANG_PROFILES: &str = "https://api.mojang.com";
+const MOJANG_SESSIONS: &str = "https://sessionserver.mojang.com";
+static MOJANG_SKIN_CHECKED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,18 +108,19 @@ pub async fn preview_skin(
     if valid_username(&username) {
         let sources = [
             (base.as_str(), base.as_str(), "custom"),
-            (
-                "https://api.mojang.com",
-                "https://sessionserver.mojang.com",
-                "mojang",
-            ),
+            (MOJANG_PROFILES, MOJANG_SESSIONS, "mojang"),
         ];
         for (profiles, sessions, source) in sources {
             if let Some(textures) = yggdrasil_textures(&client, profiles, sessions, &username).await
             {
-                preview.skin = fetch_data_url(&client, textures["SKIN"]["url"].as_str()).await;
-                preview.cape = fetch_data_url(&client, textures["CAPE"]["url"].as_str()).await;
-                preview.slim = textures["SKIN"]["metadata"]["model"].as_str() == Some("slim");
+                let data_url = |png: String| format!("data:image/png;base64,{png}");
+                preview.skin = fetch_png(&client, textures["SKIN"]["url"].as_str())
+                    .await
+                    .map(data_url);
+                preview.cape = fetch_png(&client, textures["CAPE"]["url"].as_str())
+                    .await
+                    .map(data_url);
+                preview.slim = skin_model(&textures) == "slim";
                 preview.source = source;
                 break;
             }
@@ -129,6 +134,86 @@ pub async fn preview_skin(
         preview.cape = Some(format!("data:image/png;base64,{}", read_texture(path)?));
     }
     Ok(preview)
+}
+
+/// Drasl's Mojang skin forwarding can't reach Mojang from the homeserver, so the launcher copies
+/// the Mojang skin of the same name into a player without a skin, once per player per run.
+pub async fn copy_mojang_skin(state: &LauncherAppState) {
+    let config = state.config.read().await.clone();
+    let Ok(base) = drasl_base(state).await else {
+        return;
+    };
+    if config.api_token.is_empty() || config.player_uuid.is_empty() {
+        return;
+    }
+    {
+        let mut checked = MOJANG_SKIN_CHECKED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if checked.contains(&config.player_uuid) {
+            return;
+        }
+        checked.push(config.player_uuid.clone());
+    }
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = copy_mojang_textures(&base, &config).await {
+            log::warn!("Mojang skin copy for {} failed: {error}", config.username);
+        }
+    });
+}
+
+async fn copy_mojang_textures(
+    base: &str,
+    config: &crate::config::LauncherConfig,
+) -> Result<(), String> {
+    let client = client();
+    let user = api(client
+        .get(format!("{base}/drasl/api/v3/user"))
+        .bearer_auth(&config.api_token))
+    .await?;
+    if !lacks_skin(&user, &config.player_uuid) {
+        return Ok(());
+    }
+    let Some(textures) =
+        yggdrasil_textures(&client, MOJANG_PROFILES, MOJANG_SESSIONS, &config.username).await
+    else {
+        return Ok(());
+    };
+    let Some(skin_url) = textures["SKIN"]["url"].as_str() else {
+        return Ok(());
+    };
+    let skin = fetch_png(&client, Some(skin_url))
+        .await
+        .ok_or("Mojang skin download failed")?;
+    let mut body = json!({ "skinBase64": skin, "skinModel": skin_model(&textures) });
+    if let Some(cape) = fetch_png(&client, textures["CAPE"]["url"].as_str()).await {
+        body["capeBase64"] = Value::String(cape);
+    }
+    api(client
+        .patch(format!(
+            "{base}/drasl/api/v3/players/{}",
+            config.player_uuid
+        ))
+        .bearer_auth(&config.api_token)
+        .json(&body))
+    .await?;
+    Ok(())
+}
+
+fn lacks_skin(user: &Value, uuid: &str) -> bool {
+    user["players"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|p| p["uuid"] == uuid && p["skinUrl"].as_str().is_none_or(str::is_empty))
+}
+
+fn skin_model(textures: &Value) -> &'static str {
+    if textures["SKIN"]["metadata"]["model"] == "slim" {
+        "slim"
+    } else {
+        "classic"
+    }
 }
 
 /// `textures` object from a Yggdrasil-compatible session server (Drasl and Mojang share the shape).
@@ -173,7 +258,7 @@ async fn yggdrasil_textures(
     value.get("textures").cloned()
 }
 
-async fn fetch_data_url(client: &reqwest::Client, url: Option<&str>) -> Option<String> {
+async fn fetch_png(client: &reqwest::Client, url: Option<&str>) -> Option<String> {
     let bytes = client
         .get(url?)
         .send()
@@ -187,10 +272,7 @@ async fn fetch_data_url(client: &reqwest::Client, url: Option<&str>) -> Option<S
     if bytes.len() as u64 > MAX_TEXTURE_BYTES || !bytes.starts_with(PNG_MAGIC) {
         return None;
     }
-    Some(format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(&bytes)
-    ))
+    Some(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
 fn read_texture(path: &str) -> Result<String, String> {
@@ -226,5 +308,17 @@ mod tests {
         assert!(read_texture(txt.to_str().unwrap()).is_err());
         assert!(read_texture(dir.join("missing.png").to_str().unwrap()).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copies_mojang_skin_only_into_empty_player() {
+        let uuid = "5627dd98-e6be-3c21-b8a8-e92344183641";
+        let user = |skin: Value| json!({ "players": [{ "uuid": uuid, "skinUrl": skin }] });
+        assert!(lacks_skin(&user(Value::Null), uuid));
+        assert!(!lacks_skin(&user(json!("https://skins/a.png")), uuid));
+        assert!(!lacks_skin(&user(Value::Null), "other"));
+        let model = |m: Value| skin_model(&json!({ "SKIN": { "metadata": { "model": m } } }));
+        assert_eq!(model(json!("slim")), "slim");
+        assert_eq!(model(Value::Null), "classic");
     }
 }
