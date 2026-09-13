@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Guard the static launcher architecture; requires Python 3.11+."""
+"""Guard the static launcher architecture; requires Git and Python 3.11+."""
 import json
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -9,7 +10,18 @@ root = Path(__file__).resolve().parents[1]
 errors = []
 workspace = tomllib.loads((root / 'Cargo.toml').read_text())['workspace']
 members = workspace['members']
-if 'server' in members or (root / 'server').exists():
+# Ignore historical local data that may remain in an existing checkout. Never
+# require deleting data directories just to pass an architecture check.
+try:
+    candidates = subprocess.check_output(
+        ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', 'server'],
+        cwd=root,
+    ).decode().split('\0')
+except (OSError, subprocess.CalledProcessError) as error:
+    print(f'Unable to inspect legacy source with Git: {error}', file=sys.stderr)
+    raise SystemExit(1) from error
+legacy_source = [path for path in candidates if path and (root / path).exists()]
+if 'server' in members or legacy_source:
     errors.append('Retired server source/workspace member has returned.')
 if not {'shared', 'src-tauri'}.issubset(members):
     errors.append('The active native launcher/shared workspace members are missing.')
