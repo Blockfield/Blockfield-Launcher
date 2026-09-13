@@ -1,3 +1,5 @@
+> **Historical document — retired API/CMS architecture.** Not current setup instructions or current test evidence. See [archive notes](README.md) and the [current launcher guide](../../README.md). Paths below describe the baseline commit, not the current tree.
+
 # DEV MVP audit closure
 
 Date: 2026-07-15

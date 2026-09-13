@@ -1,0 +1,58 @@
+name: Launcher PR checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: launcher-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Non-publishing launcher checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Guard legacy cleanup
+        run: python3 scripts/check-legacy-cleanup.py
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - name: Install Tauri system dependencies
+        timeout-minutes: 8
+        run: scripts/install-tauri-deps.sh libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm version:check
+      - run: pnpm config:test
+      - run: pnpm build
+      - run: cargo metadata --locked --format-version=1 --no-deps > /dev/null
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - uses: taiki-e/install-action@v2.83.2
+        with:
+          tool: cargo-audit
+          fallback: none
+      - run: pnpm audit --audit-level high
+      - run: cargo audit
+      - name: Confirm lockfiles were not modified
+        run: git diff --exit-code -- Cargo.lock pnpm-lock.yaml

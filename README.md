@@ -17,7 +17,7 @@
 > Launcher builds and the updater's `latest.json` are published by CI to the public
 > https://github.com/netherg-io/blockfield-launcher-releases (this repo is private, so its own release
 > assets are unusable by the updater). Linux install without root: `scripts/install-linux.sh` (plain `cargo build --release` needs `--features tauri/custom-protocol`, otherwise the window tries to load the Vite dev server).
-> `server/` (API + Filament CMS) is kept in the repo but is no longer deployed or required.
+> The retired API/CMS source has been removed from the active tree. See [historical notes](docs/legacy/README.md) for recovery from Git history.
 
 The launcher checks the installed pack on startup; **Settings → Check at startup** also enables
 packwiz verification and repair of an up-to-date installation. **Verify files** runs this manually.
@@ -60,87 +60,69 @@ scripts/rust-env.sh cargo test -p blockfield-launcher --lib \
   native_update::tests::published_deb_has_a_valid_signature_and_native_payload -- --ignored
 ```
 
-Three independent deployable parts:
+## Active components
 
-| Part                   | Dir                                | Port   | Image                                             | Docs                                                 |
-| ---------------------- | ---------------------------------- | ------ | ------------------------------------------------- | ---------------------------------------------------- |
-| Tauri desktop launcher | `src-tauri/` `src/`                | —      | —                                                 | [`.env.example`](./.env.example)                     |
-| Blockfield API server  | [`server/`](./server/)             | `3000` | `ghcr.io/netherg-io/blockfield-launcher-backend`  | [`server/README.md`](./server/README.md)             |
-| Filament CMS           | [`server/admin/`](./server/admin/) | `8055` | `ghcr.io/netherg-io/blockfield-launcher-filament` | [`server/admin/README.md`](./server/admin/README.md) |
+| Component | Location | Responsibility |
+| --- | --- | --- |
+| Desktop UI | `src/` | Launcher screens, local identity/settings and UI state |
+| Native launcher | `src-tauri/` | Pack/runtime installation, launching, status, integrations and signed updates |
+| Shared Rust contracts | `shared/` | Types still imported by the native launcher; not a deployed service |
+| Static pack/content host | Separate `blockfield-modpack` repository | `pack.toml`, `index.toml`, `launcher.json`, `content.json` |
+| Launcher update feed | Separate public `blockfield-launcher-releases` repository | Signed bundles and `latest.json`; source stays private |
 
-The API server reads launcher content, updates, and modpack releases from Filament through the CMS API (`GET /api/items/*`, `GET /api/assets/{id}`, `POST /api/files`).
+## Local development
 
-## Tauri client — local dev
+Install the Node.js version from `.nvmrc`, pnpm 11, a compatible stable Rust
+toolchain, and the platform dependencies required by Tauri. Then:
 
 ```sh
-pnpm install
+cp .env.example .env
+pnpm install --frozen-lockfile
 pnpm tauri:dev
 ```
 
-Environment variables: copy [`.env.example`](./.env.example) to `.env` and adjust `VITE_BLOCKFIELD_API_URL` to point to your API server.
+`VITE_BLOCKFIELD_PACK_URL` points at the static pack directory. Local `.env`
+files stay untracked. No API container, CMS, database, CMS token, or remote
+launcher account is required for this architecture.
 
-## Local server smoke test
+On Linux, `scripts/install-tauri-deps.sh` installs the build dependencies;
+`scripts/rust-env.sh` can use the existing local container-builder fallback.
+For frontend-only development use `pnpm dev` with the existing Tauri mocks.
 
-From PowerShell (Docker inside WSL):
+## Content, accounts and integrations
 
-```powershell
-wsl sh -lc "cd /mnt/d/External/Projects/Tauri/'Blockfield Launcher' && docker compose -f server/docker-compose.yml up -d --build"
-```
+Modpack/content changes belong in the separate pack repository and its
+publishing workflow, not in this launcher repository. Keep the installer
+and Java artifact hashes in `launcher.json` consistent with the pack.
+Do not use the retired CMS publication workflow.
 
-Or from a Linux shell inside the repo:
+The launcher uses local/offline Minecraft identities and the saved nickname.
+This is not proof of ownership of a Microsoft account. Authentication and
+gameplay access rules on the Minecraft server are a separate concern; the
+retired API's HMAC ticket flow is not part of this launcher setup.
 
-```sh
-docker compose -f server/docker-compose.yml up -d --build
-```
+Rooms, deep links and Discord integration remain supported. Follow
+[the current rooms and Discord guide](docs/ROOMS-AND-DISCORD.md).
 
-Check:
-
-```sh
-curl -f http://localhost:3000/health
-curl -I http://localhost:8055/admin
-curl -H "Authorization: Bearer $CMS_TOKEN" "http://localhost:8055/api/items/launcher_content?limit=1"
-curl -f http://localhost:3000/api/launcher/v1/content.json
-```
-
-The first Filament administrator is created from explicit `FILAMENT_ADMIN_EMAIL` and a password of at least 8 characters. Existing credentials are never overwritten on restart.
-
-Stop:
+## Validation
 
 ```sh
-docker compose -f server/docker-compose.yml down
+pnpm legacy:check
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm version:check
+pnpm config:test
+pnpm build
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 ```
 
-> The compose file is for **local dev only**. In production, the API server and Filament CMS are deployed as **separate Dokploy apps** — each has its own README and env file.
-
-## Publishing a modpack
-
-Via Filament admin panel, or CLI:
-
-```sh
-CMS_URL=https://admin.blockfield.gg/api \
-CMS_TOKEN=replace-with-long-random-token \
-RELOAD_TOKEN=replace-with-a-different-random-token \
-BLOCKFIELD_API_URL=https://play.blockfield.gg/api/launcher/v1 \
-JAVA_VERSION=17.0.16+8 \
-JAVA_PLATFORM=windows-x64 \
-JAVA_URL=https://artifacts.example.com/java/jre-17.0.16+8-windows-x64.zip \
-JAVA_SHA256=replace-with-64-hex-characters \
-JAVA_SIZE=replace-with-exact-byte-size \
-pnpm cms:publish-modpack ./server/files/modpack.zip 0.1.44 1.21.1
-```
-
-Filament invalidates edited content automatically and its Publish action activates releases. The protected endpoint is available only for operator recovery:
-
-```sh
-curl -X POST -H "Authorization: Bearer $RELOAD_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"releaseId": 42}' \
-  https://play.blockfield.gg/api/launcher/v1/reload
-```
-
-## Authentication model
-
-The MVP uses project-owned offline-mode identities. Filament manages separate launcher accounts; login issues a revocable 15-minute HMAC-signed game ticket plus a rotating refresh token. The launcher verifies `/auth/me` immediately before every game launch and passes the stable account username/UUID and ticket to Minecraft. The Minecraft server authentication plugin must validate that ticket against `/api/launcher/v1/auth/me`; Microsoft/Xbox authentication is intentionally not mixed into this model.
+Pull requests run a non-publishing CI workflow. It does not access the
+signing environment, publish release assets, or deploy services.
+Automated tests do not replace the [manual launcher smoke checklist](docs/LAUNCHER_SMOKE.md).
+The [archived API/CMS reports](docs/legacy/README.md) are historical only.
 
 ## CI/CD
 

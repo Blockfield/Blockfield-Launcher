@@ -5,7 +5,8 @@ node_modules/
 dist/
 target/
 
-# Server — modpack files (large binaries, not in VCS)
+# Legacy local data: keep ignored after removing the retired server source.
+# Existing installations may still have these files. Never delete them automatically.
 server/files/
 server/extracted/
 server/directus/
