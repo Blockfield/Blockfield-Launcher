@@ -1,6 +1,6 @@
-//! Skin and cape upload to the Drasl skin server. The launcher owns one Drasl account per
-//! offline username (password kept in the launcher config); SkinRestorer on the game server
-//! pulls the textures back by player name, falling back to the Mojang skin of that name.
+//! Skin and cape upload to the Drasl account of the signed-in player; SkinRestorer on the game
+//! server pulls the textures back by player name, falling back to the Mojang skin of that name.
+use crate::account::{api, drasl_base, SESSION_EXPIRED};
 use crate::commands::{valid_username, LauncherAppState};
 use base64::Engine;
 use serde::Serialize;
@@ -28,9 +28,8 @@ pub async fn upload_skin(
     slim: bool,
 ) -> Result<SkinUploadResult, String> {
     let config = state.config.read().await.clone();
-    let username = config.username.trim().to_string();
-    if !valid_username(&username) {
-        return Err("Set a Minecraft username in Settings before uploading a skin".to_string());
+    if config.api_token.is_empty() || config.player_uuid.is_empty() {
+        return Err(format!("{SESSION_EXPIRED}: log in again"));
     }
     let skin = skin_path.as_deref().map(read_texture).transpose()?;
     let cape = cape_path.as_deref().map(read_texture).transpose()?;
@@ -38,35 +37,12 @@ pub async fn upload_skin(
         return Err("Choose a skin or cape PNG to upload".to_string());
     }
 
-    let base = state
-        .pack
-        .read()
-        .await
-        .as_ref()
-        .and_then(|p| p.info.skins.clone())
-        .unwrap_or_else(|| DEFAULT_SERVER.to_string());
+    let base = drasl_base(&state).await?;
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?;
-
-    // Persist before registration so a failed response cannot strand an account with a lost password.
-    let password = {
-        let mut current = state.config.write().await;
-        if current.skin_password.is_empty() {
-            let mut updated = current.clone();
-            updated.skin_password = random_password();
-            crate::config::save_config(&state.app_data_dir, &updated)?;
-            *current = updated;
-        }
-        current.skin_password.clone()
-    };
-    let session = match login(&client, &base, &username, &password).await {
-        Ok(session) => session,
-        // No account for this name yet (first upload, or the username changed since).
-        Err(_) => register(&client, &base, &username, &password).await?,
-    };
 
     let mut body = json!({ "skinModel": if slim { "slim" } else { "classic" } });
     if let Some(skin) = skin {
@@ -78,20 +54,15 @@ pub async fn upload_skin(
     let player = api(client
         .patch(format!(
             "{base}/drasl/api/v3/players/{}",
-            session.player_uuid
+            config.player_uuid
         ))
-        .bearer_auth(&session.token)
+        .bearer_auth(&config.api_token)
         .json(&body))
     .await?;
     Ok(SkinUploadResult {
         skin_url: player["skinUrl"].as_str().map(String::from),
         cape_url: player["capeUrl"].as_str().map(String::from),
     })
-}
-
-struct Session {
-    token: String,
-    player_uuid: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -117,13 +88,7 @@ pub async fn preview_skin(
     slim: bool,
 ) -> Result<SkinPreview, String> {
     let username = username.trim().to_string();
-    let base = state
-        .pack
-        .read()
-        .await
-        .as_ref()
-        .and_then(|p| p.info.skins.clone())
-        .unwrap_or_else(|| DEFAULT_SERVER.to_string());
+    let base = drasl_base(&state).await?;
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(30))
@@ -228,64 +193,6 @@ async fn fetch_data_url(client: &reqwest::Client, url: Option<&str>) -> Option<S
     ))
 }
 
-async fn login(
-    client: &reqwest::Client,
-    base: &str,
-    username: &str,
-    password: &str,
-) -> Result<Session, String> {
-    let response = api(client
-        .post(format!("{base}/drasl/api/v3/login"))
-        .json(&json!({ "username": username, "password": password })))
-    .await?;
-    session_from(response)
-}
-
-async fn register(
-    client: &reqwest::Client,
-    base: &str,
-    username: &str,
-    password: &str,
-) -> Result<Session, String> {
-    let response = api(client
-        .post(format!("{base}/drasl/api/v3/users"))
-        .json(&json!({
-            "username": username,
-            "password": password,
-            "playerName": username,
-            "requestApiToken": true,
-        })))
-    .await
-    .map_err(|e| format!("Cannot register {username} on the skin server: {e}"))?;
-    session_from(response)
-}
-
-fn session_from(response: Value) -> Result<Session, String> {
-    let token = response["apiToken"].as_str();
-    let player_uuid = response["user"]["players"][0]["uuid"].as_str();
-    match (token, player_uuid) {
-        (Some(token), Some(uuid)) => Ok(Session {
-            token: token.to_string(),
-            player_uuid: uuid.to_string(),
-        }),
-        _ => Err("Skin server returned no session".to_string()),
-    }
-}
-
-async fn api(request: reqwest::RequestBuilder) -> Result<Value, String> {
-    let response = request
-        .send()
-        .await
-        .map_err(|e| format!("Skin server request failed: {e}"))?;
-    let status = response.status();
-    let body: Value = response.json().await.unwrap_or(Value::Null);
-    if !status.is_success() {
-        let message = body["message"].as_str().unwrap_or(status.as_str());
-        return Err(format!("Skin server: {message}"));
-    }
-    Ok(body)
-}
-
 fn read_texture(path: &str) -> Result<String, String> {
     let path = Path::new(path);
     let size = std::fs::metadata(path)
@@ -299,13 +206,6 @@ fn read_texture(path: &str) -> Result<String, String> {
         return Err(format!("{} is not a PNG file", path.display()));
     }
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
-}
-
-fn random_password() -> String {
-    rand::random::<[u8; 24]>()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
 }
 
 #[cfg(test)]
@@ -326,11 +226,5 @@ mod tests {
         assert!(read_texture(txt.to_str().unwrap()).is_err());
         assert!(read_texture(dir.join("missing.png").to_str().unwrap()).is_err());
         let _ = std::fs::remove_dir_all(&dir);
-
-        assert!(
-            session_from(json!({"apiToken": "t", "user": {"players": [{"uuid": "u"}]}}),).is_ok()
-        );
-        assert!(session_from(json!({"user": {}})).is_err());
-        assert_eq!(random_password().len(), 48);
     }
 }

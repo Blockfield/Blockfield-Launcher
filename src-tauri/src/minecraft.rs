@@ -852,7 +852,7 @@ fn launch_vars(
         ),
         ("clientid".to_string(), "0".to_string()),
         ("auth_xuid".to_string(), "0".to_string()),
-        ("user_type".to_string(), "legacy".to_string()),
+        ("user_type".to_string(), "msa".to_string()),
         ("user_properties".to_string(), "{}".to_string()),
         ("version_name".to_string(), version_name.to_string()),
         ("version_type".to_string(), "release".to_string()),

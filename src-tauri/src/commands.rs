@@ -34,8 +34,7 @@ pub struct PackState {
     pub meta: PackMeta,
 }
 
-/// Offline-mode identity. The proxy runs online-mode=false and derives the UUID from the
-/// username itself, so the launcher-side check is only about a well-formed name.
+/// Drasl player and Yggdrasil access token the game session runs with.
 #[derive(Clone)]
 pub struct GameIdentity {
     pub username: String,
@@ -43,45 +42,11 @@ pub struct GameIdentity {
     pub access_token: String,
 }
 
-impl GameIdentity {
-    pub fn offline(username: &str) -> Result<Self, String> {
-        let username = username.trim();
-        if !valid_username(username) {
-            return Err(
-                "Set a Minecraft username in Settings (3-16 letters, digits or _)".to_string(),
-            );
-        }
-        Ok(Self {
-            username: username.to_string(),
-            uuid: offline_uuid(username),
-            access_token: "0".to_string(),
-        })
-    }
-}
-
 pub fn valid_username(name: &str) -> bool {
     (3..=16).contains(&name.len())
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-}
-
-/// Vanilla offline UUID: UUIDv3 of "OfflinePlayer:<name>".
-fn offline_uuid(username: &str) -> String {
-    use md5::Digest;
-    let mut hash: [u8; 16] =
-        md5::Md5::digest(format!("OfflinePlayer:{username}").as_bytes()).into();
-    hash[6] = (hash[6] & 0x0f) | 0x30;
-    hash[8] = (hash[8] & 0x3f) | 0x80;
-    let hex = hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &hex[..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..]
-    )
 }
 
 #[derive(Clone, Serialize)]
@@ -234,6 +199,14 @@ pub struct SettingsResponse {
 #[tauri::command]
 pub fn load_settings(state: State<'_, LauncherAppState>) -> Result<SettingsResponse, String> {
     let mut config = state.config.blocking_read().clone();
+    for secret in [
+        &mut config.access_token,
+        &mut config.client_token,
+        &mut config.api_token,
+        &mut config.skin_password,
+    ] {
+        secret.clear();
+    }
     // Auto-detect bundled Java if path is empty
     if config.java_path.is_empty() {
         if let Some(bundled) = bundled_java_path(&config.game_dir) {
@@ -250,15 +223,26 @@ pub fn load_settings(state: State<'_, LauncherAppState>) -> Result<SettingsRespo
 pub fn save_settings(
     app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
-    mut config: LauncherConfig,
+    config: LauncherConfig,
 ) -> Result<(), String> {
     let app_data_dir = app_handle
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
     let mut current = state.config.blocking_write();
-    // The settings form does not own the generated skin-server credential.
-    config.skin_password.clone_from(&current.skin_password);
+    // The settings form does not own the account.
+    let config = LauncherConfig {
+        game_dir: config.game_dir,
+        java_path: config.java_path,
+        ram_mb: config.ram_mb,
+        auto_update: config.auto_update,
+        lang: config.lang,
+        pre_launch_command: config.pre_launch_command,
+        post_exit_command: config.post_exit_command,
+        hide_while_playing: config.hide_while_playing,
+        discord_presence: config.discord_presence,
+        ..current.clone()
+    };
     crate::config::save_config(&app_data_dir, &config)?;
     *current = config;
     Ok(())
@@ -266,12 +250,14 @@ pub fn save_settings(
 
 // ── Modpack commands ───────────────────────────────────────────
 
-fn installed_pack_version(game_dir: &Path) -> String {
-    std::fs::read_to_string(game_dir.join(INSTALLED_VERSION_FILE))
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "none".to_string())
+/// The marker holds the installed `[index] hash`, then the pack version for display.
+/// Older markers hold only the version, so they mismatch once and trigger one update.
+fn installed_pack(game_dir: &Path) -> (String, String) {
+    let marker = std::fs::read_to_string(game_dir.join(INSTALLED_VERSION_FILE)).unwrap_or_default();
+    let mut lines = marker.lines().map(str::trim).filter(|l| !l.is_empty());
+    let hash = lines.next().unwrap_or("none").to_string();
+    let version = lines.next().map_or_else(|| hash.clone(), String::from);
+    (hash, version)
 }
 
 #[tauri::command]
@@ -284,8 +270,8 @@ pub async fn check_modpack_version(
 
     let config = state.config.read().await.clone();
     let game_dir = PathBuf::from(&config.game_dir);
-    let installed = installed_pack_version(&game_dir);
-    let needs_update = installed != meta.version;
+    let (installed_hash, installed) = installed_pack(&game_dir);
+    let needs_update = installed_hash != meta.index_hash;
     log::info!(
         "[check_modpack_version] pack={} remote={} installed={} needs_update={needs_update}",
         info.pack,
@@ -409,8 +395,11 @@ pub async fn download_modpack(
     })
     .await
     .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
-    std::fs::write(game_dir.join(INSTALLED_VERSION_FILE), &pack.meta.version)
-        .map_err(|e| format!("Failed to record installed version: {e}"))?;
+    std::fs::write(
+        game_dir.join(INSTALLED_VERSION_FILE),
+        format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
+    )
+    .map_err(|e| format!("Failed to record installed version: {e}"))?;
     emit_status(&app_handle, "modpack", "Файлы модпака готовы", false);
 
     emit_status(
@@ -687,17 +676,23 @@ pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), S
 
 #[tauri::command]
 pub async fn server_status(state: State<'_, LauncherAppState>) -> Result<ServerStatus, String> {
+    let base = pack_base_url()?;
     let target = match state.pack.read().await.as_ref() {
         Some(pack) => pack.info.server.clone(),
-        None => pack::fetch_launcher_info(&pack_base_url()?).await?.server,
+        None => pack::fetch_launcher_info(&base).await?.server,
     };
     let (host, port) = crate::status::split_host_port(&target);
     let ping_host = host.clone();
-    let (status, (region_code, location_name)) = tokio::join!(
+    let (status, (region_code, location_name), rooms) = tokio::join!(
         tokio::task::spawn_blocking(move || crate::status::ping(&ping_host, port)),
         crate::status::locate(&host, port),
+        crate::status::fetch_rooms(&base),
     );
     let mut status = status.map_err(|e| format!("status task failed: {e}"))?;
+    if let Some((available, rooms)) = rooms {
+        status.game_available = Some(available);
+        status.rooms = Some(rooms);
+    }
     status.region_code = region_code;
     status.location_name = location_name;
     Ok(status)
@@ -766,7 +761,7 @@ pub async fn launch_game(
         .map_err(|_| "Another launcher operation is in progress")?;
     let running = state.game.begin()?;
     let config = state.config.read().await.clone();
-    let identity = GameIdentity::offline(&config.username)?;
+    let identity = crate::account::game_identity(&app_handle, &state).await?;
     let pack = state.pack.read().await.clone();
 
     let java = resolved_java_path(&config);
@@ -1373,17 +1368,6 @@ mod tests {
             16_384
         );
         std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn offline_identity_validates_username_and_derives_uuid() {
-        assert!(GameIdentity::offline("ab").is_err());
-        assert!(GameIdentity::offline("bad name").is_err());
-        let identity = GameIdentity::offline(" Steve ").unwrap();
-        assert_eq!(identity.username, "Steve");
-        assert_eq!(identity.uuid.len(), 36);
-        assert_eq!(identity.uuid, GameIdentity::offline("Steve").unwrap().uuid);
-        assert_ne!(identity.uuid, GameIdentity::offline("Alex").unwrap().uuid);
     }
 
     #[test]

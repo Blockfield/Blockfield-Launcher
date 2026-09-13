@@ -12,6 +12,8 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 pub struct ServerStatus {
     pub online: bool,
     pub rooms: Option<Vec<GameRoom>>,
+    /// Site API view of the game server behind the proxy; `None` when the API is unreachable.
+    pub game_available: Option<bool>,
     pub players_online: Option<u64>,
     pub players_max: Option<u64>,
     pub minecraft_version: Option<String>,
@@ -195,6 +197,7 @@ pub fn ping(host: &str, port: u16) -> ServerStatus {
     let offline = ServerStatus {
         online: false,
         rooms: None,
+        game_available: None,
         players_online: None,
         players_max: None,
         minecraft_version: None,
@@ -209,7 +212,6 @@ pub fn ping(host: &str, port: u16) -> ServerStatus {
     match query(host, port) {
         Ok((json, latency)) => ServerStatus {
             online: true,
-            rooms: room_snapshot(&json),
             players_online: json["players"]["online"].as_u64(),
             players_max: json["players"]["max"].as_u64(),
             minecraft_version: json["version"]["name"].as_str().map(str::to_string),
@@ -310,8 +312,32 @@ fn read_varint(data: &[u8], cursor: &mut usize) -> Result<i32, String> {
     Err("varint too long".to_string())
 }
 
-fn room_snapshot(json: &serde_json::Value) -> Option<Vec<GameRoom>> {
-    let value = &json["blockfield"];
+/// Rooms come from the site API because the proxy answers pings even while the game server is down.
+pub async fn fetch_rooms(base: &str) -> Option<(bool, Vec<GameRoom>)> {
+    let value = reqwest::Client::builder()
+        .timeout(TIMEOUT)
+        .build()
+        .ok()?
+        .get(format!("{base}/api/rooms"))
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json::<serde_json::Value>()
+        .await
+        .ok()?;
+    rooms_response(&value)
+}
+
+fn rooms_response(value: &serde_json::Value) -> Option<(bool, Vec<GameRoom>)> {
+    if !value["available"].as_bool()? {
+        return Some((false, Vec::new()));
+    }
+    room_snapshot(value).map(|rooms| (true, rooms))
+}
+
+fn room_snapshot(value: &serde_json::Value) -> Option<Vec<GameRoom>> {
     let checked = value["checkedAt"].as_u64()?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -348,13 +374,22 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
-        let mut json = serde_json::json!({"blockfield": {"checkedAt": now, "rooms": []}});
-        assert!(room_snapshot(&json).unwrap().is_empty());
-        json["blockfield"]["rooms"] = serde_json::json!([null]);
-        assert!(room_snapshot(&json).is_none());
-        json["blockfield"]["rooms"] = serde_json::json!([]);
-        json["blockfield"]["checkedAt"] = serde_json::json!(now - 60_000);
-        assert!(room_snapshot(&json).is_none());
+        let mut json = serde_json::json!({"available": true, "checkedAt": now, "rooms": []});
+        assert_eq!(
+            rooms_response(&json).map(|(up, rooms)| (up, rooms.len())),
+            Some((true, 0))
+        );
+        json["rooms"] = serde_json::json!([null]);
+        assert!(rooms_response(&json).is_none());
+        json["rooms"] = serde_json::json!([]);
+        json["checkedAt"] = serde_json::json!(now - 60_000);
+        assert!(rooms_response(&json).is_none());
+        json["available"] = serde_json::json!(false);
+        assert_eq!(
+            rooms_response(&json).map(|(up, rooms)| (up, rooms.len())),
+            Some((false, 0))
+        );
+        assert!(rooms_response(&serde_json::json!({"rooms": []})).is_none());
     }
 
     #[test]

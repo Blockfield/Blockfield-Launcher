@@ -11,6 +11,7 @@ export type ErrorContext =
   | 'settings-save'
   | 'settings-load'
   | 'skin-upload'
+  | 'account'
 
 const CONTEXT_FALLBACK: Record<ErrorContext, string> = {
   'modpack-check': 'Не удалось проверить обновление модпака.',
@@ -20,6 +21,7 @@ const CONTEXT_FALLBACK: Record<ErrorContext, string> = {
   'settings-save': 'Не удалось сохранить настройки. Откройте подробности ошибки.',
   'settings-load': 'Не удалось загрузить настройки. Проверьте доступ к папке настроек и повторите.',
   'skin-upload': 'Не удалось загрузить скин. Откройте подробности ошибки.',
+  account: 'Не удалось выполнить запрос к серверу аккаунтов.',
 }
 
 const CONTEXT_NETWORK: Record<ErrorContext, string> = {
@@ -33,7 +35,17 @@ const CONTEXT_NETWORK: Record<ErrorContext, string> = {
   'settings-load': 'Не удалось загрузить настройки. Проверьте доступ к папке настроек и повторите.',
   'skin-upload':
     'Нет доступа к серверу скинов skins.nether.pp.ua — проверьте интернет и повторите.',
+  account: 'Нет доступа к серверу аккаунтов skins.nether.pp.ua — проверьте интернет и повторите.',
 }
+
+export const SESSION_EXPIRED = 'SESSION_EXPIRED'
+
+const DRASL_ERRORS: [string, string][] = [
+  ['Invalid credentials', 'Неверный никнейм или пароль.'],
+  ['That username is taken', 'Этот никнейм уже занят.'],
+  ['That player name is taken', 'Этот никнейм уже занят.'],
+  ['Invalid password', 'Пароль слишком короткий — нужно не меньше 8 символов.'],
+]
 
 // Substrings that show up in reqwest/OS network failures surfaced through Rust's
 // `format!("...: {e}")` error strings (see src-tauri/src: pack::fetch_*, download::*, updater.rs).
@@ -61,6 +73,17 @@ export interface FriendlyError {
 
 export function friendlyError(raw: unknown, context: ErrorContext): FriendlyError {
   const text = String(raw)
+  if (text.includes(SESSION_EXPIRED)) {
+    return { message: 'Сессия истекла — войдите снова.', raw: text }
+  }
+  if (text.includes('Drasl account server unavailable')) {
+    return { message: 'Сервер аккаунтов недоступен, попробуйте позже.', raw: text }
+  }
+  const drasl = text.match(/Drasl: (.*)/)?.[1]
+  if (drasl && context === 'account') {
+    const known = DRASL_ERRORS.find(([prefix]) => drasl.startsWith(prefix))
+    return { message: known ? known[1] : drasl, raw: text }
+  }
   if (context === 'settings-save') {
     const settingsErrors: [string, string][] = [
       [

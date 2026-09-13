@@ -15,9 +15,19 @@ pub struct LauncherConfig {
     pub auto_update: bool,
     /// UI language code ("en", "ru", "uk")
     pub lang: String,
-    /// Offline-mode Minecraft username (3-16 chars: letters, digits, underscore)
+    /// Drasl player name, exact case as returned by the auth server. Kept after logout to prefill login.
     #[serde(default)]
     pub username: String,
+    #[serde(default)]
+    pub player_uuid: String,
+    /// Yggdrasil session; empty when logged out.
+    #[serde(default)]
+    pub access_token: String,
+    #[serde(default)]
+    pub client_token: String,
+    /// Drasl API v3 token for skin uploads and password changes.
+    #[serde(default)]
+    pub api_token: String,
     #[serde(default)]
     pub pre_launch_command: String,
     #[serde(default)]
@@ -26,9 +36,12 @@ pub struct LauncherConfig {
     pub hide_while_playing: bool,
     #[serde(default = "presence_enabled")]
     pub discord_presence: bool,
-    /// Password of the launcher-created account on the skin server, generated on first upload.
+    /// Legacy launcher-generated Drasl password; only read to migrate the account, then cleared.
     #[serde(default)]
     pub skin_password: String,
+    /// Account `skin_password` belongs to, set once another account signs in; empty means `username`.
+    #[serde(default)]
+    pub skin_username: String,
 }
 
 impl Default for LauncherConfig {
@@ -53,11 +66,16 @@ impl Default for LauncherConfig {
                 .or_else(|| option_env!("BLOCKFIELD_DEFAULT_LANG").map(String::from))
                 .unwrap_or_else(|| "en".to_string()),
             username: String::new(),
+            player_uuid: String::new(),
+            access_token: String::new(),
+            client_token: String::new(),
+            api_token: String::new(),
             pre_launch_command: String::new(),
             post_exit_command: String::new(),
             hide_while_playing: false,
             discord_presence: true,
             skin_password: String::new(),
+            skin_username: String::new(),
         }
     }
 }
@@ -103,7 +121,25 @@ pub fn save_config(app_data_dir: &PathBuf, config: &LauncherConfig) -> Result<()
     let path = config_path(app_data_dir);
     let json = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize config: {e}"))?;
-    std::fs::write(&path, json).map_err(|e| format!("Failed to write config: {e}"))?;
+    #[cfg(unix)]
+    let written = {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .and_then(|mut file| {
+                // `mode` only applies on create; configs written by older versions stay 0644.
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+                file.write_all(json.as_bytes())
+            })
+    };
+    #[cfg(not(unix))]
+    let written = std::fs::write(&path, json);
+    written.map_err(|e| format!("Failed to write config: {e}"))?;
     log::info!("Launcher config saved to {}", path.display());
     Ok(())
 }

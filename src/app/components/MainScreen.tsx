@@ -1,4 +1,4 @@
-import { RoomList } from './RoomList'
+import { GAME_UPDATING, RoomList } from './RoomList'
 import { useGameState, gameStateLabel, launchGame } from '../../lib/game-state'
 import { checkModpack, invalidateModpackCheck } from '../../lib/modpack-check'
 import { invoke } from '@tauri-apps/api/core'
@@ -296,6 +296,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
     localizedContentText(content, lang, 'content.serverName', 'serverName', 'server_name') ??
     t('main.serverName')
   const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
+  const gameUpdating = serverStatus?.online === true && serverStatus.gameAvailable === false
   const players = serverStatus?.playersOnline?.toString() ?? '—'
   const ping = serverStatus?.serverLatencyMs?.toString() ?? '—'
   const region = serverStatus?.regionCode?.trim() || '—'
@@ -346,6 +347,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
               serverName={serverName}
               serverIp={serverStatus ? `${serverStatus.host}:${serverStatus.port}` : serverIp}
               online={serverStatus?.online === true}
+              updating={gameUpdating}
             />
           </div>
 
@@ -446,6 +448,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
               <div hidden={detailsView !== 'rooms'} className="min-h-0 flex-1 flex flex-col">
                 <RoomList
                   rooms={serverStatus?.rooms}
+                  updating={gameUpdating}
                   onJoin={(id) => {
                     void handleJoin(id)
                   }}
@@ -593,10 +596,12 @@ function ServerStatus({
   serverName,
   serverIp,
   online,
+  updating,
 }: {
   serverName: string
   serverIp: string
   online: boolean
+  updating: boolean
 }) {
   const { t } = useI18n()
   return (
@@ -604,10 +609,11 @@ function ServerStatus({
       <div className="flex items-start justify-between gap-2">
         <span className="text-[10px] tracking-[0.14em] text-[#8E7A5E]">{t('main.server')}</span>
         <span
-          className={`flex items-center gap-1.5 text-[10px] tracking-[0.16em] ${online ? 'text-[#82D66B]' : 'text-[#E36A5D]'}`}
+          title={updating ? GAME_UPDATING : undefined}
+          className={`flex items-center gap-1.5 text-[10px] tracking-[0.16em] ${updating ? 'text-[#F5A524]' : online ? 'text-[#82D66B]' : 'text-[#E36A5D]'}`}
         >
-          <StatusDot pulse={online} color={online ? '#82D66B' : '#E36A5D'} />
-          {online ? t('main.online') : 'НЕДОСТУПЕН'}
+          <StatusDot pulse={online} color={updating ? '#F5A524' : online ? '#82D66B' : '#E36A5D'} />
+          {updating ? 'ОБНОВЛЯЕТСЯ' : online ? t('main.online') : 'НЕДОСТУПЕН'}
         </span>
       </div>
       <div className="mt-2 flex items-center gap-2">

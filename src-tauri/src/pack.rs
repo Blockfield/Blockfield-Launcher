@@ -49,7 +49,10 @@ impl LauncherInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackMeta {
+    /// Display only; updates are detected by `index_hash`.
     pub version: String,
+    /// `[index] hash`: changes whenever any client file changes.
+    pub index_hash: String,
     pub minecraft: String,
     /// Fabric loader version from `[versions] fabric`.
     pub loader: Option<String>,
@@ -59,10 +62,10 @@ pub fn platform_key() -> String {
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
-/// Minimal TOML reader for the three keys we need; avoids a TOML dependency.
+/// Minimal TOML reader for the few keys we need; avoids a TOML dependency.
 pub fn parse_pack_toml(text: &str) -> Result<PackMeta, String> {
     let mut section = String::new();
-    let (mut version, mut minecraft, mut loader) = (None, None, None);
+    let (mut version, mut index_hash, mut minecraft, mut loader) = (None, None, None, None);
     for raw in text.lines() {
         let line = raw.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
@@ -78,6 +81,7 @@ pub fn parse_pack_toml(text: &str) -> Result<PackMeta, String> {
         let value = value.trim().trim_matches('"').to_string();
         match (section.as_str(), key.trim()) {
             ("", "version") => version = Some(value),
+            ("index", "hash") => index_hash = Some(value),
             ("versions", "minecraft") => minecraft = Some(value),
             ("versions", "fabric") => loader = Some(value),
             _ => {}
@@ -85,6 +89,7 @@ pub fn parse_pack_toml(text: &str) -> Result<PackMeta, String> {
     }
     Ok(PackMeta {
         version: version.ok_or("pack.toml has no version")?,
+        index_hash: index_hash.ok_or("pack.toml has no [index].hash")?,
         minecraft: minecraft.ok_or("pack.toml has no [versions].minecraft")?,
         loader,
     })
@@ -126,18 +131,20 @@ mod tests {
     #[test]
     fn parses_pack_toml_versions() {
         let meta = parse_pack_toml(
-            "name = \"Blockfield\"\nversion = \"1.2.3\" # comment\n[index]\nfile = \"index.toml\"\n[versions]\nfabric = \"0.19.3\"\nminecraft = \"1.21.1\"\n",
+            "name = \"Blockfield\"\nversion = \"1.2.3\" # comment\n[index]\nfile = \"index.toml\"\nhash = \"abc123\"\n[versions]\nfabric = \"0.19.3\"\nminecraft = \"1.21.1\"\n",
         )
         .unwrap();
         assert_eq!(
             meta,
             PackMeta {
                 version: "1.2.3".into(),
+                index_hash: "abc123".into(),
                 minecraft: "1.21.1".into(),
                 loader: Some("0.19.3".into())
             }
         );
         assert!(parse_pack_toml("name = \"x\"").is_err());
+        assert!(parse_pack_toml("version = \"1\"\n[versions]\nminecraft = \"1.21.1\"").is_err());
     }
 
     #[test]

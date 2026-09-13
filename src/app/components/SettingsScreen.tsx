@@ -15,6 +15,8 @@ import {
   EyeOff,
   Shirt,
   Upload,
+  LogOut,
+  KeyRound,
 } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { LauncherUpdatePanel } from './LauncherUpdatePanel'
@@ -22,6 +24,7 @@ import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { ErrorDetail } from './ui-bits'
 import { useI18n } from '../i18n'
 import type {
+  AccountStatus,
   LauncherConfig,
   SkinPreview as SkinPreviewData,
   SkinUploadResult,
@@ -29,8 +32,7 @@ import type {
 import { SkinPreview } from './SkinPreview'
 import { invalidateModpackCheck } from '../../lib/modpack-check'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
-import { friendlyError } from '../../lib/errors'
-import { isValidUsername } from '../../lib/username'
+import { friendlyError, type FriendlyError } from '../../lib/errors'
 
 /** Detect whether we're running inside Tauri. */
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -39,12 +41,12 @@ export type SettingsTab = 'general' | 'runtime' | 'commands' | 'skin' | 'launche
 
 export function SettingsScreen({
   username,
-  onUsernameSaved,
+  onAccountChange,
   tab,
   onTabChange: setTab,
 }: {
   username: string
-  onUsernameSaved: (name: string) => void
+  onAccountChange: (account: AccountStatus) => void
   tab: SettingsTab
   onTabChange: (tab: SettingsTab) => void
 }) {
@@ -52,7 +54,6 @@ export function SettingsScreen({
   const content = useLauncherContent()
   const [dir, setDir] = useState('')
   const [java, setJava] = useState('')
-  const [name, setName] = useState(username)
   const [ram, setRam] = useState(4)
   const [maxRam, setMaxRam] = useState(32)
   const [preLaunchCommand, setPreLaunchCommand] = useState('')
@@ -72,7 +73,11 @@ export function SettingsScreen({
   const [skinMessage, setSkinMessage] = useState<string | null>(null)
   const [skinErrorRaw, setSkinErrorRaw] = useState<string | null>(null)
   const [skinPreview, setSkinPreview] = useState<SkinPreviewData | null>(null)
-  const usernameInvalid = name.trim().length > 0 && !isValidUsername(name)
+  const [passwordOpen, setPasswordOpen] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [accountBusy, setAccountBusy] = useState(false)
+  const [accountError, setAccountError] = useState<FriendlyError | null>(null)
+  const [passwordChanged, setPasswordChanged] = useState(false)
   const preferences =
     localizedContentText(
       content,
@@ -93,7 +98,6 @@ export function SettingsScreen({
       .then((cfg) => {
         setDir(cfg.gameDir)
         setJava(cfg.javaPath)
-        setName(cfg.username)
         setMaxRam(ramLimitGb(cfg.maxRamMb))
         setRam(clampRamGb(cfg.ramMb / 1024, ramLimitGb(cfg.maxRamMb)))
         setAutoUpdate(cfg.autoUpdate)
@@ -115,11 +119,6 @@ export function SettingsScreen({
       setSaveErrorRaw(null)
       return
     }
-    if (usernameInvalid) {
-      setSaveMessage(t('settings.usernameHint'))
-      setSaveErrorRaw(null)
-      return
-    }
     setSaving(true)
     setSaveMessage(null)
     setSaveErrorRaw(null)
@@ -135,11 +134,9 @@ export function SettingsScreen({
           preLaunchCommand,
           postExitCommand,
           lang,
-          username: name.trim(),
         } satisfies LauncherConfig,
       })
       invalidateModpackCheck()
-      onUsernameSaved(name.trim())
       setDirty(false)
       setSaveMessage(t('settings.saved'))
       setTimeout(() => setSaveMessage(null), 3000)
@@ -154,7 +151,6 @@ export function SettingsScreen({
   }, [
     dir,
     java,
-    name,
     ram,
     autoUpdate,
     hideWhilePlaying,
@@ -163,8 +159,6 @@ export function SettingsScreen({
     postExitCommand,
     lang,
     t,
-    onUsernameSaved,
-    usernameInvalid,
     maxRam,
   ])
 
@@ -173,7 +167,6 @@ export function SettingsScreen({
       .then((cfg) => {
         setDir(cfg.gameDir)
         setJava(cfg.javaPath)
-        setName(cfg.username)
         setMaxRam(ramLimitGb(cfg.maxRamMb))
         setRam(clampRamGb(cfg.ramMb / 1024, ramLimitGb(cfg.maxRamMb)))
         setAutoUpdate(cfg.autoUpdate)
@@ -209,11 +202,6 @@ export function SettingsScreen({
 
   const handleSkinUpload = useCallback(async () => {
     if (!isTauri()) return
-    if (!isValidUsername(username)) {
-      setSkinMessage(t('settings.skinNeedsUsername'))
-      setSkinErrorRaw(null)
-      return
-    }
     setSkinBusy(true)
     setSkinMessage(null)
     setSkinErrorRaw(null)
@@ -231,7 +219,32 @@ export function SettingsScreen({
     } finally {
       setSkinBusy(false)
     }
-  }, [username, skinPath, capePath, slim, t])
+  }, [skinPath, capePath, slim, t])
+
+  const handleAccount = useCallback(
+    async (command: 'logout' | 'change_password') => {
+      setAccountBusy(true)
+      setAccountError(null)
+      setPasswordChanged(false)
+      try {
+        const account = await invoke<AccountStatus>(
+          command,
+          command === 'change_password' ? { password: newPassword } : undefined,
+        )
+        if (command === 'change_password') {
+          setNewPassword('')
+          setPasswordOpen(false)
+          setPasswordChanged(true)
+        }
+        onAccountChange(account)
+      } catch (e) {
+        setAccountError(friendlyError(e, 'account'))
+      } finally {
+        setAccountBusy(false)
+      }
+    },
+    [newPassword, onAccountChange],
+  )
 
   const handleBrowsePng = useCallback(async (set: (path: string) => void) => {
     if (!isTauri()) return
@@ -338,20 +351,73 @@ export function SettingsScreen({
               <>
                 <Setting
                   icon={<UserRound size={14} />}
-                  label={t('settings.username')}
-                  hint={t('settings.usernameHint')}
+                  label={t('settings.account')}
+                  hint={t('settings.accountHint')}
                 >
-                  <input
-                    aria-label={t('settings.username')}
-                    aria-invalid={usernameInvalid}
-                    value={name}
-                    maxLength={16}
-                    onChange={(e) => {
-                      setName(e.target.value)
-                      markDirty()
-                    }}
-                    className={`w-full h-10 border bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 outline-none transition-colors ${usernameInvalid ? 'border-[#c98b8b] focus:border-[#c98b8b]' : 'border-[#2A2116] focus:border-[#F5A524]/60'}`}
-                  />
+                  <div className="flex w-full min-w-0 flex-col gap-2">
+                    <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-neutral-200">
+                        {username}
+                      </span>
+                      <button
+                        type="button"
+                        aria-expanded={passwordOpen}
+                        onClick={() => setPasswordOpen((open) => !open)}
+                        className="h-10 px-3 flex items-center gap-2 border border-[#2A2116] bg-[#11100D] text-[10px] tracking-[0.14em] text-[#C7AE86] hover:text-[#F3E7D0] hover:border-[#8A571C] transition-colors"
+                      >
+                        <KeyRound size={12} />
+                        {t('settings.changePassword')}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={accountBusy}
+                        onClick={() => void handleAccount('logout')}
+                        className="h-10 px-3 flex items-center gap-2 border border-[#2A2116] bg-[#11100D] text-[10px] tracking-[0.14em] text-[#C7AE86] hover:text-[#F3E7D0] hover:border-[#8A571C] disabled:opacity-50 transition-colors"
+                      >
+                        <LogOut size={12} />
+                        {t('settings.logout')}
+                      </button>
+                    </div>
+                    {passwordOpen && (
+                      <form
+                        className="flex w-full"
+                        onSubmit={(e) => {
+                          e.preventDefault()
+                          void handleAccount('change_password')
+                        }}
+                      >
+                        <input
+                          type="password"
+                          autoFocus
+                          autoComplete="new-password"
+                          aria-label={t('settings.newPassword')}
+                          placeholder={t('settings.newPassword')}
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          className="relative focus:z-10 min-w-0 flex-1 h-10 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 placeholder:text-[#A89373] outline-none focus:border-[#F5A524]/60 transition-colors"
+                        />
+                        <button
+                          type="submit"
+                          disabled={accountBusy || !newPassword}
+                          className="relative -ml-px h-10 shrink-0 px-3 border border-[#2A2116] bg-[#11100D] text-[10px] tracking-[0.14em] text-[#C7AE86] hover:text-[#F3E7D0] hover:border-[#8A571C] disabled:opacity-50 transition-colors"
+                        >
+                          {accountBusy ? (
+                            <LoaderCircle size={12} className="animate-spin" />
+                          ) : (
+                            t('settings.save')
+                          )}
+                        </button>
+                      </form>
+                    )}
+                    {accountError && (
+                      <ErrorDetail message={accountError.message} raw={accountError.raw} />
+                    )}
+                    {passwordChanged && (
+                      <span className="text-[11px] text-[#F5A524]">
+                        {t('settings.passwordChanged')}
+                      </span>
+                    )}
+                  </div>
                 </Setting>
                 <Setting
                   icon={<Folder size={14} />}

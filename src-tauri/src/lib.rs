@@ -1,3 +1,4 @@
+mod account;
 mod commands;
 mod config;
 mod discord_ipc;
@@ -131,6 +132,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             updater::check_launcher_update,
             updater::install_launcher_update,
+            account::account_status,
+            account::login,
+            account::register,
+            account::logout,
+            account::change_password,
             commands::load_settings,
             commands::save_settings,
             commands::check_modpack_version,

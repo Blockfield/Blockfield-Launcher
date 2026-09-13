@@ -8,6 +8,14 @@ describe('RoomList', () => {
     expect(html).toContain('Открытых комнат пока нет')
     expect(html).toContain('Войти в лобби')
   })
+  it('keeps the lobby open while the game server updates', () => {
+    const html = renderToStaticMarkup(
+      <RoomList rooms={[]} updating onJoin={() => {}} disabled={false} />,
+    )
+    expect(html).toContain('Игровой сервер обновляется — лобби открыто')
+    expect(html).not.toContain('Открытых комнат пока нет')
+    expect(html).toContain('Войти в лобби')
+  })
   it('shows one room at a time while keeping every room selectable', () => {
     const rooms = Array.from({ length: 20 }, (_, index) => ({
       id: `room-${index}`,

@@ -1,6 +1,6 @@
 import { ramLimitGb, clampRamGb } from '../../lib/ram'
 import { useState } from 'react'
-import { Folder, Coffee, Cpu, UserRound, LoaderCircle, ArrowRight } from 'lucide-react'
+import { Folder, Coffee, Cpu, LoaderCircle, ArrowRight } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { ErrorDetail } from './ui-bits'
@@ -8,7 +8,6 @@ import { Setting, PathInput, RamSlider } from './SettingsScreen'
 import type { LauncherConfig } from '../../lib/api'
 import { friendlyError } from '../../lib/errors'
 import { translate } from '../i18n'
-import { isValidUsername } from '../../lib/username'
 
 /**
  * Shown once, before the first launch — replaces the old behavior of silently
@@ -23,15 +22,12 @@ export function FirstRunScreen({
   defaults: LauncherConfig
   onComplete: (config: LauncherConfig) => void
 }) {
-  const [name, setName] = useState('')
   const [dir, setDir] = useState(defaults.gameDir)
   const [java, setJava] = useState(defaults.javaPath)
   const maxRam = ramLimitGb(defaults.maxRamMb)
   const [ram, setRam] = useState(clampRamGb(defaults.ramMb / 1024, maxRam))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<{ message: string; raw: string | null } | null>(null)
-  const touched = name.length > 0
-  const nameValid = isValidUsername(name)
 
   const handleBrowse = async (field: 'dir' | 'java') => {
     try {
@@ -53,7 +49,7 @@ export function FirstRunScreen({
   }
 
   const handleContinue = async () => {
-    if (!nameValid || saving || maxRam < 2) return
+    if (saving || maxRam < 2) return
     setSaving(true)
     setError(null)
     try {
@@ -62,7 +58,6 @@ export function FirstRunScreen({
         gameDir: dir,
         javaPath: java,
         ramMb: ram * 1024,
-        username: name.trim(),
       }
       await invoke('save_settings', { config })
       onComplete(config)
@@ -86,34 +81,11 @@ export function FirstRunScreen({
               ПЕРВЫЙ ЗАПУСК
             </h1>
             <p className="mt-2 text-[11px] tracking-[0.1em] text-[#8E7A5E]">
-              Задайте позывной и проверьте параметры игры. Остальное можно изменить позже в
-              настройках.
+              Проверьте параметры игры. Их можно изменить позже в настройках.
             </p>
           </div>
 
           <div className="border border-[#2A2116] bg-[#11100D] px-3 md:px-5 py-2">
-            <Setting
-              icon={<UserRound size={14} />}
-              label="НИКНЕЙМ"
-              hint="Ник в Minecraft (3–16 латинских букв, цифр или _). Обязателен для входа в игру."
-            >
-              <input
-                aria-label="Никнейм"
-                aria-invalid={touched && !nameValid}
-                autoFocus
-                value={name}
-                maxLength={16}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void handleContinue()
-                }}
-                className={`w-full h-10 border bg-[#0B0906] px-3 text-[12px] font-mono text-neutral-200 outline-none transition-colors ${
-                  touched && !nameValid
-                    ? 'border-[#c98b8b] focus:border-[#c98b8b]'
-                    : 'border-[#2A2116] focus:border-[#F5A524]/60'
-                }`}
-              />
-            </Setting>
             <Setting
               icon={<Folder size={14} />}
               label="ПАПКА ИГРЫ"
@@ -156,9 +128,9 @@ export function FirstRunScreen({
             <button
               type="button"
               onClick={() => void handleContinue()}
-              disabled={!nameValid || saving || maxRam < 2}
+              disabled={saving || maxRam < 2}
               className={`h-10 px-6 flex items-center gap-3 border transition-colors ${
-                nameValid
+                maxRam >= 2
                   ? 'border-[#F5A524]/40 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524]'
                   : 'border-[#2A2116] bg-[#0B0906] opacity-50 cursor-not-allowed'
               }`}

@@ -67,6 +67,8 @@ export interface GameRoom {
 
 export interface ServerStatus {
   rooms?: GameRoom[] | null
+  /** `false` while the game server behind the proxy restarts; `null` when the site API is unreachable. */
+  gameAvailable?: boolean | null
   online: boolean
   playersOnline: number | null
   playersMax: number | null
@@ -158,12 +160,19 @@ export interface LauncherConfig {
   ramMb: number
   autoUpdate: boolean
   lang: string
-  username: string
+  username?: string
   preLaunchCommand: string
   postExitCommand: string
   hideWhilePlaying: boolean
   discordPresence?: boolean
-  skinPassword?: string
+}
+
+/** Drasl account from `account_status`, `login`, `register`, `logout` and `change_password`. */
+export interface AccountStatus {
+  loggedIn: boolean
+  username: string
+  uuid: string
+  needsPassword: boolean
 }
 
 /** Result of `upload_skin`: texture URLs on the skin server. */

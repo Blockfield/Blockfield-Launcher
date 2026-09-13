@@ -6,8 +6,9 @@ import { MainScreen } from './components/MainScreen'
 import { UpdateScreen } from './components/UpdateScreen'
 import { SettingsScreen, type SettingsTab } from './components/SettingsScreen'
 import { FirstRunScreen } from './components/FirstRunScreen'
+import { LoginScreen } from './components/LoginScreen'
 import { I18nContext, translate } from './i18n'
-import type { LauncherConfig } from '../lib/api'
+import type { AccountStatus, LauncherConfig } from '../lib/api'
 import { checkModpack } from '../lib/modpack-check'
 import { checkLauncherUpdate } from '../lib/launcher-update'
 import { watchGameState } from '../lib/game-state'
@@ -24,11 +25,11 @@ const isTauri = () => '__TAURI_INTERNALS__' in window
 export default function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general')
   const [screen, setScreen] = useState<Screen>('main')
-  const [username, setUsername] = useState('')
+  const [account, setAccount] = useState<AccountStatus | null>(null)
   const [updatesVisited, setUpdatesVisited] = useState(false)
   const [updateRequest, setUpdateRequest] = useState(0)
   const [commandError, setCommandError] = useState<string | null>(null)
-  // First run: no username saved yet. Holding the loaded config here (instead of
+  // First run: never signed in on this install. Holding the loaded config here (instead of
   // just a boolean) lets the setup screen show real defaults (game dir/Java/RAM).
   const [firstRunConfig, setFirstRunConfig] = useState<LauncherConfig | null>(null)
   const [configError, setConfigError] = useState<FriendlyError | null>(null)
@@ -39,6 +40,16 @@ export default function App() {
     if (!isTauri()) return
     const subscription = listen('room://pending', () =>
       setScreen((current) => (current === 'update' ? current : 'main')),
+    )
+    return () => {
+      void subscription.then((stop) => stop())
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    const subscription = listen('account://expired', () =>
+      setAccount((current) => current && { ...current, loggedIn: false }),
     )
     return () => {
       void subscription.then((stop) => stop())
@@ -70,13 +81,17 @@ export default function App() {
 
   const i18n = useMemo(() => ({ lang: 'ru' as const, t: translate }), [])
 
-  // Offline identity: the username lives in launcher settings; no account service involved.
   useEffect(() => {
     if (!isTauri()) return
     import('@tauri-apps/api/core')
-      .then(({ invoke }) => invoke<LauncherConfig>('load_settings'))
-      .then((cfg) => {
-        setUsername(cfg.username)
+      .then(({ invoke }) =>
+        Promise.all([
+          invoke<LauncherConfig>('load_settings'),
+          invoke<AccountStatus>('account_status'),
+        ]),
+      )
+      .then(([cfg, status]) => {
+        setAccount(status)
         checkModpack().catch((error) => console.error('Startup check failed:', error))
         if (!cfg.username) setFirstRunConfig(cfg)
       })
@@ -128,17 +143,26 @@ export default function App() {
     )
   }
 
+  if (!account?.loggedIn || account.needsPassword) {
+    return (
+      <I18nContext.Provider value={i18n}>
+        <WindowChrome>
+          <LoginScreen
+            key={account?.needsPassword ? 'password' : 'login'}
+            username={account?.username}
+            setPassword={account?.needsPassword}
+            onDone={setAccount}
+          />
+        </WindowChrome>
+      </I18nContext.Provider>
+    )
+  }
+
   if (firstRunConfig) {
     return (
       <I18nContext.Provider value={i18n}>
         <WindowChrome>
-          <FirstRunScreen
-            defaults={firstRunConfig}
-            onComplete={(config) => {
-              setUsername(config.username)
-              setFirstRunConfig(null)
-            }}
-          />
+          <FirstRunScreen defaults={firstRunConfig} onComplete={() => setFirstRunConfig(null)} />
         </WindowChrome>
       </I18nContext.Provider>
     )
@@ -148,7 +172,7 @@ export default function App() {
     <I18nContext.Provider value={i18n}>
       <WindowChrome>
         <Shell
-          user={{ username: username || '—', role: 'игрок' }}
+          user={{ username: account.username || '—', role: 'игрок' }}
           active={screen}
           onNavigate={navigate}
           onLauncherUpdate={() => {
@@ -187,8 +211,8 @@ export default function App() {
           )}
           {screen === 'settings' && (
             <SettingsScreen
-              username={username}
-              onUsernameSaved={setUsername}
+              username={account.username}
+              onAccountChange={setAccount}
               tab={settingsTab}
               onTabChange={setSettingsTab}
             />
