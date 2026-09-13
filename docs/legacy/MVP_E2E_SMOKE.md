@@ -1,3 +1,5 @@
+> **Historical document — retired API/CMS architecture.** Not current setup instructions or current test evidence. See [archive notes](README.md) and the [current launcher guide](../../README.md). Paths below describe the baseline commit, not the current tree.
+
 # Windows MVP E2E smoke test
 
 Use this checklist for the release candidate produced from `dev`. Do not replace a result with unit-test evidence: each scenario must run on Windows against the deployed API, Filament, Minecraft server and signed updater channel.

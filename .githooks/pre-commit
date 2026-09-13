@@ -37,9 +37,9 @@ has_files() {
     echo "$STAGED" | grep -qE "$1"
 }
 
-# ── Rust (backend + API) ────────────────────────────────────────────────────
+# ── Rust (native launcher + shared contracts) ────────────────────────────────────────────────────
 if has_files '\.rs$|Cargo\.(toml|lock)$'; then
-    section "Rust — backend & API"
+    section "Rust — native launcher & shared contracts"
 
     RUST_FILES=$(echo "$STAGED" | grep '\.rs$' || true)
 
