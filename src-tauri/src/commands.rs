@@ -699,6 +699,26 @@ pub async fn server_status(state: State<'_, LauncherAppState>) -> Result<ServerS
     Ok(status)
 }
 
+type StatsQuery = std::collections::BTreeMap<String, String>;
+
+#[tauri::command]
+pub async fn stats_leaderboard(query: StatsQuery) -> Result<Option<serde_json::Value>, String> {
+    crate::status::fetch_stats(&pack_base_url()?, "leaderboard", &query).await
+}
+
+#[tauri::command]
+pub async fn stats_seasons() -> Result<Option<serde_json::Value>, String> {
+    crate::status::fetch_stats(&pack_base_url()?, "seasons", &StatsQuery::new()).await
+}
+
+#[tauri::command]
+pub async fn stats_player(
+    uuid: String,
+    query: StatsQuery,
+) -> Result<Option<serde_json::Value>, String> {
+    crate::status::fetch_stats(&pack_base_url()?, &format!("players/{uuid}"), &query).await
+}
+
 #[tauri::command]
 pub fn game_status(state: State<'_, LauncherAppState>) -> crate::game::GameStatus {
     state.game.snapshot()

@@ -358,6 +358,61 @@ pub async fn fetch_rooms(base: &str) -> Option<RoomsResponse> {
     rooms_response(&value)
 }
 
+const STATS_TIMEOUT: Duration = Duration::from_secs(5);
+const STATS_QUERY_KEYS: [&str; 6] = ["mode", "period", "season", "sort", "limit", "page"];
+
+/// Only the public read endpoints; the player segment must be a lowercase dashed UUID.
+fn valid_stats_path(path: &str) -> bool {
+    match path.strip_prefix("players/") {
+        Some(uuid) => {
+            uuid.len() == 36
+                && uuid.bytes().enumerate().all(|(i, b)| match i {
+                    8 | 13 | 18 | 23 => b == b'-',
+                    _ => matches!(b, b'0'..=b'9' | b'a'..=b'f'),
+                })
+        }
+        None => matches!(path, "leaderboard" | "seasons"),
+    }
+}
+
+/// Stats are read from the site API, independent of the game server. 404 is `Ok(None)`.
+pub async fn fetch_stats(
+    base: &str,
+    path: &str,
+    query: &std::collections::BTreeMap<String, String>,
+) -> Result<Option<serde_json::Value>, String> {
+    if !valid_stats_path(path)
+        || query
+            .keys()
+            .any(|k| !STATS_QUERY_KEYS.contains(&k.as_str()))
+    {
+        return Err(format!("Invalid stats request: {path}"));
+    }
+    let response = reqwest::Client::builder()
+        .timeout(STATS_TIMEOUT)
+        .build()
+        .map_err(|e| e.to_string())?
+        .get(format!("{base}/api/stats/{path}"))
+        .query(query)
+        .send()
+        .await
+        .map_err(|e| format!("Stats API unavailable: {e}"))?;
+    let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let body = response.json::<serde_json::Value>().await;
+    if !status.is_success() {
+        let detail = body
+            .ok()
+            .and_then(|value| value["error"].as_str().map(str::to_string))
+            .unwrap_or_else(|| status.to_string());
+        return Err(format!("Stats API: {detail}"));
+    }
+    body.map(Some)
+        .map_err(|e| format!("Invalid stats response: {e}"))
+}
+
 pub type RoomsResponse = (bool, Vec<GameRoom>, Option<Maintenance>);
 
 fn rooms_response(value: &serde_json::Value) -> Option<RoomsResponse> {
@@ -481,6 +536,30 @@ mod tests {
         let (up, rooms, maintenance) = rooms_response(&json).unwrap();
         assert!(up && maintenance.is_none());
         assert_eq!(rooms[0].players, 4);
+    }
+
+    #[test]
+    fn stats_paths_are_limited_to_public_read_endpoints() {
+        for path in [
+            "leaderboard",
+            "seasons",
+            "players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe",
+        ] {
+            assert!(valid_stats_path(path), "{path}");
+        }
+        for path in [
+            "",
+            "players/",
+            "players/F3E1B9A6-2270-3DEE-8782-B7CDD8519EFE",
+            "players/f3e1b9a622703dee8782b7cdd8519efe",
+            "players/f3e1b9a6-2270-3dee-8782-b7cdd8519ef",
+            "players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe/x",
+            "players/../../admin/xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "leaderboard/../ingest",
+            "ingest",
+        ] {
+            assert!(!valid_stats_path(path), "{path}");
+        }
     }
 
     #[test]
