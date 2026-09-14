@@ -689,9 +689,10 @@ pub async fn server_status(state: State<'_, LauncherAppState>) -> Result<ServerS
         crate::status::fetch_rooms(&base),
     );
     let mut status = status.map_err(|e| format!("status task failed: {e}"))?;
-    if let Some((available, rooms)) = rooms {
+    if let Some((available, rooms, maintenance)) = rooms {
         status.game_available = Some(available);
         status.rooms = Some(rooms);
+        status.maintenance = maintenance;
     }
     status.region_code = region_code;
     status.location_name = location_name;
