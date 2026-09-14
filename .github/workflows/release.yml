@@ -145,7 +145,7 @@ jobs:
           VITE_OPERATION_NAME: ${{ vars.VITE_OPERATION_NAME || 'BLOCKFIELD' }}
           VITE_SEASON: ${{ vars.VITE_SEASON || 'Minecraft 1.21.1 · Fabric' }}
           VITE_SERVER_NAME: ${{ vars.VITE_SERVER_NAME || 'BLOCKFIELD - PRIMARY' }}
-          VITE_SERVER_IP: ${{ vars.VITE_SERVER_IP || 'minecraft.play.nether.pp.ua:25565' }}
+          VITE_SERVER_IP: ${{ vars.VITE_SERVER_IP || 'play.blockfield.pro:25565' }}
           VITE_COPYRIGHT: ${{ vars.VITE_COPYRIGHT || '2026 BLOCKFIELD' }}
           BLOCKFIELD_MOJANG_MANIFEST_URL: ${{ vars.BLOCKFIELD_MOJANG_MANIFEST_URL || 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json' }}
           BLOCKFIELD_MOJANG_ASSET_BASE_URL: ${{ vars.BLOCKFIELD_MOJANG_ASSET_BASE_URL || 'https://resources.download.minecraft.net' }}

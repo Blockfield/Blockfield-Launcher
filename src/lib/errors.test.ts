@@ -7,7 +7,7 @@ describe('friendlyError', () => {
       new Error('error sending request for url: error trying to connect: dns error: failed'),
       'modpack-check',
     )
-    expect(result.message).toContain('modpack.nether.pp.ua')
+    expect(result.message).toContain('blockfield.pro')
     expect(result.raw).toContain('dns error')
   })
 

@@ -26,16 +26,16 @@ const CONTEXT_FALLBACK: Record<ErrorContext, string> = {
 
 const CONTEXT_NETWORK: Record<ErrorContext, string> = {
   'modpack-check':
-    'Нет доступа к серверу сборки modpack.nether.pp.ua — проверьте интернет и повторите.',
+    'Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите.',
   'modpack-download':
-    'Нет доступа к серверу сборки modpack.nether.pp.ua — проверьте интернет и повторите.',
-  launch: 'Нет доступа к серверу сборки modpack.nether.pp.ua — проверьте интернет и повторите.',
+    'Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите.',
+  launch: 'Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите.',
   'launcher-update': 'Нет доступа к серверу обновлений лаунчера — проверьте интернет и повторите.',
   'settings-save': 'Не удалось сохранить настройки. Откройте подробности ошибки.',
   'settings-load': 'Не удалось загрузить настройки. Проверьте доступ к папке настроек и повторите.',
   'skin-upload':
-    'Нет доступа к серверу скинов skins.nether.pp.ua — проверьте интернет и повторите.',
-  account: 'Нет доступа к серверу аккаунтов skins.nether.pp.ua — проверьте интернет и повторите.',
+    'Нет доступа к серверу скинов skins.blockfield.pro — проверьте интернет и повторите.',
+  account: 'Нет доступа к серверу аккаунтов skins.blockfield.pro — проверьте интернет и повторите.',
 }
 
 export const SESSION_EXPIRED = 'SESSION_EXPIRED'

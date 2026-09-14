@@ -3,7 +3,7 @@
 # ~/.local/lib/blockfield-launcher, a .desktop entry and an icon. No root, no system packages.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export VITE_BLOCKFIELD_PACK_URL="${VITE_BLOCKFIELD_PACK_URL:-https://modpack.nether.pp.ua}"
+export VITE_BLOCKFIELD_PACK_URL="${VITE_BLOCKFIELD_PACK_URL:-https://blockfield.pro}"
 TARGET="${BLOCKFIELD_CARGO_TARGET:-$HOME/.cache/bf-cargo-target}"
 
 cd "$ROOT"

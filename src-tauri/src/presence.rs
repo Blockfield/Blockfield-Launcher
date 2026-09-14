@@ -174,8 +174,8 @@ fn activity(phase: GamePhase, data: Option<&Value>, started: i64, native_invites
     // Discord custom buttons replace the native Join action in some clients.
     if result.get("secrets").is_none() {
         let url = target
-            .map(|target| format!("https://modpack.nether.pp.ua/?room={target}#rooms"))
-            .unwrap_or_else(|| "https://modpack.nether.pp.ua/#rooms".into());
+            .map(|target| format!("https://blockfield.pro/?room={target}#rooms"))
+            .unwrap_or_else(|| "https://blockfield.pro/#rooms".into());
         let label = if target == Some("lobby") {
             "Войти в лобби"
         } else if target.is_some() {
