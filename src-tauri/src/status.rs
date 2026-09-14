@@ -14,6 +14,8 @@ pub struct ServerStatus {
     pub rooms: Option<Vec<GameRoom>>,
     /// Site API view of the game server behind the proxy; `None` when the API is unreachable.
     pub game_available: Option<bool>,
+    /// Set by the host controller while draining/workshop; implies `game_available == Some(false)`.
+    pub maintenance: Option<Maintenance>,
     pub players_online: Option<u64>,
     pub players_max: Option<u64>,
     pub minecraft_version: Option<String>,
@@ -24,6 +26,31 @@ pub struct ServerStatus {
     pub location_name: String,
     pub server_latency_ms: Option<u64>,
     pub checked_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Maintenance {
+    pub message: String,
+    pub since: Option<u64>,
+}
+
+impl Maintenance {
+    fn parse(value: &serde_json::Value) -> Option<Self> {
+        if !value.is_object() {
+            return None;
+        }
+        Some(Self {
+            message: value["message"]
+                .as_str()
+                .unwrap_or_default()
+                .trim()
+                .chars()
+                .take(500)
+                .collect(),
+            since: value["since"].as_u64(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,6 +225,7 @@ pub fn ping(host: &str, port: u16) -> ServerStatus {
         online: false,
         rooms: None,
         game_available: None,
+        maintenance: None,
         players_online: None,
         players_max: None,
         minecraft_version: None,
@@ -313,7 +341,7 @@ fn read_varint(data: &[u8], cursor: &mut usize) -> Result<i32, String> {
 }
 
 /// Rooms come from the site API because the proxy answers pings even while the game server is down.
-pub async fn fetch_rooms(base: &str) -> Option<(bool, Vec<GameRoom>)> {
+pub async fn fetch_rooms(base: &str) -> Option<RoomsResponse> {
     let value = reqwest::Client::builder()
         .timeout(TIMEOUT)
         .build()
@@ -330,11 +358,72 @@ pub async fn fetch_rooms(base: &str) -> Option<(bool, Vec<GameRoom>)> {
     rooms_response(&value)
 }
 
-fn rooms_response(value: &serde_json::Value) -> Option<(bool, Vec<GameRoom>)> {
-    if !value["available"].as_bool()? {
-        return Some((false, Vec::new()));
+const STATS_TIMEOUT: Duration = Duration::from_secs(5);
+const STATS_QUERY_KEYS: [&str; 6] = ["mode", "period", "season", "sort", "limit", "page"];
+
+/// Only the public read endpoints; the player segment must be a lowercase dashed UUID.
+fn valid_stats_path(path: &str) -> bool {
+    match path.strip_prefix("players/") {
+        Some(uuid) => {
+            uuid.len() == 36
+                && uuid.bytes().enumerate().all(|(i, b)| match i {
+                    8 | 13 | 18 | 23 => b == b'-',
+                    _ => matches!(b, b'0'..=b'9' | b'a'..=b'f'),
+                })
+        }
+        None => matches!(path, "leaderboard" | "seasons"),
     }
-    room_snapshot(value).map(|rooms| (true, rooms))
+}
+
+/// Stats are read from the site API, independent of the game server. 404 is `Ok(None)`.
+pub async fn fetch_stats(
+    base: &str,
+    path: &str,
+    query: &std::collections::BTreeMap<String, String>,
+) -> Result<Option<serde_json::Value>, String> {
+    if !valid_stats_path(path)
+        || query
+            .keys()
+            .any(|k| !STATS_QUERY_KEYS.contains(&k.as_str()))
+    {
+        return Err(format!("Invalid stats request: {path}"));
+    }
+    let response = reqwest::Client::builder()
+        .timeout(STATS_TIMEOUT)
+        .build()
+        .map_err(|e| e.to_string())?
+        .get(format!("{base}/api/stats/{path}"))
+        .query(query)
+        .send()
+        .await
+        .map_err(|e| format!("Stats API unavailable: {e}"))?;
+    let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let body = response.json::<serde_json::Value>().await;
+    if !status.is_success() {
+        let detail = body
+            .ok()
+            .and_then(|value| value["error"].as_str().map(str::to_string))
+            .unwrap_or_else(|| status.to_string());
+        return Err(format!("Stats API: {detail}"));
+    }
+    body.map(Some)
+        .map_err(|e| format!("Invalid stats response: {e}"))
+}
+
+pub type RoomsResponse = (bool, Vec<GameRoom>, Option<Maintenance>);
+
+fn rooms_response(value: &serde_json::Value) -> Option<RoomsResponse> {
+    let available = value["available"].as_bool()?;
+    if let Some(maintenance) = Maintenance::parse(&value["maintenance"]) {
+        return Some((false, Vec::new(), Some(maintenance)));
+    }
+    if !available {
+        return Some((false, Vec::new(), None));
+    }
+    room_snapshot(value).map(|rooms| (true, rooms, None))
 }
 
 fn room_snapshot(value: &serde_json::Value) -> Option<Vec<GameRoom>> {
@@ -376,8 +465,8 @@ mod tests {
             .as_millis() as u64;
         let mut json = serde_json::json!({"available": true, "checkedAt": now, "rooms": []});
         assert_eq!(
-            rooms_response(&json).map(|(up, rooms)| (up, rooms.len())),
-            Some((true, 0))
+            rooms_response(&json).map(|(up, rooms, m)| (up, rooms.len(), m)),
+            Some((true, 0, None))
         );
         json["rooms"] = serde_json::json!([null]);
         assert!(rooms_response(&json).is_none());
@@ -386,10 +475,91 @@ mod tests {
         assert!(rooms_response(&json).is_none());
         json["available"] = serde_json::json!(false);
         assert_eq!(
-            rooms_response(&json).map(|(up, rooms)| (up, rooms.len())),
-            Some((false, 0))
+            rooms_response(&json).map(|(up, rooms, m)| (up, rooms.len(), m)),
+            Some((false, 0, None))
         );
         assert!(rooms_response(&serde_json::json!({"rooms": []})).is_none());
+    }
+
+    #[test]
+    fn maintenance_is_passed_through_and_forces_unavailable() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let room = serde_json::json!({"id": "12345678-1234-1234-1234-123456789abc", "name": "Лобби", "mode": "", "map": "", "phase": "IDLE", "players": 1, "joinable": true});
+        let mut json = serde_json::json!({"available": false, "checkedAt": now, "rooms": [], "lobby": room, "maintenance": {"message": "  Карта обновляется  ", "since": 1_700_000_000_000u64}});
+        let summary = |json: &serde_json::Value| {
+            rooms_response(json).map(|(up, rooms, m)| (up, rooms.len(), m))
+        };
+        assert_eq!(
+            summary(&json),
+            Some((
+                false,
+                0,
+                Some(Maintenance {
+                    message: "Карта обновляется".into(),
+                    since: Some(1_700_000_000_000)
+                })
+            ))
+        );
+
+        json["available"] = serde_json::json!(true);
+        json["rooms"] = serde_json::json!([room]);
+        json["maintenance"] = serde_json::json!({"message": "x".repeat(2_000), "since": "soon"});
+        let (up, rooms, maintenance) = rooms_response(&json).unwrap();
+        let maintenance = maintenance.unwrap();
+        assert!(!up && rooms.is_empty());
+        assert_eq!((maintenance.message.len(), maintenance.since), (500, None));
+
+        json["maintenance"] = serde_json::json!({"message": 42});
+        assert_eq!(
+            summary(&json).and_then(|(_, _, m)| m).map(|m| m.message),
+            Some(String::new())
+        );
+        json["maintenance"] = serde_json::Value::Null;
+        assert_eq!(summary(&json), Some((true, 1, None)));
+    }
+
+    #[test]
+    fn rooms_with_extended_fields_are_accepted() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let json = serde_json::json!({"available": true, "checkedAt": now, "rooms": [{
+            "id": "12345678-1234-1234-1234-123456789abc", "name": "Комната 1", "mode": "Захват точек",
+            "map": "Город", "phase": "PREPARING", "players": 4, "joinable": true,
+            "capacity": 16, "format": "5v5", "admission": "OPEN", "round": 2,
+            "front": {"index": 1, "length": 3}, "ready": {"ready": 3, "required": 4}, "reserved": 2
+        }]});
+        let (up, rooms, maintenance) = rooms_response(&json).unwrap();
+        assert!(up && maintenance.is_none());
+        assert_eq!(rooms[0].players, 4);
+    }
+
+    #[test]
+    fn stats_paths_are_limited_to_public_read_endpoints() {
+        for path in [
+            "leaderboard",
+            "seasons",
+            "players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe",
+        ] {
+            assert!(valid_stats_path(path), "{path}");
+        }
+        for path in [
+            "",
+            "players/",
+            "players/F3E1B9A6-2270-3DEE-8782-B7CDD8519EFE",
+            "players/f3e1b9a622703dee8782b7cdd8519efe",
+            "players/f3e1b9a6-2270-3dee-8782-b7cdd8519ef",
+            "players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe/x",
+            "players/../../admin/xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "leaderboard/../ingest",
+            "ingest",
+        ] {
+            assert!(!valid_stats_path(path), "{path}");
+        }
     }
 
     #[test]

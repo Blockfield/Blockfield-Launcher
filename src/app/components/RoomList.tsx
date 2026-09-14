@@ -11,6 +11,7 @@ const phases: Record<string, string> = {
 }
 
 export const GAME_UPDATING = 'Игровой сервер обновляется — лобби открыто'
+export const GAME_MAINTENANCE = 'Идут технические работы'
 
 const controlClass =
   'flex h-8 shrink-0 items-center justify-center gap-2 border border-[#2A2116] px-3 text-[12px] text-[#C7AE86] transition-colors hover:border-[#8A571C] hover:text-[#F3E7D0] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F5A524] disabled:opacity-50 disabled:cursor-not-allowed'
@@ -20,11 +21,13 @@ export function RoomList({
   onJoin,
   disabled,
   updating = false,
+  maintenance,
 }: {
   rooms?: GameRoom[] | null
   onJoin: (id: string) => void
   disabled: boolean
   updating?: boolean
+  maintenance?: string | null
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const selectedIndex = Math.max(0, rooms?.findIndex((room) => room.id === selectedId) ?? 0)
@@ -71,11 +74,13 @@ export function RoomList({
         </>
       ) : (
         <p role="status" className="flex-1 text-[12px] leading-relaxed text-[#C7AE86]">
-          {updating
-            ? `${GAME_UPDATING}. Нажмите «Играть» — вас перенесут в игру, когда сервер запустится.`
-            : !rooms
-              ? 'Список комнат недоступен. Повторим запрос автоматически.'
-              : 'Открытых комнат пока нет. Создать комнату можно в игре.'}
+          {maintenance != null
+            ? `${GAME_MAINTENANCE}${maintenance ? `: ${maintenance}` : '.'} Комнаты откроются после завершения работ.`
+            : updating
+              ? `${GAME_UPDATING}. Нажмите «Играть» — вас перенесут в игру, когда сервер запустится.`
+              : !rooms
+                ? 'Список комнат недоступен. Повторим запрос автоматически.'
+                : 'Открытых комнат пока нет. Создать комнату можно в игре.'}
         </p>
       )}
       <div className="mt-auto flex shrink-0 items-center justify-between gap-3 border-t border-[#2A2116] pt-2">

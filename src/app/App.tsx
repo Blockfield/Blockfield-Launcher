@@ -5,6 +5,7 @@ import { Shell } from './components/Shell'
 import { MainScreen } from './components/MainScreen'
 import { UpdateScreen } from './components/UpdateScreen'
 import { SettingsScreen, type SettingsTab } from './components/SettingsScreen'
+import { StatsScreen } from './components/StatsScreen'
 import { FirstRunScreen } from './components/FirstRunScreen'
 import { LoginScreen } from './components/LoginScreen'
 import { I18nContext, translate } from './i18n'
@@ -17,7 +18,7 @@ import { LoaderCircle } from 'lucide-react'
 import { ErrorDetail } from './components/ui-bits'
 import { friendlyError, type FriendlyError } from '../lib/errors'
 
-type Screen = 'main' | 'update' | 'settings'
+type Screen = 'main' | 'update' | 'stats' | 'settings'
 
 /** Whether we're running inside Tauri (vs browser dev). */
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -209,6 +210,7 @@ export default function App() {
               <UpdateScreen updateRequest={updateRequest} />
             </div>
           )}
+          {screen === 'stats' && <StatsScreen uuid={account.uuid} />}
           {screen === 'settings' && (
             <SettingsScreen
               username={account.username}

@@ -1,6 +1,6 @@
 import { useLauncherUpdate } from '../../lib/launcher-update'
 import type { ReactNode } from 'react'
-import { Settings, Gamepad2, Download, LifeBuoy } from 'lucide-react'
+import { Settings, Gamepad2, Download, LifeBuoy, Trophy } from 'lucide-react'
 import { useI18n, type TKey } from '../i18n'
 import { Logo } from './Logo'
 import { PlayerHead } from './PlayerHead'
@@ -10,11 +10,12 @@ import { contentText, localizedContentText, useLauncherContent } from '../../lib
 import { useLauncherVersion } from '../../lib/version'
 import { openExternalUrl } from '../../lib/api'
 
-type Screen = 'main' | 'update' | 'settings'
+type Screen = 'main' | 'update' | 'stats' | 'settings'
 
 const NAV_ITEMS: Array<{ id: Screen; icon: ReactNode; key: TKey }> = [
   { id: 'main', icon: <Gamepad2 size={13} />, key: 'nav.deploy' },
   { id: 'update', icon: <Download size={13} />, key: 'nav.updates' },
+  { id: 'stats', icon: <Trophy size={13} />, key: 'nav.stats' },
   { id: 'settings', icon: <Settings size={13} />, key: 'nav.settings' },
 ]
 

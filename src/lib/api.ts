@@ -69,6 +69,8 @@ export interface ServerStatus {
   rooms?: GameRoom[] | null
   /** `false` while the game server behind the proxy restarts; `null` when the site API is unreachable. */
   gameAvailable?: boolean | null
+  /** Host controller maintenance/workshop window; implies `gameAvailable === false` and no rooms. */
+  maintenance?: { message: string; since?: number | null } | null
   online: boolean
   playersOnline: number | null
   playersMax: number | null

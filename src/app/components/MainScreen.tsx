@@ -1,4 +1,4 @@
-import { GAME_UPDATING, RoomList } from './RoomList'
+import { GAME_MAINTENANCE, GAME_UPDATING, RoomList } from './RoomList'
 import { useGameState, gameStateLabel, launchGame } from '../../lib/game-state'
 import { checkModpack, invalidateModpackCheck } from '../../lib/modpack-check'
 import { invoke } from '@tauri-apps/api/core'
@@ -155,6 +155,8 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   useEffect(() => {
     if (
       !pendingRoom ||
+      // Left unhandled so the invite is joined once maintenance ends.
+      (pendingRoom !== 'lobby' && serverStatus?.maintenance) ||
       (game.phase !== 'running' && (checking || !versionInfo)) ||
       launching ||
       (gameBusy && game.phase !== 'running') ||
@@ -163,7 +165,16 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
       return
     handledRoom.current = pendingRoom
     void handleJoin(pendingRoom)
-  }, [pendingRoom, checking, versionInfo, launching, gameBusy, game.phase, handleJoin])
+  }, [
+    pendingRoom,
+    serverStatus?.maintenance,
+    checking,
+    versionInfo,
+    launching,
+    gameBusy,
+    game.phase,
+    handleJoin,
+  ])
 
   const checkVersion = useCallback(async (verify = false) => {
     if (!isTauri()) return
@@ -297,6 +308,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
     t('main.serverName')
   const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
   const gameUpdating = serverStatus?.online === true && serverStatus.gameAvailable === false
+  const maintenance = serverStatus?.online ? (serverStatus.maintenance?.message ?? null) : null
   const players = serverStatus?.playersOnline?.toString() ?? '—'
   const ping = serverStatus?.serverLatencyMs?.toString() ?? '—'
   const region = serverStatus?.regionCode?.trim() || '—'
@@ -348,6 +360,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
               serverIp={serverStatus ? `${serverStatus.host}:${serverStatus.port}` : serverIp}
               online={serverStatus?.online === true}
               updating={gameUpdating}
+              maintenance={maintenance}
             />
           </div>
 
@@ -449,6 +462,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                 <RoomList
                   rooms={serverStatus?.rooms}
                   updating={gameUpdating}
+                  maintenance={maintenance}
                   onJoin={(id) => {
                     void handleJoin(id)
                   }}
@@ -597,11 +611,13 @@ function ServerStatus({
   serverIp,
   online,
   updating,
+  maintenance,
 }: {
   serverName: string
   serverIp: string
   online: boolean
   updating: boolean
+  maintenance: string | null
 }) {
   const { t } = useI18n()
   return (
@@ -609,11 +625,23 @@ function ServerStatus({
       <div className="flex items-start justify-between gap-2">
         <span className="text-[10px] tracking-[0.14em] text-[#8E7A5E]">{t('main.server')}</span>
         <span
-          title={updating ? GAME_UPDATING : undefined}
+          title={
+            maintenance != null
+              ? maintenance || GAME_MAINTENANCE
+              : updating
+                ? GAME_UPDATING
+                : undefined
+          }
           className={`flex items-center gap-1.5 text-[10px] tracking-[0.16em] ${updating ? 'text-[#F5A524]' : online ? 'text-[#82D66B]' : 'text-[#E36A5D]'}`}
         >
           <StatusDot pulse={online} color={updating ? '#F5A524' : online ? '#82D66B' : '#E36A5D'} />
-          {updating ? 'ОБНОВЛЯЕТСЯ' : online ? t('main.online') : 'НЕДОСТУПЕН'}
+          {maintenance != null
+            ? 'ТЕХРАБОТЫ'
+            : updating
+              ? 'ОБНОВЛЯЕТСЯ'
+              : online
+                ? t('main.online')
+                : 'НЕДОСТУПЕН'}
         </span>
       </div>
       <div className="mt-2 flex items-center gap-2">

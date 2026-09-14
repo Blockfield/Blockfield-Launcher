@@ -16,6 +16,25 @@ describe('RoomList', () => {
     expect(html).not.toContain('Открытых комнат пока нет')
     expect(html).toContain('Войти в лобби')
   })
+  it('shows the maintenance message instead of the generic update text', () => {
+    const html = renderToStaticMarkup(
+      <RoomList
+        rooms={[]}
+        updating
+        maintenance="Меняем карту, 10 минут"
+        onJoin={() => {}}
+        disabled={false}
+      />,
+    )
+    expect(html).toContain('Идут технические работы: Меняем карту, 10 минут')
+    expect(html).not.toContain('Игровой сервер обновляется')
+    expect(html).toContain('Войти в лобби')
+    expect(
+      renderToStaticMarkup(
+        <RoomList rooms={[]} updating maintenance="" onJoin={() => {}} disabled={false} />,
+      ),
+    ).toContain('Идут технические работы.')
+  })
   it('shows one room at a time while keeping every room selectable', () => {
     const rooms = Array.from({ length: 20 }, (_, index) => ({
       id: `room-${index}`,
