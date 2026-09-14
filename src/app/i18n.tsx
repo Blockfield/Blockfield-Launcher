@@ -28,6 +28,7 @@ const ru = {
 
   'nav.deploy': 'ИГРАТЬ',
   'nav.updates': 'ОБНОВЛЕНИЯ',
+  'nav.stats': 'ТОП',
   'nav.settings': 'НАСТРОЙКИ',
   'shell.logout': 'Выйти',
   'shell.support': 'ПОДДЕРЖКА',
