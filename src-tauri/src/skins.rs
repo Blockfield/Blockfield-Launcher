@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use tauri::State;
 
-pub const DEFAULT_SERVER: &str = "https://skins.nether.pp.ua";
+pub const DEFAULT_SERVER: &str = "https://skins.blockfield.pro";
 const MAX_TEXTURE_BYTES: u64 = 1024 * 1024;
 const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
 const MOJANG_PROFILES: &str = "https://api.mojang.com";

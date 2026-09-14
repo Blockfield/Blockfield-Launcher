@@ -6,7 +6,7 @@ Application ID: `1548300877125779456`. Он встроен в лаунчер; д
 
 В Developer Portal сохранены ассет `blockfield` (логотип 1024×1024) и обложка приглашения. Визуализатор портала служит только примером и не настраивает работающий клиент.
 
-Условия: https://modpack.nether.pp.ua/terms. Конфиденциальность: https://modpack.nether.pp.ua/privacy. Контакт проекта: https://t.me/NetherG.
+Условия: https://blockfield.pro/terms. Конфиденциальность: https://blockfield.pro/privacy. Контакт проекта: https://t.me/NetherG.
 
 ## Создание другого приложения Discord
 

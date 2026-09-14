@@ -2,7 +2,7 @@
 
 > **2026-08 architecture.** The launcher no longer talks to the Rust API server or the Filament CMS.
 > Everything it needs is static, served from the packwiz pack host (`VITE_BLOCKFIELD_PACK_URL`,
-> currently https://modpack.nether.pp.ua, repo `blockfield-modpack`):
+> currently https://blockfield.pro, repo `blockfield-modpack`):
 >
 > | File | Purpose |
 > | --- | --- |
