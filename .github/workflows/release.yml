@@ -68,8 +68,9 @@ jobs:
           detect --source=/repo --config=/repo/.gitleaks.toml --verbose --redact
 
   tauri-release:
+    # Runs alongside the checks: the private-repo release it creates is unusable by the updater
+    # anyway (see publish-launcher), and the public mirror below waits for every gate.
     name: Build launcher (${{ matrix.name }})
-    needs: [quality, secret-scan]
     environment: dev
     permissions:
       contents: write
@@ -79,10 +80,10 @@ jobs:
         include:
           # Tenki ships Ubuntu 24.04 only: AppImage stays on Blacksmith 22.04 for the glibc floor, Windows 2025 is Blacksmith's public beta.
           - name: linux-x86_64
-            os: blacksmith-4vcpu-ubuntu-2204
+            os: blacksmith-8vcpu-ubuntu-2204
             args: ''
           - name: windows-x86_64
-            os: blacksmith-4vcpu-windows-2025
+            os: blacksmith-8vcpu-windows-2025
             args: ''
     runs-on: ${{ matrix.os }}
     steps:
@@ -175,7 +176,7 @@ jobs:
     # The source repo is private, so its release assets are unusable by the Tauri updater.
     # Mirror bundles + latest.json into the public releases repo (https://github.com/netherg-io/blockfield-launcher-releases).
     name: Publish launcher release
-    needs: [tauri-release]
+    needs: [quality, secret-scan, tauri-release]
     runs-on: tenki-standard-small-2c-4g
     environment: dev
     permissions:
