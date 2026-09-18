@@ -124,7 +124,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
           setRoomMessage(
             id === 'lobby'
               ? 'После подготовки игра подключится к лобби.'
-              : 'После подготовки игра подключится к выбранной комнате.',
+              : 'После подготовки игра подключится к выбранному матчу.',
           )
           await handleDeploy()
         }
@@ -419,7 +419,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
               >
                 {(
                   [
-                    ['rooms', 'Комнаты'],
+                    ['rooms', 'Матчи'],
                     ['briefing', 'Брифинг'],
                     ['modpack', 'Сборка'],
                   ] as const

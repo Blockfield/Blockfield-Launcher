@@ -30,6 +30,7 @@ import type {
   SkinUploadResult,
 } from '../../lib/api'
 import { SkinPreview } from './SkinPreview'
+import { forgetFace } from '../../lib/player-face'
 import { invalidateModpackCheck } from '../../lib/modpack-check'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
 import { friendlyError, type FriendlyError } from '../../lib/errors'
@@ -211,6 +212,7 @@ export function SettingsScreen({
         capePath: capePath || null,
         slim,
       })
+      forgetFace(username)
       setSkinMessage(t('settings.skinUploaded'))
     } catch (e) {
       const friendly = friendlyError(e, 'skin-upload')
@@ -219,7 +221,7 @@ export function SettingsScreen({
     } finally {
       setSkinBusy(false)
     }
-  }, [skinPath, capePath, slim, t])
+  }, [username, skinPath, capePath, slim, t])
 
   const handleAccount = useCallback(
     async (command: 'logout' | 'change_password') => {
@@ -456,7 +458,7 @@ export function SettingsScreen({
                   compact
                   icon={<EyeOff size={14} />}
                   label="DISCORD RICH PRESENCE"
-                  hint="Показывать в Discord состояние игры, карту и комнату."
+                  hint="Показывать в Discord состояние игры, карту и матч."
                 >
                   <Toggle
                     label="Показывать активность в Discord"
