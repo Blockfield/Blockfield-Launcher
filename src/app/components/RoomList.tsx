@@ -10,6 +10,14 @@ const phases: Record<string, string> = {
   MATCH_END: 'Матч завершён',
 }
 
+const formats: Record<string, string> = { casual: 'Casual', ranked: 'Ranked' }
+// Mirrors CampaignMode.joinHint in the mod: open — join now, waiting — queue only, closed — full or running.
+const joinLabels: Record<string, string> = {
+  open: 'Войти',
+  waiting: 'Встать в очередь',
+  closed: 'Мест нет',
+}
+
 export const GAME_UPDATING = 'Игровой сервер обновляется — лобби открыто'
 export const GAME_MAINTENANCE = 'Идут технические работы'
 
@@ -44,24 +52,41 @@ export function RoomList({
             <button
               type="button"
               onClick={() => onJoin(room.id)}
-              disabled={disabled || updating || !room.joinable}
-              aria-label={`Войти в комнату: ${room.name}`}
+              disabled={disabled || updating || !room.joinable || room.admission === 'closed'}
+              aria-label={`${joinLabels[room.admission ?? 'open']} в комнату: ${room.name}`}
               className={`${controlClass} border-[#F5A524]/50 text-[#F3E7D0]`}
             >
-              Войти
+              {joinLabels[room.admission ?? 'open']}
             </button>
           </div>
           <article className="min-h-0 flex-1" aria-label={room.name}>
             <p
               className="truncate text-[12px] text-[#C7AE86]"
-              title={[room.mode, room.map, phases[room.phase] ?? room.phase]
+              title={[
+                room.format && formats[room.format],
+                room.mode,
+                room.map,
+                phases[room.phase] ?? room.phase,
+              ]
                 .filter(Boolean)
                 .join(' · ')}
             >
-              {[room.mode, room.map, phases[room.phase] ?? room.phase].filter(Boolean).join(' · ')}
+              {[
+                room.format && formats[room.format],
+                room.mode,
+                room.map,
+                phases[room.phase] ?? room.phase,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px] tabular-nums">
               <span className="text-[#C7AE86]">Игроков: {room.players}</span>
+              {room.ready && (
+                <span className="text-[#C7AE86]">
+                  Готовы: {room.ready.ready}/{room.ready.required}
+                </span>
+              )}
               {room.battle && (
                 <div aria-label="Очки команд" className="flex gap-4 font-semibold">
                   <span className="text-[#FF9D99]">Красные: {room.battle.red}</span>

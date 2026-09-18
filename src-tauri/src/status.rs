@@ -64,6 +64,20 @@ pub struct GameRoom {
     pub phase: String,
     pub players: u32,
     pub joinable: bool,
+    /// `casual` or `ranked`; absent on older servers, which only ever ran Casual rooms.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// `open` (join now), `waiting` (queue only) or `closed` (full or campaign running).
+    #[serde(default)]
+    pub admission: Option<String>,
+    #[serde(default)]
+    pub ready: Option<RoomReady>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomReady {
+    pub ready: u32,
+    pub required: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -446,6 +460,14 @@ fn room_snapshot(value: &serde_json::Value) -> Option<Vec<GameRoom>> {
                 || room.name.len() > 256
                 || room.mode.len() > 256
                 || room.map.len() > 256
+                || room
+                    .format
+                    .as_deref()
+                    .is_some_and(|f| !["casual", "ranked"].contains(&f))
+                || room
+                    .admission
+                    .as_deref()
+                    .is_some_and(|a| !["open", "waiting", "closed"].contains(&a))
         })
     {
         return None;
@@ -530,12 +552,22 @@ mod tests {
         let json = serde_json::json!({"available": true, "checkedAt": now, "rooms": [{
             "id": "12345678-1234-1234-1234-123456789abc", "name": "Комната 1", "mode": "Захват точек",
             "map": "Город", "phase": "PREPARING", "players": 4, "joinable": true,
-            "capacity": 16, "format": "5v5", "admission": "OPEN", "round": 2,
+            "capacity": 16, "format": "ranked", "admission": "open", "round": 2,
             "front": {"index": 1, "length": 3}, "ready": {"ready": 3, "required": 4}, "reserved": 2
         }]});
         let (up, rooms, maintenance) = rooms_response(&json).unwrap();
         assert!(up && maintenance.is_none());
         assert_eq!(rooms[0].players, 4);
+        assert_eq!(rooms[0].format.as_deref(), Some("ranked"));
+        assert_eq!(rooms[0].admission.as_deref(), Some("open"));
+        let ready = rooms[0].ready.as_ref().unwrap();
+        assert_eq!((ready.ready, ready.required), (3, 4));
+
+        json["rooms"][0]["format"] = serde_json::json!("5v5");
+        assert!(rooms_response(&json).is_none());
+        json["rooms"][0]["format"] = serde_json::json!("ranked");
+        json["rooms"][0]["admission"] = serde_json::json!("OPEN");
+        assert!(rooms_response(&json).is_none());
     }
 
     #[test]

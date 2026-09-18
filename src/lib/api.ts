@@ -63,6 +63,11 @@ export interface GameRoom {
   phase: string
   players: number
   joinable: boolean
+  /** `casual` or `ranked`; absent on older servers, which only ever ran Casual rooms. */
+  format?: 'casual' | 'ranked' | null
+  /** `open` (join now), `waiting` (queue only) or `closed` (full or campaign running). */
+  admission?: 'open' | 'waiting' | 'closed' | null
+  ready?: { ready: number; required: number } | null
 }
 
 export interface ServerStatus {

@@ -95,4 +95,43 @@ describe('RoomList', () => {
     expect(html).toContain('Красные нейтрализуют')
     expect(html).toContain('aria-valuenow="35"')
   })
+
+  it('shows the Ranked format, ready count and admission state', () => {
+    const room = {
+      id: '12345678-1234-1234-1234-123456789abc',
+      name: 'Комната 1',
+      mode: 'Захват точек',
+      map: 'Город',
+      phase: 'PREPARING',
+      players: 4,
+      joinable: true,
+      format: 'ranked' as const,
+      admission: 'waiting' as const,
+      ready: { ready: 3, required: 4 },
+    }
+    const html = renderToStaticMarkup(
+      <RoomList rooms={[room]} onJoin={() => {}} disabled={false} />,
+    )
+    expect(html).toContain('Ranked · Захват точек')
+    expect(html).toContain('Готовы: 3/4')
+    expect(html).toContain('Встать в очередь')
+  })
+
+  it('disables joining a closed room even when the server reports it joinable', () => {
+    const room = {
+      id: '12345678-1234-1234-1234-123456789abc',
+      name: 'Комната 1',
+      mode: 'Захват точек',
+      map: 'Город',
+      phase: 'GAME',
+      players: 4,
+      joinable: true,
+      admission: 'closed' as const,
+    }
+    const html = renderToStaticMarkup(
+      <RoomList rooms={[room]} onJoin={() => {}} disabled={false} />,
+    )
+    expect(html).toContain('Мест нет')
+    expect(html).toMatch(/disabled=""[^>]*aria-label="Мест нет в комнату: Комната 1"/)
+  })
 })
