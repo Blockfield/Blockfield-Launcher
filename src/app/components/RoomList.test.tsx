@@ -5,7 +5,7 @@ import { RoomList } from './RoomList'
 describe('RoomList', () => {
   it('keeps the lobby available when no rooms are open', () => {
     const html = renderToStaticMarkup(<RoomList rooms={[]} onJoin={() => {}} disabled={false} />)
-    expect(html).toContain('Открытых комнат пока нет')
+    expect(html).toContain('Сейчас матчей нет')
     expect(html).toContain('Войти в лобби')
   })
   it('keeps the lobby open while the game server updates', () => {
@@ -13,7 +13,7 @@ describe('RoomList', () => {
       <RoomList rooms={[]} updating onJoin={() => {}} disabled={false} />,
     )
     expect(html).toContain('Игровой сервер обновляется — лобби открыто')
-    expect(html).not.toContain('Открытых комнат пока нет')
+    expect(html).not.toContain('Сейчас матчей нет')
     expect(html).toContain('Войти в лобби')
   })
   it('shows the maintenance message instead of the generic update text', () => {
@@ -38,7 +38,7 @@ describe('RoomList', () => {
   it('shows one room at a time while keeping every room selectable', () => {
     const rooms = Array.from({ length: 20 }, (_, index) => ({
       id: `room-${index}`,
-      name: `Комната ${index + 1}`,
+      name: `Матч ${index + 1}`,
       mode: 'Захват точек',
       map: 'Город',
       phase: 'IDLE',
@@ -48,13 +48,13 @@ describe('RoomList', () => {
     const html = renderToStaticMarkup(<RoomList rooms={rooms} onJoin={() => {}} disabled={false} />)
     expect(html.match(/<article/g)).toHaveLength(1)
     expect(html.match(/role="option"/g)).toHaveLength(20)
-    expect(html).toContain('Войти в комнату: Комната 1')
-    expect(html).not.toContain('Войти в комнату: Комната 20')
+    expect(html).toContain('Войти: Матч 1')
+    expect(html).not.toContain('Войти: Матч 20')
   })
 
   it('explains an unavailable list and keeps the lobby action', () => {
     const html = renderToStaticMarkup(<RoomList rooms={null} onJoin={() => {}} disabled={false} />)
-    expect(html).toContain('Список комнат недоступен')
+    expect(html).toContain('Список матчей недоступен')
     expect(html).toContain('Войти в лобби')
   })
 
@@ -64,7 +64,7 @@ describe('RoomList', () => {
         rooms={[
           {
             id: '12345678-1234-1234-1234-123456789abc',
-            name: 'Комната 1',
+            name: 'Матч 1',
             mode: 'Захват точек',
             map: 'Город',
             phase: 'GAME',
@@ -99,7 +99,7 @@ describe('RoomList', () => {
   it('shows the Ranked format, ready count and admission state', () => {
     const room = {
       id: '12345678-1234-1234-1234-123456789abc',
-      name: 'Комната 1',
+      name: 'Матч 1',
       mode: 'Захват точек',
       map: 'Город',
       phase: 'PREPARING',
@@ -120,7 +120,7 @@ describe('RoomList', () => {
   it('disables joining a closed room even when the server reports it joinable', () => {
     const room = {
       id: '12345678-1234-1234-1234-123456789abc',
-      name: 'Комната 1',
+      name: 'Матч 1',
       mode: 'Захват точек',
       map: 'Город',
       phase: 'GAME',
@@ -132,6 +132,6 @@ describe('RoomList', () => {
       <RoomList rooms={[room]} onJoin={() => {}} disabled={false} />,
     )
     expect(html).toContain('Мест нет')
-    expect(html).toMatch(/disabled=""[^>]*aria-label="Мест нет в комнату: Комната 1"/)
+    expect(html).toMatch(/disabled=""[^>]*aria-label="Мест нет: Матч 1"/)
   })
 })

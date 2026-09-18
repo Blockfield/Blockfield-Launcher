@@ -44,7 +44,7 @@ export function RoomList({
   const nextRoom = rooms?.[selectedIndex + 1]
 
   return (
-    <section aria-label="Игровые комнаты" className="flex min-h-0 flex-1 flex-col gap-2">
+    <section aria-label="Идущие матчи" className="flex min-h-0 flex-1 flex-col gap-2">
       {room ? (
         <>
           <div className="flex min-w-0 items-center gap-3">
@@ -53,7 +53,7 @@ export function RoomList({
               type="button"
               onClick={() => onJoin(room.id)}
               disabled={disabled || updating || !room.joinable || room.admission === 'closed'}
-              aria-label={`${joinLabels[room.admission ?? 'open']} в комнату: ${room.name}`}
+              aria-label={`${joinLabels[room.admission ?? 'open']}: ${room.name}`}
               className={`${controlClass} border-[#F5A524]/50 text-[#F3E7D0]`}
             >
               {joinLabels[room.admission ?? 'open']}
@@ -100,12 +100,12 @@ export function RoomList({
       ) : (
         <p role="status" className="flex-1 text-[12px] leading-relaxed text-[#C7AE86]">
           {maintenance != null
-            ? `${GAME_MAINTENANCE}${maintenance ? `: ${maintenance}` : '.'} Комнаты откроются после завершения работ.`
+            ? `${GAME_MAINTENANCE}${maintenance ? `: ${maintenance}` : '.'} Матчи откроются после завершения работ.`
             : updating
               ? `${GAME_UPDATING}. Нажмите «Играть» — вас перенесут в игру, когда сервер запустится.`
               : !rooms
-                ? 'Список комнат недоступен. Повторим запрос автоматически.'
-                : 'Открытых комнат пока нет. Создать комнату можно в игре.'}
+                ? 'Список матчей недоступен. Повторим запрос автоматически.'
+                : 'Сейчас матчей нет. Нажмите «Играть» и выберите режим в хабе: Casual или Рейтинг.'}
         </p>
       )}
       <div className="mt-auto flex shrink-0 items-center justify-between gap-3 border-t border-[#2A2116] pt-2">
@@ -114,7 +114,7 @@ export function RoomList({
             <>
               <button
                 type="button"
-                aria-label="Предыдущая комната"
+                aria-label="Предыдущий матч"
                 disabled={!previousRoom}
                 onClick={() => previousRoom && setSelectedId(previousRoom.id)}
                 className={controlClass}
@@ -126,7 +126,7 @@ export function RoomList({
               </span>
               <button
                 type="button"
-                aria-label="Следующая комната"
+                aria-label="Следующий матч"
                 disabled={!nextRoom}
                 onClick={() => nextRoom && setSelectedId(nextRoom.id)}
                 className={controlClass}
@@ -260,7 +260,7 @@ function RoomSelect({
         ref={trigger}
         type="button"
         role="combobox"
-        aria-label="Выбрать игровую комнату"
+        aria-label="Выбрать матч"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={id}
@@ -335,7 +335,7 @@ function RoomSelect({
       <ul
         id={id}
         role="listbox"
-        aria-label="Игровые комнаты"
+        aria-label="Идущие матчи"
         hidden={!open}
         className="absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-y-auto overscroll-contain border border-[#8A571C] bg-[#11100D] p-1 [scrollbar-color:#8A571C_#11100D] [scrollbar-width:thin]"
       >

@@ -456,7 +456,7 @@ export function SettingsScreen({
                   compact
                   icon={<EyeOff size={14} />}
                   label="DISCORD RICH PRESENCE"
-                  hint="Показывать в Discord состояние игры, карту и комнату."
+                  hint="Показывать в Discord состояние игры, карту и матч."
                 >
                   <Toggle
                     label="Показывать активность в Discord"
