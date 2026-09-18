@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' customprotocol: asset:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: https://mc-heads.net https://skins.blockfield.pro; connect-src 'self' ipc: http://ipc.localhost http://localhost:5173 https://blockfield.pro; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'"
+      "csp": "default-src 'self' customprotocol: asset:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: https://skins.blockfield.pro; connect-src 'self' ipc: http://ipc.localhost http://localhost:5173 https://blockfield.pro; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'"
     }
   },
   "plugins": {
