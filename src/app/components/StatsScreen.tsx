@@ -22,6 +22,7 @@ import {
 } from '../../lib/stats'
 
 const PAGE_SIZE = 25
+const RECENT_MATCHES_SHOWN = 4
 
 const MODES = [
   ['', 'Все'],
@@ -279,7 +280,7 @@ function SelfCard({ uuid, self }: { uuid: string; self: StatsResult<PlayerStats>
   const player = self?.data
   const totals = player?.totals
   return (
-    <aside aria-label="Вы" className="bg-[#0B0906] min-h-0 overflow-auto p-4 flex flex-col gap-3">
+    <aside aria-label="Вы" className="bg-[#0B0906] min-h-0 overflow-hidden p-4 flex flex-col gap-2">
       <SectionHeader label="Вы" code={totals?.rank ? `#${totals.rank}` : ''} />
       {!self ? (
         <Loading />
@@ -342,15 +343,16 @@ function SelfCard({ uuid, self }: { uuid: string; self: StatsResult<PlayerStats>
             <div>
               <h2 className={subheadClass}>Последние бои</h2>
               <ul className="text-[11px] tabular-nums">
+                {/* Fixed count (not scrolled): fits the panel at the min 1280x720 window. */}
                 {[...player.history]
                   .sort((a, b) => b.endedAt - a.endedAt)
-                  .slice(0, 10)
+                  .slice(0, RECENT_MATCHES_SHOWN)
                   .map((entry) => (
                     <li key={entry.eventId} className="grid grid-cols-[1fr_auto_auto] gap-2 py-0.5">
                       <span className="truncate text-[#8E7A5E]">
                         {formatTime(entry.endedAt)} · {MODE_LABELS[entry.mode] ?? entry.mode}
                       </span>
-                      <span className={resultClass(entry)}>{resultLabel(entry)}</span>
+                      <span className={resultClass(entry, uuid)}>{resultLabel(entry, uuid)}</span>
                       <span className="text-[#C7AE86]">{formatKd(entry)}</span>
                     </li>
                   ))}
@@ -375,15 +377,38 @@ function SelfCard({ uuid, self }: { uuid: string; self: StatsResult<PlayerStats>
 
 const subheadClass = 'mb-1 text-[10px] tracking-[0.18em] text-[#8E7A5E]'
 
-type Outcome = Pick<PlayerStats['history'][number], 'winner' | 'team'>
-const resultLabel = ({ winner, team }: Outcome) =>
-  winner === 'NONE' || !winner ? 'Без итога' : winner === team ? 'Победа' : 'Поражение'
-const resultClass = ({ winner, team }: Outcome) =>
-  winner === 'NONE' || !winner
-    ? 'text-[#8E7A5E]'
-    : winner === team
-      ? 'text-[#82D66B]'
-      : 'text-[#c98b8b]'
+type Outcome = Pick<
+  PlayerStats['history'][number],
+  'reason' | 'winner' | 'team' | 'mode' | 'winnerUuid'
+>
+
+// Mirrors blockfield-web's reasons map + outcomeLabel (src/lib/stats-outcome.ts): a match
+// that didn't finish normally has no winner to report, and deathmatch tracks a winning
+// player rather than a team.
+const INTERRUPTED_REASONS = new Set(['abandoned', 'stopped', 'shutdown', 'error'])
+
+function resultLabel({ reason, winner, team, mode, winnerUuid }: Outcome, ownUuid: string) {
+  if (reason === 'draw') return 'Ничья'
+  if (INTERRUPTED_REASONS.has(reason)) return 'Прерван'
+  if (reason !== 'completed') return '—'
+  if (mode === 'deathmatch') {
+    if (!winnerUuid) return '—'
+    return winnerUuid.toLowerCase() === ownUuid.toLowerCase() ? 'Победа' : 'Поражение'
+  }
+  if (winner === 'NONE' || team === 'NONE' || !winner) return 'Ничья'
+  return winner === team ? 'Победа' : 'Поражение'
+}
+
+function resultClass(entry: Outcome, ownUuid: string) {
+  switch (resultLabel(entry, ownUuid)) {
+    case 'Победа':
+      return 'text-[#82D66B]'
+    case 'Поражение':
+      return 'text-[#c98b8b]'
+    default:
+      return 'text-[#8E7A5E]'
+  }
+}
 
 function FilterGroup({
   label,
