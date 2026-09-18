@@ -1,5 +1,5 @@
 import { useGameState, gameStateLabel, launchGame } from '../../lib/game-state'
-import { checkModpack, invalidateModpackCheck } from '../../lib/modpack-check'
+import { checkModpack, invalidateModpackCheck, useModpackVersion } from '../../lib/modpack-check'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Play,
@@ -70,12 +70,14 @@ type LogEntry = { ts: string; tone: 'ok' | 'info' | 'dim' | 'warn'; msg: string 
 type SpeedSample = { bytes: number; time: number }
 const SPEED_UPDATE_MS = 750
 
+// 4 stages max (fit the panel with no scroll at the min 1280x720 window): merges the
+// backend's finer-grained phases (setup/java/loader/prune/modpack -> download,
+// runtime/integrity -> prepare).
 const INITIAL_STEPS: Array<{ label: TKey; status: StepStatus }> = [
   { label: 'update.step.verify', status: 'pending' },
-  { label: 'update.step.setup', status: 'pending' },
   { label: 'update.step.download', status: 'pending' },
-  { label: 'update.step.runtime', status: 'pending' },
-  { label: 'update.step.integrity', status: 'pending' },
+  { label: 'update.step.prepare', status: 'pending' },
+  { label: 'update.step.launch', status: 'pending' },
 ]
 
 const freshSteps = () => INITIAL_STEPS.map((step) => ({ ...step }))
@@ -100,7 +102,9 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
   const [logLines, setLogLines] = useState<LogEntry[]>([])
   const [error, setError] = useState<string | null>(null)
   const [errorContext, setErrorContext] = useState<ErrorContext>('modpack-check')
-  const [manifestVersion, setManifestVersion] = useState('')
+  // Single source of truth (src/lib/modpack-check.ts): same store "Играть" reads, so the
+  // patch number shown here can't drift from what the deploy tab shows.
+  const sharedVersion = useModpackVersion()
   const [launching, setLaunching] = useState(false)
   const [steps, setSteps] = useState<Array<{ label: TKey; status: StepStatus }>>(freshSteps)
   const [runToken, setRunToken] = useState(0)
@@ -112,6 +116,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
   const startedRef = useRef(false)
   const runningRef = useRef(false)
   const lastRequestRef = useRef(updateRequest)
+  const syncedVersionRef = useRef<string | null>(null)
 
   const addLog = useCallback((msg: string, tone: LogEntry['tone'] = 'info') => {
     setLogLines((prev) => [...prev.slice(-49), { ts: timestamp(), tone, msg }])
@@ -162,23 +167,22 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
       setCanCancel(status.cancelable)
       addLog(status.message, status.phase === 'ready' ? 'ok' : 'info')
 
-      if (status.phase === 'setup' || status.phase === 'java' || status.phase === 'loader') {
+      if (
+        status.phase === 'setup' ||
+        status.phase === 'java' ||
+        status.phase === 'loader' ||
+        status.phase === 'prune' ||
+        status.phase === 'modpack'
+      ) {
         setPhase('downloading')
         setStep(1, 'active')
         return
       }
 
-      if (status.phase === 'prune' || status.phase === 'modpack') {
+      if (status.phase === 'runtime') {
         setPhase('downloading')
         setStep(1, 'done')
         setStep(2, 'active')
-        return
-      }
-
-      if (status.phase === 'runtime') {
-        setPhase('downloading')
-        setStep(2, 'done')
-        setStep(3, 'active')
         return
       }
 
@@ -186,13 +190,14 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
         setCanCancel(false)
         setStep(1, 'done')
         setStep(2, 'done')
-        setStep(3, 'done')
         return
       }
 
       if (status.phase === 'launch') {
         setPhase('launching')
         setCanCancel(false)
+        setStep(2, 'done')
+        setStep(3, 'active')
       }
     },
     [addLog, setStep],
@@ -258,7 +263,6 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
 
       if (!needAnyDownload) {
         addLog('Modpack is up to date — no download needed.', 'ok')
-        setManifestVersion(versionResult.remoteVersion)
         setProgress(100)
         setFileCount(versionResult.fileCount)
         setTotalBytes(versionResult.totalSize)
@@ -267,12 +271,10 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
         setStep(0, 'done')
         setStep(1, 'done')
         setStep(2, 'done')
-        setStep(3, 'done')
-        setStep(4, 'done')
+        // Step 3 (launch) stays pending until the player actually launches.
         return
       }
 
-      setManifestVersion(versionResult.remoteVersion)
       setFileCount(versionResult.fileCount)
       setTotalBytes(versionResult.totalSize)
 
@@ -294,8 +296,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
         setProgress(100)
         setCanCancel(false)
         setStep(1, 'done')
-        setStep(2, 'done')
-        setStep(3, 'done')
+        setStep(2, 'active')
       } catch (e) {
         if (cancelledRef.current) {
           addLog('Download cancelled by operator.', 'dim')
@@ -315,14 +316,13 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
 
       invalidateModpackCheck()
       // packwiz-installer verifies hashes during the sync above.
-      setStep(4, 'active')
       setPhase('verifying')
       setStatusMessage('')
       setCanCancel(false)
       addLog('Finalizing verified files...', 'info')
 
       addLog('File integrity checked by packwiz-installer during sync.', 'ok')
-      setStep(4, 'done')
+      setStep(2, 'done')
 
       addLog(`Modpack ${versionResult.remoteVersion} installed successfully.`, 'ok')
       addLog('Ready for deployment.', 'info')
@@ -363,7 +363,6 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     setFileCount(0)
     setDownloadedBytes(0)
     setTotalBytes(0)
-    setManifestVersion('')
     setMirror('—')
     setMirrorOnline(null)
     setPhase('checking')
@@ -378,6 +377,21 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     // The screen stays mounted to preserve downloads while navigating between tabs.
     if (!runningRef.current && !gameBusy && !launching) handleRetry()
   }, [updateRequest, gameBusy, launching, handleRetry])
+
+  // App.tsx polls the shared version store on a timer/focus regardless of the active tab.
+  // If it finds a newer pack while this screen is sitting idle, re-run the sync here too —
+  // otherwise "Обновления" would keep showing the version it last synced against.
+  useEffect(() => {
+    const remote = sharedVersion?.remoteVersion
+    if (remote === undefined) return
+    if (syncedVersionRef.current === null) {
+      syncedVersionRef.current = remote
+      return
+    }
+    if (syncedVersionRef.current === remote) return
+    syncedVersionRef.current = remote
+    if (!runningRef.current && !gameBusy && !launching) handleRetry()
+  }, [sharedVersion, gameBusy, launching, handleRetry])
 
   const handleCancel = useCallback(async () => {
     cancelledRef.current = true
@@ -400,12 +414,14 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     setCanCancel(false)
     resetSpeed()
     addLog('Launching game...', 'info')
+    setStep(3, 'active')
     try {
       unlistenStatusRef.current = await listenLauncherStatus(applyBackendStatus)
       unlistenRef.current = await listenDownloadProgress(applyProgress)
       await launchGame()
       addLog('Game process started.', 'ok')
       setStatusMessage('')
+      setStep(3, 'done')
       setPhase('complete')
     } catch (e) {
       addLog(`ERROR: Launch failed — ${String(e)}`, 'warn')
@@ -419,7 +435,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
       unlistenStatusRef.current = null
       setLaunching(false)
     }
-  }, [addLog, applyBackendStatus, applyProgress, launching, gameBusy, resetSpeed, t])
+  }, [addLog, applyBackendStatus, applyProgress, launching, gameBusy, resetSpeed, setStep, t])
 
   const statusText = () => {
     if (gameBusy) return gameStateLabel(game.phase)
@@ -429,7 +445,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
       case 'downloading':
         return statusMessage || t('update.downloading')
       case 'verifying':
-        return t('update.step.integrity')
+        return t('update.step.prepare')
       case 'launching':
         return statusMessage || t('main.launching')
       case 'complete':
@@ -488,7 +504,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
                 {operationName}
               </h1>
               <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">
-                {t('update.patch', { v: manifestVersion || '...' })}
+                {t('update.patch', { v: sharedVersion?.remoteVersion || '...' })}
               </span>
             </div>
             {error ? (
@@ -676,7 +692,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
             <div
               tabIndex={0}
               aria-label={t('update.steps')}
-              className="mt-3 flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain"
+              className="mt-3 flex flex-col gap-2 flex-1 min-h-0 overflow-hidden"
             >
               {steps.map((step) => (
                 <Step key={step.label} label={t(step.label)} status={step.status} t={t} />

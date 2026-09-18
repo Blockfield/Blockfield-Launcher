@@ -1,4 +1,5 @@
 import { listen } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useMemo, useState } from 'react'
 import { WindowChrome } from './components/WindowChrome'
 import { Shell } from './components/Shell'
@@ -9,8 +10,8 @@ import { StatsScreen } from './components/StatsScreen'
 import { FirstRunScreen } from './components/FirstRunScreen'
 import { LoginScreen } from './components/LoginScreen'
 import { I18nContext, translate } from './i18n'
-import type { AccountStatus, LauncherConfig } from '../lib/api'
-import { checkModpack } from '../lib/modpack-check'
+import type { AccountStatus, LauncherConfig, VersionCheckResult } from '../lib/api'
+import { checkModpack, invalidateModpackCheck, getModpackVersionSnapshot } from '../lib/modpack-check'
 import { checkLauncherUpdate } from '../lib/launcher-update'
 import { watchGameState } from '../lib/game-state'
 import { listenLauncherStatus } from '../lib/events'
@@ -99,6 +100,31 @@ export default function App() {
       .catch((e) => setConfigError(friendlyError(e, 'settings-load')))
       .finally(() => setConfigLoaded(true))
   }, [configAttempt])
+
+  // Single timer/focus probe for the shared pack-version store (src/lib/modpack-check.ts).
+  // Runs regardless of which tab is active, so "Играть" and "Обновления" always converge
+  // after a background check instead of each screen polling (and caching) independently.
+  useEffect(() => {
+    if (!isTauri()) return
+    const probe = () => {
+      const current = getModpackVersionSnapshot()
+      if (!current) return
+      void invoke<VersionCheckResult>('check_modpack_version')
+        .then((result) => {
+          if (result.remoteVersion !== current.remoteVersion) {
+            invalidateModpackCheck()
+            checkModpack().catch((error) => console.error('Version re-check failed:', error))
+          }
+        })
+        .catch(() => {})
+    }
+    const interval = window.setInterval(probe, 60_000)
+    window.addEventListener('focus', probe)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', probe)
+    }
+  }, [])
 
   // Check for launcher updates on mount
   useEffect(() => {

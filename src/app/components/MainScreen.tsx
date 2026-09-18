@@ -1,6 +1,6 @@
 import { GAME_MAINTENANCE, GAME_UPDATING, RoomList } from './RoomList'
 import { useGameState, gameStateLabel, launchGame } from '../../lib/game-state'
-import { checkModpack, invalidateModpackCheck } from '../../lib/modpack-check'
+import { checkModpack, useModpackVersion } from '../../lib/modpack-check'
 import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useState, useRef, type ReactNode } from 'react'
 import {
@@ -28,7 +28,6 @@ import {
   fetchServerStatus,
   type DownloadProgress,
   type ServerStatus as ServerStatusData,
-  type VersionCheckResult,
 } from '../../lib/api'
 import { contentText, localizedContentText, useLauncherContent } from '../../lib/content'
 
@@ -58,7 +57,9 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   const game = useGameState()
   const gameBusy = game.phase !== 'idle'
   const content = useLauncherContent()
-  const [versionInfo, setVersionInfo] = useState<VersionCheckResult | null>(null)
+  // Single source of truth (src/lib/modpack-check.ts): "Обновления" reads the same store,
+  // so the two tabs can't show different installed/remote versions.
+  const versionInfo = useModpackVersion()
   const [checking, setChecking] = useState(true)
   const [checkError, setCheckError] = useState<string | null>(null)
   const [launching, setLaunching] = useState(false)
@@ -182,44 +183,23 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
     setCheckError(null)
     setLaunchError(null)
     try {
-      const result = await checkModpack(verify)
-      setVersionInfo(result)
+      // Result lands in the shared store (src/lib/modpack-check.ts); versionInfo above re-renders.
+      await checkModpack(verify)
     } catch (e) {
       console.error('Failed to check modpack version:', e)
-      setVersionInfo(null)
       setCheckError(String(e))
     } finally {
       setChecking(false)
     }
   }, [])
 
-  // Check version on mount (if running in Tauri)
+  // Check version on mount (if running in Tauri). The periodic re-check on a timer/focus that
+  // keeps the shared store fresh regardless of the active tab lives in App.tsx.
   useEffect(() => {
     if (!isTauri()) return
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync: this is an external system subscription (Tauri IPC)
     checkVersion()
   }, [checkVersion])
-
-  // Only the cheap version probe runs periodically; the full check (with file verification) reruns
-  // only when the remote pack version actually changed.
-  useEffect(() => {
-    if (!isTauri()) return
-    const probe = () =>
-      invoke<VersionCheckResult>('check_modpack_version')
-        .then((result) => {
-          if (versionInfo && result.remoteVersion !== versionInfo.remoteVersion) {
-            invalidateModpackCheck()
-            checkVersion()
-          }
-        })
-        .catch(() => {})
-    const interval = window.setInterval(probe, 60_000)
-    window.addEventListener('focus', probe)
-    return () => {
-      window.clearInterval(interval)
-      window.removeEventListener('focus', probe)
-    }
-  }, [versionInfo, checkVersion])
 
   useEffect(() => {
     let active = true
