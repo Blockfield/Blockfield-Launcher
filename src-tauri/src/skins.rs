@@ -76,7 +76,7 @@ pub struct SkinPreview {
     pub skin: Option<String>,
     pub cape: Option<String>,
     pub slim: bool,
-    /// `custom` when the player has a launcher-uploaded skin, `mojang` for a licensed name, `none` otherwise.
+    /// `custom` when the player has a launcher-uploaded skin, `mojang` for a licensed name, `none` for the bundled vanilla Steve otherwise.
     pub source: &'static str,
 }
 
@@ -100,9 +100,13 @@ pub async fn preview_skin(
         .map_err(|e| e.to_string())?;
 
     let mut preview = SkinPreview {
-        skin: None,
+        skin: Some(format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD
+                .encode(include_bytes!("../../public/skins/steve.png"))
+        )),
         cape: None,
-        slim,
+        slim: false,
         source: "none",
     };
     if valid_username(&username) {
@@ -114,9 +118,10 @@ pub async fn preview_skin(
             if let Some(textures) = yggdrasil_textures(&client, profiles, sessions, &username).await
             {
                 let data_url = |png: String| format!("data:image/png;base64,{png}");
-                preview.skin = fetch_png(&client, textures["SKIN"]["url"].as_str())
-                    .await
-                    .map(data_url);
+                let Some(skin) = fetch_png(&client, textures["SKIN"]["url"].as_str()).await else {
+                    continue;
+                };
+                preview.skin = Some(data_url(skin));
                 preview.cape = fetch_png(&client, textures["CAPE"]["url"].as_str())
                     .await
                     .map(data_url);
@@ -251,11 +256,17 @@ async fn yggdrasil_textures(
         .iter()
         .find(|p| p["name"] == "textures")?["value"]
         .as_str()?;
+    textures_with_skin(encoded)
+}
+
+fn textures_with_skin(encoded: &str) -> Option<Value> {
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .ok()?;
     let value: Value = serde_json::from_slice(&decoded).ok()?;
-    value.get("textures").cloned()
+    let textures = value.get("textures")?;
+    textures["SKIN"]["url"].as_str()?;
+    Some(textures.clone())
 }
 
 async fn fetch_png(client: &reqwest::Client, url: Option<&str>) -> Option<String> {
@@ -293,6 +304,24 @@ fn read_texture(path: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_profile_does_not_stop_skin_fallback() {
+        let encode = |textures: Value| {
+            base64::engine::general_purpose::STANDARD
+                .encode(json!({ "textures": textures }).to_string())
+        };
+        assert!(textures_with_skin(&encode(json!({}))).is_none());
+        assert!(textures_with_skin("invalid").is_none());
+        let textures = json!({ "SKIN": { "url": "https://textures.minecraft.net/texture/test", "metadata": { "model": "slim" } } });
+        assert_eq!(
+            textures_with_skin(&encode(textures.clone())),
+            Some(textures)
+        );
+        let png = include_bytes!("../../public/skins/steve.png");
+        assert!(png.starts_with(PNG_MAGIC));
+        assert_eq!(&png[16..24], &[0, 0, 0, 64, 0, 0, 0, 64]);
+    }
 
     #[test]
     fn textures_must_be_small_pngs() {

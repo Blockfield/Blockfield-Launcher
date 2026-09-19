@@ -121,6 +121,7 @@ const ru = {
   'settings.skinPreview.custom': 'ВАШ СКИН',
   'settings.skinPreview.mojang': 'ЛИЦЕНЗИОННЫЙ СКИН',
   'settings.skinPreview.local': 'ПРЕДПРОСМОТР ФАЙЛА',
+  'settings.skinPreview.default': 'СТАНДАРТНЫЙ СКИН',
   'settings.skinPreview.none': 'СКИН НЕ НАЙДЕН',
   'settings.runtime': 'СРЕДА',
   'settings.launcher': 'ЛАУНЧЕР',

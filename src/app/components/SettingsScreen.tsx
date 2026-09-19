@@ -644,9 +644,11 @@ export function SettingsScreen({
                     caption={t(
                       skinPath
                         ? 'settings.skinPreview.local'
-                        : skinPreview?.source === 'mojang'
-                          ? 'settings.skinPreview.mojang'
-                          : 'settings.skinPreview.custom',
+                        : skinPreview?.source === 'none'
+                          ? 'settings.skinPreview.default'
+                          : skinPreview?.source === 'mojang'
+                            ? 'settings.skinPreview.mojang'
+                            : 'settings.skinPreview.custom',
                     )}
                     fallback={t('settings.skinPreview.none')}
                   />

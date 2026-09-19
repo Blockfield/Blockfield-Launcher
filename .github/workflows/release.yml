@@ -211,7 +211,8 @@ jobs:
           body: |
             Blockfield Launcher ${{ env.VERSION }}.
 
-            - В новый аккаунт без скина автоматически копируется скин (и плащ) Minecraft с тем же ником.
+            - Сайт и лаунчер выбирают скин в одинаковом порядке: Blockfield ID → Mojang по нику → стандартный Стив.
+            - Исправлен поиск скина Mojang при пустом ответе сервера Blockfield ID.
 
           draft: false
           prerelease: false
