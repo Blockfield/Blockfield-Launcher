@@ -101,7 +101,6 @@ const ru = {
   'update.eta': '~ 1м 42с',
 
   'settings.configuration': 'КОНФИГУРАЦИЯ',
-  'settings.operator': 'ОПЕРАТОР · {handle}',
   'settings.preferences': '/ ПАРАМЕТРЫ ЛАУНЧЕРА',
   'settings.tab.general': 'ОБЩИЕ',
   'settings.tab.runtime': 'JAVA И ПАМЯТЬ',

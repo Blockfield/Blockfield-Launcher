@@ -11,15 +11,27 @@ import { FirstRunScreen } from './components/FirstRunScreen'
 import { LoginScreen } from './components/LoginScreen'
 import { I18nContext, translate } from './i18n'
 import type { AccountStatus, LauncherConfig, VersionCheckResult } from '../lib/api'
-import { checkModpack, invalidateModpackCheck, getModpackVersionSnapshot } from '../lib/modpack-check'
+import {
+  checkModpack,
+  invalidateModpackCheck,
+  getModpackVersionSnapshot,
+} from '../lib/modpack-check'
 import { checkLauncherUpdate } from '../lib/launcher-update'
 import { watchGameState } from '../lib/game-state'
 import { listenLauncherStatus } from '../lib/events'
 import { LoaderCircle } from 'lucide-react'
 import { ErrorDetail } from './components/ui-bits'
 import { friendlyError, type FriendlyError } from '../lib/errors'
+import { loadStats, type PlayerStats } from '../lib/stats'
 
 type Screen = 'main' | 'update' | 'stats' | 'settings'
+
+const ROLE_LABELS: Record<string, string> = {
+  builder: 'строитель',
+  moderator: 'модератор',
+  admin: 'администратор',
+  owner: 'владелец',
+}
 
 /** Whether we're running inside Tauri (vs browser dev). */
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -28,6 +40,18 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general')
   const [screen, setScreen] = useState<Screen>('main')
   const [account, setAccount] = useState<AccountStatus | null>(null)
+  const [staff, setStaff] = useState<{ uuid: string; role: string | null } | null>(null)
+  const uuid = account?.loggedIn ? account.uuid : null
+  useEffect(() => {
+    if (!uuid) return
+    let current = true
+    void loadStats<PlayerStats>({ kind: 'player', uuid, query: {} }).then(
+      (result) => current && setStaff({ uuid, role: result.data?.profile.role ?? null }),
+    )
+    return () => {
+      current = false
+    }
+  }, [uuid])
   const [updatesVisited, setUpdatesVisited] = useState(false)
   const [updateRequest, setUpdateRequest] = useState(0)
   const [commandError, setCommandError] = useState<string | null>(null)
@@ -199,7 +223,10 @@ export default function App() {
     <I18nContext.Provider value={i18n}>
       <WindowChrome>
         <Shell
-          user={{ username: account.username || '—', role: 'игрок' }}
+          user={{
+            username: account.username || '—',
+            role: ROLE_LABELS[(staff?.uuid === uuid && staff.role) || ''] ?? 'игрок',
+          }}
           active={screen}
           onNavigate={navigate}
           onLauncherUpdate={() => {

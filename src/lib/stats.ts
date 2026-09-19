@@ -87,7 +87,7 @@ export interface RatingHistoryEntry {
 export interface PlayerStats {
   schemaVersion: number
   checkedAt?: string
-  profile: { uuid: string; name: string; lastSeen: number }
+  profile: { uuid: string; name: string; lastSeen: number; role?: string | null }
   totals: StatsRow | null
   classes: unknown[]
   campaigns: { completed: number; wins: number | null }
