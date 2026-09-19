@@ -587,16 +587,7 @@ fn run_packwiz_installer(
         if let Some((done, total)) = installer_progress(&line) {
             let _ = app_handle.emit(
                 "download://progress",
-                crate::download::DownloadProgressPayload {
-                    file_path: line.clone(),
-                    file_index: done,
-                    file_count: total,
-                    bytes_downloaded: 0,
-                    file_bytes_total: 0,
-                    total_bytes_downloaded: done as u64,
-                    total_bytes_all: total as u64,
-                    speed_bytes_per_sec: 0,
-                },
+                crate::download::DownloadProgressPayload::files(line.clone(), done, total),
             );
         } else {
             emit_status(app_handle, "modpack", line.clone(), true);

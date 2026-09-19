@@ -24,6 +24,7 @@ export interface VersionCheckResult {
 
 /** Progress payload emitted by the backend during download. */
 export interface DownloadProgress {
+  unit?: 'bytes' | 'files'
   filePath: string
   fileIndex: number
   fileCount: number

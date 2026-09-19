@@ -95,6 +95,8 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
         unlistenProgress = await listenDownloadProgress((p: DownloadProgress) => {
           if (p.totalBytesAll > 0) {
             setLaunchProgress(Math.min(100, (p.totalBytesDownloaded / p.totalBytesAll) * 100))
+          } else {
+            setLaunchProgress(null)
           }
           if (p.filePath) setLaunchStatus(p.filePath)
         })

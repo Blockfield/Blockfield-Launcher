@@ -91,6 +91,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
   const [statusMessage, setStatusMessage] = useState('')
   const [canCancel, setCanCancel] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [progressUnit, setProgressUnit] = useState<'bytes' | 'files'>('bytes')
   const [currentFile, setCurrentFile] = useState('')
   const [fileIdx, setFileIdx] = useState(0)
   const [fileCount, setFileCount] = useState(0)
@@ -131,35 +132,46 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     setSpeed('—')
   }, [])
 
-  const applyProgress = useCallback((p: DownloadProgress) => {
-    if (p.totalBytesAll > 0) {
-      const pct = (p.totalBytesDownloaded / p.totalBytesAll) * 100
-      setProgress(Math.min(100, pct))
+  const applyProgress = useCallback(
+    (p: DownloadProgress) => {
+      const unit = p.unit ?? 'bytes'
+      setProgressUnit(unit)
+      setFileIdx(p.fileIndex)
+      setFileCount(p.fileCount)
+      if (p.filePath) setCurrentFile(p.filePath)
       setTotalBytes(p.totalBytesAll)
-    }
-    setFileIdx(p.fileIndex)
-    if (p.fileCount > 0) setFileCount(p.fileCount)
-    if (p.filePath) setCurrentFile(p.filePath)
-    setDownloadedBytes(p.totalBytesDownloaded)
+      setDownloadedBytes(p.totalBytesDownloaded)
+      if (unit === 'files') {
+        setProgress(p.fileCount > 0 ? Math.min(100, (p.fileIndex / p.fileCount) * 100) : 0)
+        resetSpeed()
+        return
+      }
+      if (p.totalBytesAll > 0) {
+        const pct = (p.totalBytesDownloaded / p.totalBytesAll) * 100
+        setProgress(Math.min(100, pct))
+        setTotalBytes(p.totalBytesAll)
+      }
 
-    const now = performance.now()
-    const previous = speedSampleRef.current
-    const finished = p.totalBytesAll > 0 && p.totalBytesDownloaded >= p.totalBytesAll
-    if (!previous) {
+      const now = performance.now()
+      const previous = speedSampleRef.current
+      const finished = p.totalBytesAll > 0 && p.totalBytesDownloaded >= p.totalBytesAll
+      if (!previous) {
+        speedSampleRef.current = { bytes: p.totalBytesDownloaded, time: now }
+        setSpeed(p.speedBytesPerSec > 0 ? formatSpeed(p.speedBytesPerSec) : '—')
+        return
+      }
+
+      if (!finished && now - previous.time < SPEED_UPDATE_MS) return
+
+      const bytesPerSec =
+        now > previous.time
+          ? ((p.totalBytesDownloaded - previous.bytes) * 1000) / (now - previous.time)
+          : p.speedBytesPerSec
       speedSampleRef.current = { bytes: p.totalBytesDownloaded, time: now }
-      setSpeed(p.speedBytesPerSec > 0 ? formatSpeed(p.speedBytesPerSec) : '—')
-      return
-    }
-
-    if (!finished && now - previous.time < SPEED_UPDATE_MS) return
-
-    const bytesPerSec =
-      now > previous.time
-        ? ((p.totalBytesDownloaded - previous.bytes) * 1000) / (now - previous.time)
-        : p.speedBytesPerSec
-    speedSampleRef.current = { bytes: p.totalBytesDownloaded, time: now }
-    setSpeed(bytesPerSec > 0 && !finished ? formatSpeed(bytesPerSec) : '—')
-  }, [])
+      setSpeed(bytesPerSec > 0 && !finished ? formatSpeed(bytesPerSec) : '—')
+    },
+    [resetSpeed],
+  )
 
   const applyBackendStatus = useCallback(
     (status: LauncherStatus) => {
@@ -327,6 +339,8 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
       addLog(`Modpack ${versionResult.remoteVersion} installed successfully.`, 'ok')
       addLog('Ready for deployment.', 'info')
       setStatusMessage('')
+      setProgressUnit('bytes')
+      setProgress(100)
       setPhase('complete')
     }
 
@@ -358,6 +372,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     setCanCancel(false)
     setLogLines([])
     setProgress(0)
+    setProgressUnit('bytes')
     setCurrentFile('')
     setFileIdx(0)
     setFileCount(0)
@@ -589,11 +604,15 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
 
             <div className="text-right">
               <div className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">
-                {t('update.completion')}
+                {t(progressUnit === 'files' ? 'update.filesProcessed' : 'update.completion')}
               </div>
               <div className="tracking-[0.04em] text-[#F3E7D0] leading-none mt-1.5 text-[44px]">
                 {phase === 'checking' || (phase === 'launching' && progress >= 100) ? (
                   <LoaderCircle size={32} className="animate-spin text-[#8E7A5E] inline-block" />
+                ) : progressUnit === 'files' ? (
+                  <span className="text-[28px] tabular-nums">
+                    {fileIdx} / {fileCount || '…'}
+                  </span>
                 ) : (
                   <>
                     {progress.toFixed(1)}
@@ -605,6 +624,11 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
           </div>
 
           <ProgressBar progress={progress} />
+          {progressUnit === 'files' && transferring && (
+            <p className="mt-2 text-[12px] text-[#C7AE86]" role="status">
+              {t('update.fileProgressHint')}
+            </p>
+          )}
 
           <div className="update-stats mt-4 grid grid-cols-2 md:grid-cols-4 gap-px bg-[#18130D] border border-[#2A2116] min-w-0">
             <SubStat
@@ -616,14 +640,20 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
             <SubStat
               icon={<HardDrive size={13} />}
               label={t('update.transferred')}
-              value={`${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`}
+              value={
+                progressUnit === 'files'
+                  ? '—'
+                  : `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`
+              }
             />
             <SubStat
               icon={<Download size={13} />}
               label={t('update.remaining')}
               value={
                 phase === 'downloading' || phase === 'launching'
-                  ? `${fileIdx}/${fileCount || '...'}`
+                  ? fileCount > 0
+                    ? String(Math.max(0, fileCount - fileIdx))
+                    : '—'
                   : totalBytes > 0
                     ? `${fileCount} files`
                     : '—'

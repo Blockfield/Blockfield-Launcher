@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter};
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadProgressPayload {
+    pub unit: ProgressUnit,
     pub file_path: String,
     pub file_index: usize,
     pub file_count: usize,
@@ -18,6 +19,29 @@ pub struct DownloadProgressPayload {
     pub total_bytes_downloaded: u64,
     pub total_bytes_all: u64,
     pub speed_bytes_per_sec: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProgressUnit {
+    Bytes,
+    Files,
+}
+
+impl DownloadProgressPayload {
+    pub fn files(file_path: String, done: usize, total: usize) -> Self {
+        Self {
+            unit: ProgressUnit::Files,
+            file_path,
+            file_index: done,
+            file_count: total,
+            bytes_downloaded: 0,
+            file_bytes_total: 0,
+            total_bytes_downloaded: 0,
+            total_bytes_all: 0,
+            speed_bytes_per_sec: 0,
+        }
+    }
 }
 
 // ponytail: fixed small fan-out; make it configurable only if the mirror starts rate-limiting.
@@ -356,6 +380,7 @@ impl Downloader {
         speed_bytes_per_sec: u64,
     ) {
         let payload = DownloadProgressPayload {
+            unit: ProgressUnit::Bytes,
             file_path: file_path.to_string(),
             file_index,
             file_count,
@@ -421,8 +446,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cleanup_preserves_packwiz_resume_files() {
+        let game = tempfile::tempdir().unwrap();
+        let cache = game.path().join(".packwiz-downloads");
+        std::fs::create_dir(&cache).unwrap();
+        let resumable = cache.join("mod.partial");
+        std::fs::write(&resumable, b"downloaded prefix").unwrap();
+        let obsolete = game.path().join("runtime.part");
+        std::fs::write(&obsolete, b"old runtime download").unwrap();
+        Downloader::cleanup_partials(game.path());
+        assert_eq!(std::fs::read(resumable).unwrap(), b"downloaded prefix");
+        assert!(!obsolete.exists());
+    }
+
+    #[test]
     fn progress_payload_matches_frontend_keys() {
         let value = serde_json::to_value(DownloadProgressPayload {
+            unit: ProgressUnit::Bytes,
             file_path: "mods/a.jar".into(),
             file_index: 1,
             file_count: 2,
@@ -436,5 +476,14 @@ mod tests {
 
         assert!(value.get("totalBytesAll").is_some());
         assert!(value.get("total_bytes_all").is_none());
+        assert_eq!(value["unit"], "bytes");
+        let files =
+            serde_json::to_value(DownloadProgressPayload::files("large.jar".into(), 99, 100))
+                .unwrap();
+        assert_eq!(files["unit"], "files");
+        assert_eq!(files["fileIndex"], 99);
+        assert_eq!(files["fileCount"], 100);
+        assert_eq!(files["totalBytesDownloaded"], 0);
+        assert_eq!(files["totalBytesAll"], 0);
     }
 }

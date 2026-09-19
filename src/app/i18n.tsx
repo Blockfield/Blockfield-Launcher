@@ -83,6 +83,9 @@ const ru = {
   'update.locked': 'ЗАБЛОКИРОВАНО',
   'update.inProgress': 'ИДЁТ ОБНОВЛЕНИЕ',
   'update.completion': 'ПРОГРЕСС',
+  'update.filesProcessed': 'ОБРАБОТАНО ФАЙЛОВ',
+  'update.fileProgressHint':
+    'Крупные файлы скачиваются дольше. Счётчик изменится после обработки следующего файла.',
   'update.currentFile': 'ТЕКУЩИЙ ФАЙЛ',
   'update.transferred': 'ЗАГРУЖЕНО',
   'update.remaining': 'ОСТАЛОСЬ',
