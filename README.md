@@ -7,10 +7,10 @@
 > | File | Purpose |
 > | --- | --- |
 > | `pack.toml` / `index.toml` | packwiz pack — version, Minecraft/Fabric loader versions, mod list |
-> | `launcher.json` | game server (`host:port`, used for `--quickPlayMultiplayer`), packwiz bootstrap + installer jar hashes, Temurin 17 JRE per platform (`windows/linux` × `x86_64/aarch64`) |
+> | `launcher.json` | game server (`host:port`, used for `--quickPlayMultiplayer`), packwiz bootstrap + installer jar hashes, Temurin 21 JRE per supported platform (Windows x86_64; Linux/macOS x86_64 and aarch64) |
 > | `content.json` | UI texts / feed |
 >
-> Flow on "Play": download Java (zip on Windows, tar.gz on Linux) → Fabric launch profile from meta.fabricmc.net →
+> Flow on "Play": download Java (zip on Windows, tar.gz on Linux/macOS) → Fabric launch profile from meta.fabricmc.net →
 > `java -jar packwiz-installer-bootstrap.jar --bootstrap-no-update --bootstrap-main-jar packwiz-installer.jar -g -s client --pack-folder <game dir> <pack.toml>` (it downloads,
 > verifies and prunes the pack) → vanilla runtime files → launch with the offline username from
 > Settings. Server status is a direct Server List Ping from Rust (`src-tauri/src/status.rs`).
@@ -133,7 +133,7 @@ The [archived API/CMS reports](docs/legacy/README.md) are historical only.
 
 Platform builds and quality gates run in parallel on cloud runners. macOS uses two parallel Blacksmith M4 `blacksmith-6vcpu-macos-15` runners (6 vCPU, 24 GB RAM), with separate Rust caches for Apple Silicon and Intel targets. Both Rust targets are installed; the Intel bundle is cross-compiled using the macOS SDK. Build jobs time out after 35 minutes; publication waits for every gate and all four updater platforms. No local runner is required.
 
-macOS apps are ad-hoc signed, without Apple notarization. After copying the app from the DMG into Applications, allow its first launch in System Settings → Privacy & Security. Updater archives are separately signed with the existing Tauri key. The hosted pack currently provides automatic Java downloads only for Windows/Linux; on macOS, install Java 21 for your CPU architecture and select its `bin/java` in launcher settings.
+macOS apps are ad-hoc signed, without Apple notarization. After copying the app from the DMG into Applications, allow its first launch in System Settings → Privacy & Security. Updater archives are separately signed with the existing Tauri key. The hosted pack provides Java 21 downloads for Windows, Linux and both macOS architectures. The launcher selects, downloads, verifies and configures its runtime automatically; no manual Java installation or path selection is required.
 
 Before releasing, update `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together, then run `pnpm version:check`. The signing secrets (`TAURI_PRIVATE_KEY`, `TAURI_KEY_PASSWORD`) and build variables remain in the existing GitHub environment named `dev`; that environment permits releases from `main`. `RELEASES_TOKEN` must have write access to the public releases repository.
 
