@@ -46,6 +46,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - run: python3 scripts/test-prepare-updater.py
       - run: pnpm version:check
       - run: pnpm build
       - run: cargo fmt --all -- --check
@@ -204,21 +205,7 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           mkdir -p release
           gh release download "launcher-v$version" --dir release
-          python3 - "$version" <<'EOF'
-          import json, sys
-          version = sys.argv[1]
-          base = "https://github.com/netherg-io/blockfield-launcher-releases/releases/download/launcher-v" + version + "/"
-          path = "release/latest.json"
-          data = json.load(open(path))
-          required = {"linux-x86_64", "windows-x86_64", "darwin-aarch64", "darwin-x86_64"}
-          missing = required - data["platforms"].keys()
-          if missing:
-              raise SystemExit(f"Missing updater platforms: {sorted(missing)}")
-          for platform in data["platforms"].values():
-              platform["url"] = base + platform["url"].rsplit("/", 1)[-1]
-          json.dump(data, open(path, "w"), indent=2)
-          print(json.dumps(data["platforms"], indent=1))
-          EOF
+          python3 scripts/prepare-updater.py release "$version"
       - uses: softprops/action-gh-release@v2
         with:
           repository: netherg-io/blockfield-launcher-releases
