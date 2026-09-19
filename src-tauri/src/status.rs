@@ -549,7 +549,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
-        let json = serde_json::json!({"available": true, "checkedAt": now, "rooms": [{
+        let mut json = serde_json::json!({"available": true, "checkedAt": now, "rooms": [{
             "id": "12345678-1234-1234-1234-123456789abc", "name": "Комната 1", "mode": "Захват точек",
             "map": "Город", "phase": "PREPARING", "players": 4, "joinable": true,
             "capacity": 16, "format": "ranked", "admission": "open", "round": 2,
