@@ -89,10 +89,10 @@ jobs:
             os: blacksmith-8vcpu-windows-2025
             args: ''
           - name: macos-aarch64
-            os: macos-15
+            os: blacksmith-6vcpu-macos-15
             args: --target aarch64-apple-darwin
           - name: macos-x86_64
-            os: macos-15-intel
+            os: blacksmith-6vcpu-macos-15
             args: --target x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
@@ -105,6 +105,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.name }}

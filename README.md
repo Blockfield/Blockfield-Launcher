@@ -131,7 +131,7 @@ The [archived API/CMS reports](docs/legacy/README.md) are historical only.
 2. Build and sign Linux, Windows, and macOS (Apple Silicon and Intel) bundles under the versioned `launcher-v<version>` tag.
 3. Publish bundles and `latest.json` to the public [releases repository](https://github.com/netherg-io/blockfield-launcher-releases), where installed launchers check for updates.
 
-Platform builds and quality gates run in parallel on cloud runners. macOS uses dedicated GitHub-hosted `macos-15` (ARM64) and `macos-15-intel` runners with separate Rust caches. Build jobs time out after 35 minutes; publication waits for every gate and all four updater platforms. No local runner is required.
+Platform builds and quality gates run in parallel on cloud runners. macOS uses two parallel Blacksmith M4 `blacksmith-6vcpu-macos-15` runners (6 vCPU, 24 GB RAM), with separate Rust caches for Apple Silicon and Intel targets. Both Rust targets are installed; the Intel bundle is cross-compiled using the macOS SDK. Build jobs time out after 35 minutes; publication waits for every gate and all four updater platforms. No local runner is required.
 
 macOS apps are ad-hoc signed, without Apple notarization. After copying the app from the DMG into Applications, allow its first launch in System Settings → Privacy & Security. Updater archives are separately signed with the existing Tauri key. The hosted pack currently provides automatic Java downloads only for Windows/Linux; on macOS, install Java 21 for your CPU architecture and select its `bin/java` in launcher settings.
 
