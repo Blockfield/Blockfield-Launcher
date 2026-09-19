@@ -119,8 +119,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
-Pull requests run a non-publishing CI workflow. It does not access the
-signing environment, publish release assets, or deploy services.
+Release checks run only on version tags; plain pushes and pull requests do not consume release runners.
 Automated tests do not replace the [manual launcher smoke checklist](docs/LAUNCHER_SMOKE.md).
 The [archived API/CMS reports](docs/legacy/README.md) are historical only.
 
@@ -129,8 +128,12 @@ The [archived API/CMS reports](docs/legacy/README.md) are historical only.
 [`.github/workflows/release.yml`](.github/workflows/release.yml) publishes stable releases from `main`:
 
 1. Run frontend and Rust checks, dependency audits, and the Git history secret scan.
-2. Build and sign Linux and Windows bundles under the versioned `launcher-v<version>` tag.
+2. Build and sign Linux, Windows, and macOS (Apple Silicon and Intel) bundles under the versioned `launcher-v<version>` tag.
 3. Publish bundles and `latest.json` to the public [releases repository](https://github.com/netherg-io/blockfield-launcher-releases), where installed launchers check for updates.
+
+Platform builds and quality gates run in parallel on cloud runners. macOS uses dedicated GitHub-hosted `macos-15` (ARM64) and `macos-15-intel` runners with separate Rust caches. Build jobs time out after 35 minutes; publication waits for every gate and all four updater platforms. No local runner is required.
+
+macOS apps are ad-hoc signed, without Apple notarization. After copying the app from the DMG into Applications, allow its first launch in System Settings → Privacy & Security. Updater archives are separately signed with the existing Tauri key. The hosted pack currently provides automatic Java downloads only for Windows/Linux; on macOS, install Java 21 for your CPU architecture and select its `bin/java` in launcher settings.
 
 Before releasing, update `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together, then run `pnpm version:check`. The signing secrets (`TAURI_PRIVATE_KEY`, `TAURI_KEY_PASSWORD`) and build variables remain in the existing GitHub environment named `dev`; that environment permits releases from `main`. `RELEASES_TOKEN` must have write access to the public releases repository.
 

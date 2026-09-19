@@ -16,6 +16,7 @@ permissions:
 jobs:
   quality:
     name: Quality gates
+    timeout-minutes: 20
     runs-on: tenki-standard-medium-4c-8g
     steps:
       - uses: actions/checkout@v4
@@ -55,6 +56,7 @@ jobs:
 
   secret-scan:
     name: Secret scan
+    timeout-minutes: 10
     runs-on: tenki-standard-small-2c-4g
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +73,7 @@ jobs:
     # Runs alongside the checks: the private-repo release it creates is unusable by the updater
     # anyway (see publish-launcher), and the public mirror below waits for every gate.
     name: Build launcher (${{ matrix.name }})
+    timeout-minutes: 35
     environment: dev
     permissions:
       contents: write
@@ -85,6 +88,12 @@ jobs:
           - name: windows-x86_64
             os: blacksmith-8vcpu-windows-2025
             args: ''
+          - name: macos-aarch64
+            os: macos-15
+            args: --target aarch64-apple-darwin
+          - name: macos-x86_64
+            os: macos-15-intel
+            args: --target x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -98,6 +107,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          key: ${{ matrix.name }}
           workspaces: |
             . -> target
             src-tauri -> src-tauri/target
@@ -176,6 +186,7 @@ jobs:
     # The source repo is private, so its release assets are unusable by the Tauri updater.
     # Mirror bundles + latest.json into the public releases repo (https://github.com/netherg-io/blockfield-launcher-releases).
     name: Publish launcher release
+    timeout-minutes: 10
     needs: [quality, secret-scan, tauri-release]
     runs-on: tenki-standard-small-2c-4g
     environment: dev
@@ -197,6 +208,10 @@ jobs:
           base = "https://github.com/netherg-io/blockfield-launcher-releases/releases/download/launcher-v" + version + "/"
           path = "release/latest.json"
           data = json.load(open(path))
+          required = {"linux-x86_64", "windows-x86_64", "darwin-aarch64", "darwin-x86_64"}
+          missing = required - data["platforms"].keys()
+          if missing:
+              raise SystemExit(f"Missing updater platforms: {sorted(missing)}")
           for platform in data["platforms"].values():
               platform["url"] = base + platform["url"].rsplit("/", 1)[-1]
           json.dump(data, open(path, "w"), indent=2)
@@ -211,8 +226,11 @@ jobs:
           body: |
             Blockfield Launcher ${{ env.VERSION }}.
 
-            - Сайт и лаунчер выбирают скин в одинаковом порядке: Blockfield ID → Mojang по нику → стандартный Стив.
-            - Исправлен поиск скина Mojang при пустом ответе сервера Blockfield ID.
+            - Первый стабильный выпуск 1.0: Windows, Linux и macOS (Apple Silicon и Intel).
+            - Для macOS доступны установщики DMG и подписанные пакеты автообновления.
+            - Сборки платформ выполняются параллельно на облачных раннерах.
+            - macOS: приложение пока без Apple notarization; первый запуск требует разрешения в настройках безопасности.
+            - Для игры на macOS установите Java 21 для своей архитектуры и укажите путь к `bin/java` в настройках лаунчера; автоматическая установка Java для Mac пока не настроена в раздаче пака.
 
           draft: false
           prerelease: false
