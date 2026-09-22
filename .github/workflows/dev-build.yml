@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -65,12 +65,19 @@ jobs:
           args: >-
             --config src-tauri/tauri.dev.conf.json
             ${{ inputs.platform == 'macos-aarch64' && '--target aarch64-apple-darwin' || '' }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: blockfield-launcher-dev-${{ inputs.platform }}
-          retention-days: 14
-          if-no-files-found: error
-          # Cargo workspace: bundles land in the repository-root target, not in src-tauri/target.
-          path: |
-            target/release/bundle/**
-            target/*/release/bundle/**
+      # A rolling prerelease, not an artifact: Actions artifact storage is shared with every other
+      # repository and runs out; release assets do not compete for it and are a plain download link.
+      - name: Publish to the rolling dev prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          files=$(find target -type d -name bundle -exec find {} -type f ! -name '*.sig' \; | sort)
+          [ -n "$files" ] || { echo "no bundles built"; exit 1; }
+          echo "$files"
+          gh release view launcher-dev >/dev/null 2>&1 || gh release create launcher-dev \
+            --prerelease --title "Dev builds" \
+            --notes "Rolling developer builds (BLOCKFIELD_DEV_BUILD=1). Not for players; the updater ignores this repository."
+          # shellcheck disable=SC2086
+          gh release upload launcher-dev $files --clobber
