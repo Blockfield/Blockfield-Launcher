@@ -86,21 +86,28 @@ pub fn status(pack_url: &str) -> Option<DevStatus> {
 mod tests {
     use super::*;
 
+    /// Asserts both halves of the contract: a production build ignores the variables, a dev build
+    /// honours them. Which half runs depends on how the test binary itself was built.
     #[test]
-    fn production_build_ignores_every_dev_variable() {
-        // The test binary is built without BLOCKFIELD_DEV_BUILD unless CI asks for a dev build.
-        if is_dev_build() {
-            return;
-        }
+    fn dev_variables_apply_only_to_a_dev_build() {
         unsafe {
             std::env::set_var("BLOCKFIELD_DEV_SERVER", "127.0.0.1:25599");
             std::env::set_var("BLOCKFIELD_DEV_FREEZE_PACK", "1");
-            std::env::set_var("BLOCKFIELD_DEV_JVM_ARGS", "-Dbf.testbot.port=47777");
+            std::env::set_var("BLOCKFIELD_DEV_JVM_ARGS", "-Dbf.testbot.port=47777 -Dx=1");
         }
-        assert!(server_override().is_none());
-        assert!(!freeze_pack());
-        assert!(jvm_args().is_empty());
-        assert!(status("https://blockfield.pro").is_none());
+        if is_dev_build() {
+            assert_eq!(server_override(), Some(Some("127.0.0.1:25599".to_string())));
+            assert!(freeze_pack());
+            assert_eq!(jvm_args(), ["-Dbf.testbot.port=47777", "-Dx=1"]);
+            unsafe { std::env::set_var("BLOCKFIELD_DEV_SERVER", "off") };
+            assert_eq!(server_override(), Some(None));
+            assert!(status("https://blockfield.pro").is_some());
+        } else {
+            assert!(server_override().is_none());
+            assert!(!freeze_pack());
+            assert!(jvm_args().is_empty());
+            assert!(status("https://blockfield.pro").is_none());
+        }
     }
 
     #[test]
