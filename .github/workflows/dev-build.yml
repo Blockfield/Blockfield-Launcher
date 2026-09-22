@@ -70,6 +70,7 @@ jobs:
           name: blockfield-launcher-dev-${{ inputs.platform }}
           retention-days: 14
           if-no-files-found: error
+          # Cargo workspace: bundles land in the repository-root target, not in src-tauri/target.
           path: |
-            src-tauri/target/release/bundle/**
-            src-tauri/target/*/release/bundle/**
+            target/release/bundle/**
+            target/*/release/bundle/**
