@@ -1,0 +1,8 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "blockfield-launcher-dev",
+  "identifier": "com.blockfield.launcher.dev",
+  "bundle": {
+    "createUpdaterArtifacts": false
+  }
+}

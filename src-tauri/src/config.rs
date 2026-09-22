@@ -80,13 +80,19 @@ impl Default for LauncherConfig {
     }
 }
 
-/// Platform-appropriate default game directory.
+/// Platform-appropriate default game directory. A dev build keeps its own, so a developer's
+/// player installation is never touched by an experiment.
 fn default_game_dir() -> String {
+    if let Some(dir) = crate::dev::game_dir_override() {
+        return dir;
+    }
+    let name = if crate::dev::is_dev_build() {
+        "BlockField-Dev"
+    } else {
+        "BlockField"
+    };
     if let Some(base) = directories::BaseDirs::new() {
-        base.data_dir()
-            .join("BlockField")
-            .to_string_lossy()
-            .to_string()
+        base.data_dir().join(name).to_string_lossy().to_string()
     } else {
         // Fallback for edge cases
         String::from("./BlockField")
@@ -95,6 +101,11 @@ fn default_game_dir() -> String {
 
 /// Path to the launcher config file inside the app data directory.
 pub fn config_path(app_data_dir: &Path) -> PathBuf {
+    // Dev and production builds share the app data directory; separate files keep their
+    // settings (game directory above all) apart.
+    if crate::dev::is_dev_build() {
+        return app_data_dir.join(crate::dev::CONFIG_FILE);
+    }
     app_data_dir.join("launcher-config.json")
 }
 

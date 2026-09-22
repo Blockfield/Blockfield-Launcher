@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { LauncherUpdatePanel } from './LauncherUpdatePanel'
+import { DevPanel } from './DevPanel'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { ErrorDetail } from './ui-bits'
 import { useI18n } from '../i18n'
@@ -348,7 +349,12 @@ export function SettingsScreen({
             aria-labelledby={`settings-tab-${tab}`}
             className="settings-panel min-h-0 flex-1 px-3 md:px-5 py-2"
           >
-            {tab === 'launcher' && <LauncherUpdatePanel />}
+            {tab === 'launcher' && (
+              <>
+                <LauncherUpdatePanel />
+                <DevPanel />
+              </>
+            )}
             {tab === 'general' && (
               <>
                 <Setting

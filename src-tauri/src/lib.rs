@@ -1,6 +1,7 @@
 mod account;
 mod commands;
 mod config;
+mod dev;
 mod discord_ipc;
 mod download;
 mod game;
@@ -150,6 +151,7 @@ pub fn run() {
             commands::stats_seasons,
             commands::stats_player,
             commands::open_url,
+            commands::dev_status,
             skins::upload_skin,
             skins::preview_skin,
             rooms::pending_room,

@@ -1,0 +1,75 @@
+name: Launcher Dev Build
+
+# Manual only (Actions budget): builds an installable dev launcher for people who do not build Rust.
+# The bundle carries its own identifier and game directory, so it installs next to the player one.
+# Dev behaviour itself is off until BLOCKFIELD_DEV_BUILD=1, which only this workflow sets.
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to build
+        type: choice
+        default: windows-x86_64
+        options: [windows-x86_64, linux-x86_64, macos-aarch64]
+      ref:
+        description: Branch or tag to build
+        type: string
+        default: dev
+
+concurrency:
+  group: launcher-dev-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Dev launcher (${{ inputs.platform }})
+    timeout-minutes: 35
+    runs-on: >-
+      ${{ inputs.platform == 'windows-x86_64' && 'blacksmith-8vcpu-windows-2025'
+      || inputs.platform == 'macos-aarch64' && 'blacksmith-6vcpu-macos-15'
+      || 'blacksmith-8vcpu-ubuntu-2204' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: dev-${{ inputs.platform }}
+          workspaces: |
+            . -> target
+            src-tauri -> src-tauri/target
+      - name: Linux build deps
+        if: runner.os == 'Linux'
+        timeout-minutes: 8
+        run: scripts/install-tauri-deps.sh libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - run: pnpm install --frozen-lockfile
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          BLOCKFIELD_DEV_BUILD: '1'
+          VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
+          VITE_CHROME_TITLE: BLOCKFIELD LAUNCHER DEV
+        with:
+          args: >-
+            --config src-tauri/tauri.dev.conf.json
+            ${{ inputs.platform == 'macos-aarch64' && '--target aarch64-apple-darwin' || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blockfield-launcher-dev-${{ inputs.platform }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/**
+            src-tauri/target/*/release/bundle/**
