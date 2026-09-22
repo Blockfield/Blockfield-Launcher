@@ -17,7 +17,7 @@ on:
         default: dev
 
 concurrency:
-  group: launcher-dev-build-${{ github.ref }}
+  group: launcher-dev-build-${{ inputs.platform }}-${{ inputs.ref }}
   cancel-in-progress: true
 
 permissions:
