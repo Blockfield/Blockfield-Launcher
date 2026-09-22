@@ -340,6 +340,8 @@ pub fn build_launch_args(
         format!("-Xms{}M", ram_mb.min(512)),
     ];
 
+    args.extend(crate::dev::jvm_args()); // empty in a production build
+
     let mut jvm_args = collect_arguments(&vanilla_json, "jvm");
     if let Some(ref loader_json) = loader_json {
         jvm_args.extend(collect_arguments(loader_json, "jvm"));

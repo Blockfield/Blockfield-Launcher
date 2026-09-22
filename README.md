@@ -142,3 +142,30 @@ buttons use that shared status, and the backend rejects overlapping launches. Op
 launcher again focuses its existing window. While a game session is active, closing the window
 hides it so the process monitor and exit hooks continue to run. Settings → General includes
 an opt-in “Hide while playing” toggle; a hidden window returns after exit, including crashes.
+
+## Dev build
+
+`src-tauri/src/dev.rs` holds every developer-only behaviour, and all of it hangs off the
+compile-time `BLOCKFIELD_DEV_BUILD=1`. A production build compiles those functions to constants
+(`dev_status` returns `null`, the panel in Settings → Launcher renders nothing), so this code can
+live on `main` without changing the player launcher — merging the dev branch is safe by
+construction. Everything else is configured through the environment at runtime, never through a
+saved setting:
+
+| Variable | Effect |
+| --- | --- |
+| `BLOCKFIELD_DEV_SERVER` | `host:port` for Quick Play, or `off` to start at the main menu |
+| `BLOCKFIELD_DEV_FREEZE_PACK` | skip packwiz entirely: no update prompt, no download, no prune |
+| `BLOCKFIELD_DEV_JVM_ARGS` | extra JVM arguments for the game process |
+| `BLOCKFIELD_DEV_GAME_DIR` | default game directory of a fresh dev profile |
+
+A dev build uses its own bundle identifier and `launcher-config-dev.json`, and defaults to the
+`BlockField-Dev` game directory, so it installs and runs next to a player installation.
+
+```sh
+BLOCKFIELD_DEV_BUILD=1 pnpm tauri build --config src-tauri/tauri.dev.conf.json
+```
+
+Actions → **Launcher Dev Build** does the same for Windows, Linux or macOS and uploads the bundle
+as an artifact; it never publishes a release or touches the updater manifest. The local stack the
+build is meant for (server, testbot client, AI tester) is `blockfield-modpack/docs/DEVELOPING.md`.

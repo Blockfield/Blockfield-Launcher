@@ -271,7 +271,8 @@ pub async fn check_modpack_version(
     let config = state.config.read().await.clone();
     let game_dir = PathBuf::from(&config.game_dir);
     let (installed_hash, installed) = installed_pack(&game_dir);
-    let needs_update = installed_hash != meta.index_hash;
+    // A frozen dev pack must not turn "Играть" into "Обновить": the developer manages these files.
+    let needs_update = installed_hash != meta.index_hash && !crate::dev::freeze_pack();
     log::info!(
         "[check_modpack_version] pack={} remote={} installed={} needs_update={needs_update}",
         info.pack,
@@ -532,6 +533,19 @@ fn run_packwiz_installer(
     pack_url: &str,
 ) -> Result<(), String> {
     use std::io::BufRead;
+    if crate::dev::freeze_pack() {
+        log::warn!(
+            "dev: BLOCKFIELD_DEV_FREEZE_PACK is set, leaving {} untouched",
+            game_dir.display()
+        );
+        emit_status(
+            app_handle,
+            "modpack",
+            "Dev: пак заморожен, файлы не трогаем",
+            false,
+        );
+        return Ok(());
+    }
     let mut child = crate::host_env::command(java)
         // The bootstrap normally fetches the installer from GitHub; both jars come from the pack host instead.
         .args([
@@ -818,6 +832,8 @@ pub async fn launch_game(
         .as_ref()
         .map(|p| p.info.server.trim().to_string())
         .filter(|s| !s.is_empty());
+    // Dev build: another server, or none at all so the game opens on the title screen.
+    let quick_play = crate::dev::server_override().unwrap_or(quick_play);
 
     log::info!(
         "Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}, user={}",
@@ -948,6 +964,13 @@ pub async fn launch_game(
         }
     });
     Ok(())
+}
+
+/// Dev-build overrides in effect, so the developer can see what the launcher will actually do.
+/// Always `None` in a production build.
+#[tauri::command]
+pub fn dev_status() -> Option<crate::dev::DevStatus> {
+    crate::dev::status(&pack_base_url().unwrap_or_default())
 }
 
 // ── Helpers ────────────────────────────────────────────────────
