@@ -1,0 +1,25 @@
+# Temporary: checks whether tag runs restore caches saved on main. Removed right after.
+name: Cache probe
+on:
+  push:
+    branches: [main]
+    tags: ['cache-probe-*']
+    paths: ['.github/workflows/cache-probe.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [tenki-standard-small-2c-4g, blacksmith-2vcpu-ubuntu-2404, blacksmith-6vcpu-macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - run: echo "probe ${{ github.ref_name }}" > probe.txt
+      - id: c
+        uses: actions/cache@v4
+        with:
+          path: probe.txt
+          key: main-probe-${{ matrix.runner }}-${{ github.ref_name }}
+          restore-keys: main-probe-${{ matrix.runner }}-
+      - run: 'echo "hit=${{ steps.c.outputs.cache-hit }} matched=${{ steps.c.outputs.cache-matched-key }}"'
