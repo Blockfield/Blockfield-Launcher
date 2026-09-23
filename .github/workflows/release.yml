@@ -42,6 +42,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          # A cache built on Tenki (Ubuntu 24.04) restored here as a full match and broke clippy with
+          # "can't find crate": the key names the runner image so the two never mix.
+          key: blacksmith-2204
           workspaces: . -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2.83.2
