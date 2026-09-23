@@ -10,9 +10,10 @@ export function WindowChrome({ children }: { children: ReactNode }) {
   const content = useLauncherContent()
   const { lang } = useI18n()
   const [appWindow, setAppWindow] = useState<TauriWindow | null>(null)
-  const title =
+  const baseTitle =
     localizedContentText(content, lang, 'content.chromeTitle', 'chromeTitle', 'chrome_title') ??
     'BLOCKFIELD LAUNCHER'
+  const title = __BLOCKFIELD_DEV_BUILD__ ? `${baseTitle} DEV` : baseTitle
 
   useEffect(() => {
     if (isTauri) {
