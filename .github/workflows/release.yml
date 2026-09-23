@@ -23,7 +23,8 @@ jobs:
   quality:
     name: Quality gates
     timeout-minutes: 20
-    runs-on: tenki-standard-medium-4c-8g
+    # Blacksmith, not Tenki: the Tauri apt install takes ~28 s here and ~98 s on Tenki, and this job gates publishing.
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@v4
       - name: Tag must match package.json version
