@@ -60,7 +60,6 @@ jobs:
         env:
           BLOCKFIELD_DEV_BUILD: '1'
           VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
-          VITE_CHROME_TITLE: BLOCKFIELD LAUNCHER DEV
         with:
           args: >-
             --config src-tauri/tauri.dev.conf.json

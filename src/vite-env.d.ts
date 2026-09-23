@@ -13,6 +13,8 @@ declare module '*.csv' {
   export default content
 }
 
+declare const __BLOCKFIELD_DEV_BUILD__: boolean
+
 interface ImportMetaEnv {
   readonly DEV: boolean
   readonly VITE_BLOCKFIELD_PACK_URL?: string
