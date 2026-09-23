@@ -16,7 +16,6 @@ def prepare(directory, version):
         'linux-x86_64': (f'blockfield-launcher_{version}_amd64.AppImage', 'appimage'),
         'windows-x86_64': (f'blockfield-launcher_{version}_x64_en-US.msi', 'msi'),
         'darwin-aarch64': ('blockfield-launcher_aarch64.app.tar.gz', 'app'),
-        'darwin-x86_64': ('blockfield-launcher_x64.app.tar.gz', 'app'),
         'windows-x86_64-nsis': (f'blockfield-launcher_{version}_x64-setup.exe', None),
         'linux-x86_64-deb': (f'blockfield-launcher_{version}_amd64.deb', None),
         'linux-x86_64-rpm': (f'blockfield-launcher-{version}-1.x86_64.rpm', None),

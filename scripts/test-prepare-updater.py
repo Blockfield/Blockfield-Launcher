@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory() as tmp:
     manifest = root / 'latest.json'
     manifest.write_text(json.dumps({'version': '1.0.1', 'platforms': {'darwin-x86_64': {}}, 'notes': 'release'}))
     names = ['blockfield-launcher_1.0.1_amd64.AppImage', 'blockfield-launcher_1.0.1_x64_en-US.msi',
-             'blockfield-launcher_aarch64.app.tar.gz', 'blockfield-launcher_x64.app.tar.gz',
+             'blockfield-launcher_aarch64.app.tar.gz',
              'blockfield-launcher_1.0.1_x64-setup.exe', 'blockfield-launcher_1.0.1_amd64.deb',
              'blockfield-launcher-1.0.1-1.x86_64.rpm']
     for name in names:
@@ -23,7 +23,8 @@ with tempfile.TemporaryDirectory() as tmp:
         (root / (name + '.sig')).write_text('signature-' + name + '\n')
     updater.prepare(root, '1.0.1')
     data = json.loads(manifest.read_text())
-    assert len(data['platforms']) == 11
+    assert len(data['platforms']) == 9
+    assert 'darwin-x86_64' not in data['platforms']
     assert data['notes'] == 'release'
     for platform in data['platforms'].values():
         name = platform['url'].rsplit('/', 1)[-1]
