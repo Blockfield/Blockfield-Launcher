@@ -12,3 +12,11 @@ regexes = [
   '''AUTH_SIGNING_KEY=abcdef0123456789abcdef0123456789''',
   '''Authorization: Bearer blockfield-dev-token''',
 ]
+
+[[allowlists]]
+description = "Public Rust cache identifier, not an API credential"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''\.github/workflows/release\.yml$''']
+regexTarget = "line"
+regexes = ['''^\s*key: blacksmith-2204\s*$''']
