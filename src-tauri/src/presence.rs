@@ -144,6 +144,21 @@ fn activity(phase: GamePhase, data: Option<&Value>, started: i64, native_invites
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(fallback);
     let mut result = json!({"type":0,"details":short(details),"instance":true,"assets":{"large_image":"blockfield","large_text":"Blockfield"}});
+    if phase == GamePhase::Running {
+        let mode = data["mode"].as_str().unwrap_or("");
+        let icon = match mode {
+            "Захват точек" => Some("mode-room"),
+            "Кампания" => Some("mode-campaign"),
+            "Командный бой" => Some("mode-tdm"),
+            "Каждый сам за себя" => Some("mode-deathmatch"),
+            "Перелётные снайперы" => Some("mode-snipers"),
+            _ => None,
+        };
+        if let Some(icon) = icon {
+            result["assets"]["small_image"] = icon.into();
+            result["assets"]["small_text"] = mode.into();
+        }
+    }
     let name = data["name"].as_str().unwrap_or("");
     let map = data["map"].as_str().unwrap_or("");
     let state = [name, map]
@@ -209,6 +224,36 @@ fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mode_assets_match_server_names_and_omit_unknown_modes() {
+        for (mode, icon) in [
+            ("Захват точек", "mode-room"),
+            ("Кампания", "mode-campaign"),
+            ("Командный бой", "mode-tdm"),
+            ("Каждый сам за себя", "mode-deathmatch"),
+            ("Перелётные снайперы", "mode-snipers"),
+        ] {
+            let data = json!({"mode":mode});
+            let value = activity(GamePhase::Running, Some(&data), 1, false);
+            assert_eq!(value["assets"]["small_image"], icon);
+            assert_eq!(value["assets"]["small_text"], mode);
+            assert_eq!(value["assets"]["large_image"], "blockfield");
+            assert!(activity(GamePhase::Idle, Some(&data), 0, false)["assets"]
+                .get("small_image")
+                .is_none());
+        }
+        for data in [
+            json!({}),
+            json!({"mode":""}),
+            json!({"mode":"unknown"}),
+            json!({"mode":7}),
+        ] {
+            let value = activity(GamePhase::Running, Some(&data), 1, false);
+            assert!(value["assets"].get("small_image").is_none());
+            assert!(value["assets"].get("small_text").is_none());
+        }
+    }
+
     #[test]
     fn discord_subscription_reply_enables_invites() {
         let reply =
