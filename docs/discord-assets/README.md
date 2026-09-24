@@ -12,4 +12,4 @@ Upload these 512×512 PNGs in Discord Developer Portal → application `15483008
 
 The launcher keeps `blockfield` as its large image and omits the small image for unknown/missing modes and outside the running game. Discord silently omits an asset until it is uploaded for the configured application. Custom application IDs need the same keys uploaded separately.
 
-Icons reuse the project's Lucide flag, map, users, swords and crosshair geometry (`blockfield-mod/dev/ui/icons`), with a dark circular background. See LICENSE for ISC/MIT attribution.
+Icons reuse the project's Lucide flag, map, users, swords and crosshair geometry (`blockfield-mod/dev/ui/icons`), with a transparent background. See LICENSE for ISC/MIT attribution.
