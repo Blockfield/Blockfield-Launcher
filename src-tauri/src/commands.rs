@@ -297,7 +297,13 @@ pub async fn check_modpack_version(
     let result = VersionCheckResult {
         needs_update,
         remote_version: meta.version.clone(),
-        installed_version: installed,
+        // Same files as published = same client version. The marker keeps the version seen at the last
+        // install, and a pack reinstalled while a server-only release was live carried that release's number.
+        installed_version: if installed_hash == meta.index_hash {
+            meta.version.clone()
+        } else {
+            installed
+        },
         mirror: base,
         file_count: 0,
         total_size: 0,
