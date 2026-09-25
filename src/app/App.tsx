@@ -135,7 +135,7 @@ export default function App() {
       if (!current) return
       void invoke<VersionCheckResult>('check_modpack_version')
         .then((result) => {
-          if (result.remoteVersion !== current.remoteVersion) {
+          if (result.remoteVersion !== current.remoteVersion || result.needsUpdate !== current.needsUpdate) {
             invalidateModpackCheck()
             checkModpack().catch((error) => console.error('Version re-check failed:', error))
           }
