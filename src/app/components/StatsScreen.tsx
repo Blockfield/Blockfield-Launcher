@@ -382,7 +382,7 @@ type Outcome = Pick<
   'reason' | 'winner' | 'team' | 'mode' | 'winnerUuid'
 >
 
-// Mirrors blockfield-web's reasons map + outcomeLabel (src/lib/stats-outcome.ts): a match
+// Mirrors blockfield-site's reasons map + outcomeLabel (src/lib/stats-outcome.ts): a match
 // that didn't finish normally has no winner to report, and deathmatch tracks a winning
 // player rather than a team.
 const INTERRUPTED_REASONS = new Set(['abandoned', 'stopped', 'shutdown', 'error'])
