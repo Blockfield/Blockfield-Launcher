@@ -229,9 +229,12 @@ jobs:
           gh release download "$tag" --dir release
           python3 scripts/prepare-updater.py release "$version"
           gh release upload "$tag" release/latest.json --clobber
-          cp "release-notes/$tag.md" release-notes-upload.md
-          if gh release view "$tag" --json assets --jq '.assets[].name' | grep -qx 'release-notes.md'; then
-            gh release delete-asset "$tag" release-notes.md --yes
+          # Имя asset = имя файла; `file#text` задал бы только подпись.
+          mkdir -p rn && cp "release-notes/$tag.md" rn/release-notes.md
+          if gh release download "$tag" --pattern release-notes.md --output rn/published.md 2>/dev/null \
+              && cmp -s rn/published.md rn/release-notes.md; then
+            echo "release-notes.md already attached"
+          else
+            gh release upload "$tag" rn/release-notes.md --clobber
           fi
-          gh release upload "$tag" release-notes-upload.md#release-notes.md
-          gh release edit "$tag" --notes-file release-notes-upload.md --draft=false --latest
+          gh release edit "$tag" --notes-file rn/release-notes.md --draft=false --latest
