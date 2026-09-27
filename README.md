@@ -127,10 +127,10 @@ The [archived API/CMS reports](docs/legacy/README.md) are historical only.
 [`.github/workflows/release.yml`](.github/workflows/release.yml) publishes stable releases from `main`:
 
 1. Run frontend and Rust checks, dependency audits, and the Git history secret scan.
-2. Build and sign Linux, Windows, and macOS (Apple Silicon only; Intel Macs are not supported) bundles under the versioned `launcher-v<version>` tag.
+2. Build and sign Linux, Windows, and macOS (Intel and Apple Silicon) bundles under the versioned `launcher-v<version>` tag.
 3. Validate all signed updater assets, then publish the completed draft in [this repository](https://github.com/Blockfield/Blockfield-Launcher/releases).
 
-Quality checks and secret scanning gate the platform builds. Standard GitHub-hosted runners build Linux on `ubuntu-22.04` (preserving the glibc baseline), Windows on `windows-2025`, and Apple Silicon on `macos-15`. Platform builds run in parallel, with a 60-minute limit, and upload to a draft release. Publication waits for all three platforms and updater validation. No self-hosted runner is required.
+Quality checks and secret scanning gate the platform builds. Standard GitHub-hosted runners build Linux on `ubuntu-22.04` (preserving the glibc baseline), Windows on `windows-2025`, Apple Silicon on `macos-15`, and Intel Macs on `macos-15-intel`. Platform builds run in parallel, with a 60-minute limit, and upload to a draft release. Publication waits for all four builds and updater validation. No self-hosted runner is required.
 
 Actions caches are scoped per ref, so a tag run cannot read caches saved by earlier tags. The same workflow runs on `main` every Monday (and on demand via `workflow_dispatch`): it runs the checks and builds, publishes nothing and saves the Rust and pnpm caches that tag runs restore read-only. Run it by hand after a dependency or Rust toolchain update.
 
@@ -177,4 +177,4 @@ Original launcher code is licensed under [GPL-3.0-only](LICENSE). Third-party co
 
 ## Legacy updater channel
 
-Versions through 1.0.4 check `netherg-io/blockfield-launcher-releases`. Its final transition release installs 1.0.5, which checks this repository instead. Keep that legacy repository and its transition assets available; do not delete it or reuse its name. Future releases are published only here.
+Versions through 1.0.4 check `netherg-io/blockfield-launcher-releases`. Its final transition release installs 1.0.6, which checks this repository instead. Keep that legacy repository and its transition assets available; do not delete it or reuse its name. Future releases are published only here.
