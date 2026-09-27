@@ -1,7 +1,7 @@
 {
   "name": "@figma/my-make-file",
   "private": true,
-  "version": "1.0.4",
+  "version": "1.0.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -65,5 +65,6 @@
     "react-dom": {
       "optional": true
     }
-  }
+  },
+  "license": "GPL-3.0-only"
 }

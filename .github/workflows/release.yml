@@ -1,10 +1,6 @@
 name: Launcher Release
 
-# Tag launcher-vX.Y.Z (= version in package.json) -> checks -> bundles -> public mirror in
-# blockfield-launcher-releases. Nothing runs on plain pushes or PRs (Actions budget).
-# Caches are scoped per ref: a tag run only sees caches saved on main, never those of earlier tags.
-# So the weekly (or manual) run on main does the same checks and builds without publishing, and saves
-# the caches; tag runs restore them read-only. Version bumps change Cargo.lock, so tags restore by prefix.
+# Signed assets stay in a draft until every platform and quality check succeeds.
 on:
   push:
     tags: ['launcher-v*']
@@ -23,15 +19,18 @@ jobs:
   quality:
     name: Quality gates
     timeout-minutes: 20
-    # Blacksmith, not Tenki: the Tauri apt install takes ~28 s here and ~98 s on Tenki, and this job gates publishing.
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
       - name: Tag must match package.json version
         if: github.ref_type == 'tag'
         run: |
           v=$(node -p "require('./package.json').version")
           [ "launcher-v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != package.json version $v"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -44,7 +43,7 @@ jobs:
         with:
           # A cache built on Tenki (Ubuntu 24.04) restored here as a full match and broke clippy with
           # "can't find crate": the key names the runner image so the two never mix.
-          key: blacksmith-2204
+          key: gh2204
           workspaces: . -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2.83.2
@@ -69,13 +68,13 @@ jobs:
 
   secret-scan:
     name: Secret scan
-    if: github.ref_type == 'tag'
     timeout-minutes: 10
-    runs-on: tenki-standard-small-2c-4g
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Scan Git history
         run: >-
           docker run --rm
@@ -84,10 +83,10 @@ jobs:
           detect --source=/repo --config=/repo/.gitleaks.toml --verbose --redact
 
   tauri-release:
-    # Runs alongside the checks: the private-repo release it creates is unusable by the updater
-    # anyway (see publish-launcher), and the public mirror below waits for every gate.
+    needs: [quality, secret-scan]
+    if: github.ref_type == 'tag' || github.ref == 'refs/heads/main'
     name: Build launcher (${{ matrix.name }})
-    timeout-minutes: 35
+    timeout-minutes: 60
     environment: dev
     permissions:
       contents: write
@@ -95,19 +94,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Tenki ships Ubuntu 24.04 only: AppImage stays on Blacksmith 22.04 for the glibc floor, Windows 2025 is Blacksmith's public beta.
+          # Keep Ubuntu 22.04 as the Linux glibc baseline.
           - name: linux-x86_64
-            os: blacksmith-8vcpu-ubuntu-2204
+            os: ubuntu-22.04
             args: ''
           - name: windows-x86_64
-            os: blacksmith-8vcpu-windows-2025
+            os: windows-2025
             args: ''
           - name: macos-aarch64
-            os: blacksmith-6vcpu-macos-15
+            os: macos-15
             args: --target aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -120,7 +121,7 @@ jobs:
           targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.name }}
+          key: github-${{ matrix.os }}-${{ matrix.name }}
           workspaces: |
             . -> target
             src-tauri -> src-tauri/target
@@ -193,48 +194,31 @@ jobs:
           tagName: ${{ github.ref_type == 'tag' && 'launcher-v__VERSION__' || '' }}
           releaseName: Launcher v__VERSION__
           releaseBody: Stable release ${{ github.ref_name }} (${{ github.sha }})
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
 
   publish-launcher:
-    # The source repo is private, so its release assets are unusable by the Tauri updater.
-    # Mirror bundles + latest.json into the public releases repo (https://github.com/netherg-io/blockfield-launcher-releases).
     name: Publish launcher release
     if: github.ref_type == 'tag'
     timeout-minutes: 10
     needs: [quality, secret-scan, tauri-release]
-    runs-on: tenki-standard-small-2c-4g
-    environment: dev
+    runs-on: ubuntu-22.04
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Download build assets
+        with:
+          persist-credentials: false
+      - name: Validate updater assets and publish the completed draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           version=$(node -p "require('./package.json').version")
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+          tag="launcher-v$version"
           mkdir -p release
-          gh release download "launcher-v$version" --dir release
+          gh release download "$tag" --dir release
           python3 scripts/prepare-updater.py release "$version"
-      - uses: softprops/action-gh-release@v2
-        with:
-          repository: netherg-io/blockfield-launcher-releases
-          token: ${{ secrets.RELEASES_TOKEN }} # PAT with contents:write on the releases repo
-          tag_name: launcher-v${{ env.VERSION }}
-          name: Launcher v${{ env.VERSION }}
-          body: |
-            Blockfield Launcher ${{ env.VERSION }}.
-
-            - Первый стабильный выпуск 1.0: Windows, Linux и macOS (Apple Silicon).
-            - Для macOS доступны установщики DMG и подписанные пакеты автообновления.
-            - Сборки платформ выполняются параллельно на облачных раннерах.
-            - macOS: приложение пока без Apple notarization; первый запуск требует разрешения в настройках безопасности.
-            - Java 21 для Windows, Linux и macOS подбирается, скачивается и настраивается автоматически.
-
-          draft: false
-          prerelease: false
-          make_latest: true
-          files: release/*
+          gh release upload "$tag" release/latest.json --clobber
+          gh release edit "$tag" --draft=false --latest
