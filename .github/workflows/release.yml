@@ -104,6 +104,11 @@ jobs:
           - name: macos-aarch64
             os: macos-15
             args: --target aarch64-apple-darwin
+            target: aarch64-apple-darwin
+          - name: macos-x86_64
+            os: macos-15-intel
+            args: --target x86_64-apple-darwin
+            target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -118,7 +123,7 @@ jobs:
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin' || '' }}
+          targets: ${{ matrix.target || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: github-${{ matrix.os }}-${{ matrix.name }}

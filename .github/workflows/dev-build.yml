@@ -10,7 +10,7 @@ on:
         description: Platform to build
         type: choice
         default: windows-x86_64
-        options: [windows-x86_64, linux-x86_64, macos-aarch64]
+        options: [windows-x86_64, linux-x86_64, macos-aarch64, macos-x86_64]
       ref:
         description: Branch or tag to build
         type: string
@@ -30,6 +30,7 @@ jobs:
     runs-on: >-
       ${{ inputs.platform == 'windows-x86_64' && 'windows-2025'
       || inputs.platform == 'macos-aarch64' && 'macos-15'
+      || inputs.platform == 'macos-x86_64' && 'macos-15-intel'
       || 'ubuntu-22.04' }}
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +46,7 @@ jobs:
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin' || '' }}
+          targets: ${{ inputs.platform == 'macos-aarch64' && 'aarch64-apple-darwin' || inputs.platform == 'macos-x86_64' && 'x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: github-dev-${{ inputs.platform }}
@@ -64,7 +65,7 @@ jobs:
         with:
           args: >-
             --config src-tauri/tauri.dev.conf.json
-            ${{ inputs.platform == 'macos-aarch64' && '--target aarch64-apple-darwin' || '' }}
+            ${{ inputs.platform == 'macos-aarch64' && '--target aarch64-apple-darwin' || inputs.platform == 'macos-x86_64' && '--target x86_64-apple-darwin' || '' }}
       # A rolling prerelease, not an artifact: Actions artifact storage is shared with every other
       # repository and runs out; release assets do not compete for it and are a plain download link.
       - name: Publish to the rolling dev prerelease
