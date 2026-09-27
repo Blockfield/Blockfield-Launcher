@@ -67,7 +67,7 @@ scripts/rust-env.sh cargo test -p blockfield-launcher --lib \
 | Native launcher | `src-tauri/` | Pack/runtime installation, launching, status, integrations and signed updates |
 | Shared Rust contracts | `shared/` | Types still imported by the native launcher; not a deployed service |
 | Static pack/content host | Separate `blockfield-modpack` repository | `pack.toml`, `index.toml`, `launcher.json`, `content.json` |
-| Launcher update feed | Separate public `blockfield-launcher-releases` repository | Signed bundles and `latest.json`; source stays private |
+| Launcher update feed | Releases in this public repository | Signed bundles and `latest.json` |
 
 ## Local development
 
