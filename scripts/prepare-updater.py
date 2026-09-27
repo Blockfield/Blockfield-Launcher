@@ -11,7 +11,7 @@ def prepare(directory, version):
     data = json.loads(path.read_text())
     if data['version'] != version:
         raise ValueError('Updater version does not match release')
-    base = f'https://github.com/netherg-io/blockfield-launcher-releases/releases/download/launcher-v{version}/'
+    base = f'https://github.com/Blockfield/Blockfield-Launcher/releases/download/launcher-v{version}/'
     assets = {
         'linux-x86_64': (f'blockfield-launcher_{version}_amd64.AppImage', 'appimage'),
         'windows-x86_64': (f'blockfield-launcher_{version}_x64_en-US.msi', 'msi'),

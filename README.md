@@ -15,8 +15,7 @@
 > verifies and prunes the pack) → vanilla runtime files → launch with the offline username from
 > Settings. Server status is a direct Server List Ping from Rust (`src-tauri/src/status.rs`).
 > Launcher builds and the updater's `latest.json` are published by CI to the public
-> https://github.com/netherg-io/blockfield-launcher-releases (this repo is private, so its own release
-> assets are unusable by the updater). Linux install without root: `scripts/install-linux.sh` (plain `cargo build --release` needs `--features tauri/custom-protocol`, otherwise the window tries to load the Vite dev server).
+> https://github.com/Blockfield/Blockfield-Launcher/releases. Linux install without root: `scripts/install-linux.sh` (plain `cargo build --release` needs `--features tauri/custom-protocol`, otherwise the window tries to load the Vite dev server).
 > The retired API/CMS source has been removed from the active tree. See [historical notes](docs/legacy/README.md) for recovery from Git history.
 
 The launcher checks the installed pack on startup; **Settings → Check at startup** also enables
@@ -129,15 +128,15 @@ The [archived API/CMS reports](docs/legacy/README.md) are historical only.
 
 1. Run frontend and Rust checks, dependency audits, and the Git history secret scan.
 2. Build and sign Linux, Windows, and macOS (Apple Silicon only; Intel Macs are not supported) bundles under the versioned `launcher-v<version>` tag.
-3. Publish bundles and `latest.json` to the public [releases repository](https://github.com/netherg-io/blockfield-launcher-releases), where installed launchers check for updates.
+3. Validate all signed updater assets, then publish the completed draft in [this repository](https://github.com/Blockfield/Blockfield-Launcher/releases).
 
-Platform builds and quality gates run in parallel on cloud runners; macOS builds on a Blacksmith M4 `blacksmith-6vcpu-macos-15` runner (6 vCPU, 24 GB RAM). Build jobs time out after 35 minutes; publication waits for every gate and all three updater platforms. No local runner is required.
+Quality checks and secret scanning gate the platform builds. Standard GitHub-hosted runners build Linux on `ubuntu-22.04` (preserving the glibc baseline), Windows on `windows-2025`, and Apple Silicon on `macos-15`. Platform builds run in parallel, with a 60-minute limit, and upload to a draft release. Publication waits for all three platforms and updater validation. No self-hosted runner is required.
 
 Actions caches are scoped per ref, so a tag run cannot read caches saved by earlier tags. The same workflow runs on `main` every Monday (and on demand via `workflow_dispatch`): it runs the checks and builds, publishes nothing and saves the Rust and pnpm caches that tag runs restore read-only. Run it by hand after a dependency or Rust toolchain update.
 
 macOS apps are ad-hoc signed, without Apple notarization. After copying the app from the DMG into Applications, allow its first launch in System Settings → Privacy & Security. Updater archives are separately signed with the existing Tauri key. The hosted pack provides Java 21 downloads for Windows, Linux and both macOS architectures. The launcher selects, downloads, verifies and configures its runtime automatically; no manual Java installation or path selection is required.
 
-Before releasing, update `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together, then run `pnpm version:check`. The signing secrets (`TAURI_PRIVATE_KEY`, `TAURI_KEY_PASSWORD`) and build variables remain in the existing GitHub environment named `dev`; that environment permits releases from `main`. `RELEASES_TOKEN` must have write access to the public releases repository.
+Before releasing, update `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together, then run `pnpm version:check`. The signing secrets (`TAURI_PRIVATE_KEY`, `TAURI_KEY_PASSWORD`) and build variables remain in the existing GitHub environment named `dev`; its deployment policy must permit `main` and `launcher-v*` tags only. Tag builds also verify that the commit belongs to `main`. Publishing uses this repository’s `GITHUB_TOKEN`; no cross-repository token is needed.
 
 The launcher tracks the game through preparation, running, and post-exit commands. Both launch
 buttons use that shared status, and the backend rejects overlapping launches. Opening the
@@ -171,3 +170,11 @@ BLOCKFIELD_DEV_BUILD=1 pnpm tauri build --config src-tauri/tauri.dev.conf.json
 Actions → **Launcher Dev Build** does the same for Windows, Linux or macOS and uploads the bundle
 as an artifact; it never publishes a release or touches the updater manifest. The local stack the
 build is meant for (server, testbot client, AI tester) is `blockfield-modpack/docs/DEVELOPING.md`.
+
+## License
+
+Original launcher code is licensed under [GPL-3.0-only](LICENSE). Third-party code and assets retain their respective licenses, including [Lucide/Feather icons](docs/discord-assets/LICENSE). This code license does not grant rights to third-party game content or trademarks.
+
+## Legacy updater channel
+
+Versions through 1.0.4 check `netherg-io/blockfield-launcher-releases`. Its final transition release installs 1.0.5, which checks this repository instead. Keep that legacy repository and its transition assets available; do not delete it or reuse its name. Future releases are published only here.

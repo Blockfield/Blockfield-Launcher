@@ -1,10 +1,10 @@
 [package]
 name = "blockfield-launcher"
-version = "1.0.4"
+version = "1.0.5"
 description = "Blockfield Launcher"
 authors = ["you"]
-license = ""
-repository = ""
+license = "GPL-3.0-only"
+repository = "https://github.com/Blockfield/Blockfield-Launcher"
 edition = "2021"
 rust-version = "1.88"
 

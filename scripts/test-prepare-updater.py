@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory() as tmp:
     for platform in data['platforms'].values():
         name = platform['url'].rsplit('/', 1)[-1]
         assert platform['signature'] == 'signature-' + name
-        assert '/blockfield-launcher-releases/' in platform['url']
+        assert platform['url'].startswith('https://github.com/Blockfield/Blockfield-Launcher/releases/download/launcher-v1.0.1/')
     assert 'darwin-aarch64' in data['platforms']
     original = manifest.read_bytes()
     (root / names[2]).unlink()

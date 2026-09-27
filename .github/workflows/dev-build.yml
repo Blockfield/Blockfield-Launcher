@@ -14,7 +14,7 @@ on:
       ref:
         description: Branch or tag to build
         type: string
-        default: dev
+        default: main
 
 concurrency:
   group: launcher-dev-build-${{ inputs.platform }}-${{ inputs.ref }}
@@ -26,15 +26,16 @@ permissions:
 jobs:
   build:
     name: Dev launcher (${{ inputs.platform }})
-    timeout-minutes: 35
+    timeout-minutes: 60
     runs-on: >-
-      ${{ inputs.platform == 'windows-x86_64' && 'blacksmith-8vcpu-windows-2025'
-      || inputs.platform == 'macos-aarch64' && 'blacksmith-6vcpu-macos-15'
-      || 'blacksmith-8vcpu-ubuntu-2204' }}
+      ${{ inputs.platform == 'windows-x86_64' && 'windows-2025'
+      || inputs.platform == 'macos-aarch64' && 'macos-15'
+      || 'ubuntu-22.04' }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -47,7 +48,7 @@ jobs:
           targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: dev-${{ inputs.platform }}
+          key: github-dev-${{ inputs.platform }}
           workspaces: |
             . -> target
             src-tauri -> src-tauri/target

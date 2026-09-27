@@ -44,9 +44,9 @@ describe('fetchServerStatus', () => {
 describe('openExternalUrl', () => {
   it('opens URL through the launcher backend when available', async () => {
     invoke.mockResolvedValue(undefined)
-    await openExternalUrl('https://github.com/netherg-io/blockfield-launcher-releases')
+    await openExternalUrl('https://github.com/Blockfield/Blockfield-Launcher')
     expect(invoke).toHaveBeenCalledWith('open_url', {
-      url: 'https://github.com/netherg-io/blockfield-launcher-releases',
+      url: 'https://github.com/Blockfield/Blockfield-Launcher',
     })
   })
 
@@ -56,10 +56,10 @@ describe('openExternalUrl', () => {
     vi.stubGlobal('window', { open: mockWindowOpen })
 
     try {
-      await openExternalUrl('https://github.com/netherg-io/blockfield-launcher-releases')
+      await openExternalUrl('https://github.com/Blockfield/Blockfield-Launcher')
 
       expect(mockWindowOpen).toHaveBeenCalledWith(
-        'https://github.com/netherg-io/blockfield-launcher-releases',
+        'https://github.com/Blockfield/Blockfield-Launcher',
         '_blank',
         'noopener,noreferrer',
       )

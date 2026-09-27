@@ -26,7 +26,7 @@ if (!networkOrigins.includes(url.origin) || networkOrigins.some((origin) =>
   origin !== url.origin && origin !== 'http://ipc.localhost')) {
   throw new Error(`Production CSP must contain only the configured API origin: ${url.origin}`)
 }
-const RELEASES = 'https://github.com/netherg-io/blockfield-launcher-releases/releases/'
+const RELEASES = 'https://github.com/Blockfield/Blockfield-Launcher/releases/'
 if (!config.plugins?.updater?.endpoints?.every((endpoint) => endpoint.startsWith(RELEASES))) {
   throw new Error(`Production updater endpoint must live in the public releases repo: ${RELEASES}`)
 }
