@@ -1,16 +1,19 @@
 """Единый формат release-notes.md: генерация скелета, сверка пинов и проверка.
 
-Скелет готовится из git-истории (теги/коммиты/вошедшие PR) и сверки
-*.pw.toml между предыдущим и новым релизом той же линии. Текст разделов
-пишет человек в релизном PR; CI только проверяет формат/соответствие
-версии и публикует файл. Вызов внешней модели не нужен.
+Скелет готовится из сверки пинов (mods/*.pw.toml, resources.lock.json) между
+предыдущим и новым релизом той же линии и подтягивает release-notes.md
+компонентов за весь промежуток версий. Текст разделов пишет человек в
+релизном PR; CI только проверяет формат/соответствие версии и публикует файл.
+Вызов внешней модели не нужен.
 """
 
 import argparse
+import io
+import json
 import re
 import subprocess
 import sys
-import tomllib
+import tarfile
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -22,73 +25,117 @@ REQUIRED_SECTIONS = ('Кратко', 'Для игроков', 'Техничес�
                      'Известные проблемы', 'Источники и ограничения полноты')
 
 VERSION_RE = {'client': r'v\d+\.\d+\.\d+', 'server': r'v\d+\.\d+\.\d+',
-              'mod': r'v\d+\.\d+\.\d+', 'resource': r'.+',
+              'mod': r'v\d+\.\d+\.\d+|bf\d+', 'resource': r'.+',
               'launcher': r'launcher-v\d+\.\d+\.\d+'}
+# Незаполненный скелет не должен уйти в релиз.
+PLACEHOLDER_RE = re.compile(r'\bTODO\b|ВНИМАНИЕ:')
+RELEASE_URL_RE = re.compile(r'https://github\.com/([^/]+/[^/]+)/releases/download/([^/]+)/')
 
 
-def sh(repo, *args):
-    return subprocess.check_output(['git', '-C', str(repo), *args], text=True).strip()
+def version_key(tag):
+    """Порядок тегов компонента: vX.Y.Z, bfN, music-vN, launcher-vX.Y.Z; иначе None."""
+    nums = re.findall(r'\d+', tag or '')
+    if not nums or not re.fullmatch(r'[a-z-]*v?\d+(\.\d+)*', tag or ''):
+        return None
+    return tuple(int(n) for n in nums)
 
 
-def pin_url_version(url):
-    """Тег компонента из URL пина: .../releases/download/<tag>/<file>."""
-    m = re.search(r'/releases/download/([^/]+)/', url)
-    return m.group(1) if m else None
+def pin_from(url, name, filename, sha):
+    m = RELEASE_URL_RE.match(url)
+    # Modrinth и прочие CDN: версия — имя файла.
+    return {'name': name, 'filename': filename, 'url': url, 'hash': sha,
+            'repo': m.group(1) if m else None, 'tag': m.group(2) if m else filename}
 
 
-def read_pins(root):
+def read_pins(repo_root, ref):
+    """Пины сборки на ref: mods/*.pw.toml + resources.lock.json."""
+    import tomllib  # только здесь: check должен работать на Python 3.10 (ubuntu-22.04)
     pins = {}
-    for path in sorted(Path(root, 'mods').glob('*.pw.toml')):
-        try:
-            mod = tomllib.loads(path.read_text())
-        except (OSError, tomllib.TOMLDecodeError):
-            continue
-        url = (mod.get('download') or {}).get('url', '')
-        tag = pin_url_version(url)
-        if tag:
-            pins[path.stem] = {'name': mod.get('name', path.stem),
-                               'filename': mod.get('filename', ''),
-                               'url': url, 'tag': tag,
-                               'hash': (mod.get('download') or {}).get('hash', '')}
+    raw = subprocess.check_output(['git', '-C', str(repo_root), 'archive', ref, 'mods'])
+    with tarfile.open(fileobj=io.BytesIO(raw)) as tar:
+        for member in tar.getmembers():
+            if not member.name.endswith('.pw.toml'):
+                continue
+            mod = tomllib.loads(tar.extractfile(member).read().decode())
+            download = mod.get('download') or {}
+            pins[Path(member.name).name[:-len('.pw.toml')]] = pin_from(
+                download.get('url', ''), mod.get('name', member.name),
+                mod.get('filename', ''), download.get('hash', ''))
+    try:
+        lock = json.loads(subprocess.check_output(
+            ['git', '-C', str(repo_root), 'show', f'{ref}:resources.lock.json'],
+            stderr=subprocess.DEVNULL))
+    except subprocess.CalledProcessError:
+        lock = []
+    for entry in lock:
+        name = entry['url'].rsplit('/', 1)[-1]
+        pins[f'resource:{name}'] = pin_from(entry['url'], name, name, entry['sha256'])
     return pins
 
 
 def pin_diff(old_pins, new_pins):
-    """added/removed/changed/rollback/url-change между двумя наборами пинов."""
+    """(key, change, old, new, text); change: added/removed/url-change/re-pinned/rollback/update.
+
+    Решает хеш, а не тег: перенос тех же байтов в другой репозиторий/тег — url-change.
+    """
     rows = []
     for key in sorted(set(old_pins) | set(new_pins)):
         old, new = old_pins.get(key), new_pins.get(key)
         if old is None:
-            rows.append((key, 'added', None, new['tag'],
-                         f"Добавлен {new['name']}: {new['filename']} ({new['tag']})."))
+            rows.append((key, 'added', None, new, f"Добавлен {new['name']} ({new['tag']})."))
         elif new is None:
-            rows.append((key, 'removed', old['tag'], None,
-                         f"Удалён {old['name']} ({old['tag']})."))
-        elif old['tag'] == new['tag'] and old['url'] == new['url'] and old['hash'] == new['hash']:
-            continue
-        elif old['tag'] == new['tag'] and old['hash'] == new['hash'] and old['url'] != new['url']:
-            rows.append((key, 'url-change', old['tag'], new['tag'],
-                         f"{new['name']}: тот же тег {new['tag']}, байты те же, URL замены: {new['url']}."))
-        elif old['tag'] == new['tag'] and old['hash'] != new['hash']:
-            rows.append((key, 're-pinned', old['tag'], new['tag'],
-                         f"{new['name']}: тег {new['tag']} пересобран (хеш изменился)."))
+            rows.append((key, 'removed', old, None, f"Удалён {old['name']} ({old['tag']})."))
+        elif old['hash'] == new['hash']:
+            if old['url'] != new['url']:
+                rows.append((key, 'url-change', old, new,
+                             f"{new['name']}: байты те же ({old['tag']}), изменён только адрес загрузки."))
+        elif old['tag'] == new['tag']:
+            rows.append((key, 're-pinned', old, new,
+                         f"{new['name']}: {new['tag']} пересобран (хеш изменился)."))
         else:
-            direction = 'откат' if _is_rollback(old['tag'], new['tag']) else 'обновление'
-            rows.append((key, 'changed', old['tag'], new['tag'],
-                         f"{new['name']}: {direction} {old['tag']} → {new['tag']} "
-                         f"({new['filename']})."))
+            ko, kn = version_key(old['tag']), version_key(new['tag'])
+            change = 'rollback' if ko and kn and kn < ko else 'update'
+            word = 'откат' if change == 'rollback' else 'обновление'
+            rows.append((key, change, old, new, f"{new['name']}: {word} {old['tag']} → {new['tag']}."))
     return rows
 
 
-def _is_rollback(old_tag, new_tag):
-    mo, mn = re.fullmatch(r'v(\d+)\.(\d+)\.(\d+)', old_tag or ''), \
-        re.fullmatch(r'v(\d+)\.(\d+)\.(\d+)', new_tag or '')
-    if mo and mn:
-        return tuple(map(int, mn.groups())) < tuple(map(int, mo.groups()))
-    mo, mn = re.fullmatch(r'bf(\d+)', old_tag or ''), re.fullmatch(r'bf(\d+)', new_tag or '')
-    if mo and mn:
-        return int(mn.group(1)) < int(mo.group(1))
-    return False
+def section(text, title):
+    m = re.search(rf'(?m)^##\s+{re.escape(title)}\s*$(.*?)(?=^##\s|\Z)', text, re.S)
+    return m.group(1).strip() if m else ''
+
+
+def gh_json(*args):
+    return json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp', *args]))
+
+
+def component_notes(old, new):
+    """Выдержки release-notes.md компонента за промежуток и список пробелов.
+
+    Обновление: версии (old, new]; откат: (new, old] — эти изменения сняты.
+    """
+    repo = new['repo'] if new['repo'] == old['repo'] else None
+    ko, kn = version_key(old['tag']), version_key(new['tag'])
+    if not repo or not ko or not kn:
+        return [], [f"{new['name']}: промежуток {old['tag']} → {new['tag']} не сверен автоматически"]
+    lo, hi = sorted((ko, kn))
+    releases = [r for page in gh_json(f'repos/{repo}/releases?per_page=100') for r in page
+                if not r['draft'] and version_key(r['tag_name']) and lo < version_key(r['tag_name']) <= hi]
+    releases.sort(key=lambda r: version_key(r['tag_name']))
+    prefix = 'снято откатом: ' if kn < ko else ''
+    lines, gaps = [], []
+    for rel in releases:
+        asset = next((a for a in rel['assets'] if a['name'] == 'release-notes.md'), None)
+        if not asset:
+            gaps.append(f"{repo} {rel['tag_name']}: нет release-notes.md")
+            continue
+        text = subprocess.check_output(['gh', 'api', '-H', 'Accept: application/octet-stream',
+                                        f"repos/{repo}/releases/assets/{asset['id']}"], text=True)
+        for title in ('Кратко', 'Для игроков'):
+            body = section(text, title)
+            if body:
+                lines.append(f"    - {prefix}{rel['tag_name']} — {title}: " + ' '.join(body.split()))
+    return lines, gaps
 
 
 def parse_front_matter(text):
@@ -97,16 +144,15 @@ def parse_front_matter(text):
     end = text.find('\n---\n', 4)
     if end < 0:
         return None, 'YAML-заголовок не закрыт строкой ---\n'
-    meta, body = {}, text[4:end]
-    for lineno, line in enumerate(body.split('\n'), 1):
+    meta = {}
+    for lineno, line in enumerate(text[4:end].split('\n'), 1):
         if not line.strip() or line.strip().startswith('#'):
             continue
         m = re.fullmatch(r'([A-Za-z_]+):\s*(.*)', line.strip())
         if not m:
             return None, f'заголовок, строка {lineno}: ожидается `ключ: значение`, got {line!r}'
         key, value = m.group(1), m.group(2).strip()
-        if (value.startswith('"') and value.endswith('"')) or \
-                (value.startswith("'") and value.endswith("'")):
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in '"\'':
             value = value[1:-1]
         meta[key] = value
     return meta, None
@@ -114,7 +160,6 @@ def parse_front_matter(text):
 
 def check(path, repository=None, version=None, kind=None):
     """Проверить release-notes.md. Возвращает список ошибок (пусто = ок)."""
-    errors = []
     try:
         text = Path(path).read_text(encoding='utf-8')
     except OSError as exc:
@@ -122,97 +167,78 @@ def check(path, repository=None, version=None, kind=None):
     meta, err = parse_front_matter(text)
     if err:
         return [err]
-    for key in REQUIRED_KEYS:
-        if key not in meta:
-            errors.append(f'заголовок: отсутствует ключ `{key}`')
+    errors = [f'заголовок: отсутствует ключ `{key}`' for key in REQUIRED_KEYS if key not in meta]
     if errors:
         return errors
     body = text.split('\n---\n', 1)[1]
-    if 'schema_version: 1' not in text.split('\n---\n', 1)[0]:
-        errors.append('заголовок: schema_version должен быть 1')
-    try:
-        if int(meta['schema_version']) != SCHEMA_VERSION:
-            errors.append(f'заголовок: schema_version={meta["schema_version"]}, ожидается {SCHEMA_VERSION}')
-    except ValueError:
-        errors.append('заголовок: schema_version не число')
-    if meta.get('repository') != (repository or meta.get('repository')):
-        pass
-    if repository and meta.get('repository') != repository:
+    if meta['schema_version'] != str(SCHEMA_VERSION):
+        errors.append(f'заголовок: schema_version={meta["schema_version"]!r}, ожидается {SCHEMA_VERSION}')
+    if repository and meta['repository'] != repository:
         errors.append(f'заголовок: repository={meta["repository"]!r}, ожидается {repository!r}')
-    if version and meta.get('version') != version:
+    if version and meta['version'] != version:
         errors.append(f'заголовок: version={meta["version"]!r}, ожидается {version!r}')
-    exp_kind = kind or meta.get('kind')
-    if meta.get('kind') not in KINDS:
-        errors.append(f'заголовок: kind={meta.get("kind")!r}, ожидается одно из {", ".join(KINDS)}')
-    elif kind and meta.get('kind') != kind:
+    if meta['kind'] not in KINDS:
+        errors.append(f'заголовок: kind={meta["kind"]!r}, ожидается одно из {", ".join(KINDS)}')
+    elif kind and meta['kind'] != kind:
         errors.append(f'заголовок: kind={meta["kind"]!r}, ожидается {kind!r}')
-    pattern = VERSION_RE.get(meta.get('kind', ''), r'.+')
-    if not re.fullmatch(pattern, meta.get('version', '')):
-        errors.append(f'заголовок: version={meta.get("version")!r} не matches {pattern} для kind={meta.get("kind")}')
-    if meta.get('previous_version') in (None, ''):
+    pattern = VERSION_RE.get(meta['kind'], r'.+')
+    if not re.fullmatch(pattern, meta['version']):
+        errors.append(f'заголовок: version={meta["version"]!r} не соответствует {pattern} для kind={meta["kind"]}')
+    if not meta['previous_version']:
         errors.append('заголовок: previous_version должен быть тегом или null')
-    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', meta.get('date', '')):
-        errors.append(f'заголовок: date={meta.get("date")!r}, ожидается YYYY-MM-DD')
-    if meta.get('backfilled') not in ('true', 'false'):
+    elif meta['previous_version'] == meta['version']:
+        errors.append('заголовок: previous_version совпадает с version')
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', meta['date']):
+        errors.append(f'заголовок: date={meta["date"]!r}, ожидается YYYY-MM-DD')
+    if meta['backfilled'] not in ('true', 'false'):
         errors.append('заголовок: backfilled должен быть true/false')
-    for section in REQUIRED_SECTIONS:
-        if not re.search(rf'(?m)^##\s+{re.escape(section)}\s*$', body):
-            errors.append(f'раздел отсутствует: `## {section}`')
-    notes = re.search(r'(?m)^##\s+Источники и ограничения полноты\s*$(.*?)(?=^##\s|\Z)',
-                      body, re.S)
-    if notes and not notes.group(1).strip():
+    for title in REQUIRED_SECTIONS:
+        if not re.search(rf'(?m)^##\s+{re.escape(title)}\s*$', body):
+            errors.append(f'раздел отсутствует: `## {title}`')
+    if not section(body, 'Источники и ограничения полноты'):
         errors.append('раздел «Источники и ограничения полноты» пуст')
-    if re.search(r'(?mi)изменений для игроков нет', body):
-        players = re.search(r'(?m)^##\s+Для игроков\s*$(.*?)(?=^##\s|\Z)', body, re.S)
-        confirmed = players and re.search(r'(?i)подтвержден|подтверждено|по тестам|пустой diff|без изменений', players.group(1))
-        sources = notes.group(1) if notes else ''
-        if not confirmed and not re.search(r'(?i)подтвержден|проверен|пустой diff', sources):
-            errors.append('«Изменений для игроков нет» без указания подтверждения в разделе/источниках')
+    for lineno, line in enumerate(text.split('\n'), 1):
+        if PLACEHOLDER_RE.search(line):
+            errors.append(f'строка {lineno}: незаполненный скелет ({line.strip()[:60]!r})')
+    if re.search(r'(?i)изменений для игроков нет', body) and \
+            not re.search(r'(?i)подтвержд', section(body, 'Для игроков') + section(body, 'Источники и ограничения полноты')):
+        errors.append('«Изменений для игроков нет» без указания подтверждения в разделе/источниках')
     return errors
 
 
-def skeleton(repository, version, previous_version, kind, date, commits=(),
-             components=(), sources=(), gaps=()):
-    lines = ['---', 'schema_version: 1', f'repository: {repository}',
-             f'version: {version}',
-             f'previous_version: {previous_version or "null"}',
-             f'date: {date}', f'kind: {kind}', 'backfilled: false', '---', '',
-             f'# {repository} {version}', '']
-    lines += ['## Кратко', '', 'TODO: 2–4 предложения: что это за выпуск и зачем обновляться.', '']
-    lines += ['## Для игроков', '',
-              'TODO. Новое / исправления / изменения поведения. Если игровых изменений',
-              'подтверждённо нет — так и написать с указанием подтверждения.',
-              '']
-    lines += ['## Технические изменения', '', 'TODO.', '']
-    lines += ['## Обновлённые компоненты', '']
-    if components:
-        for _key, _change, old, new, text in components:
-            lines.append(f'- {text}')
-            if old and new and old != new:
-                lines.append(f'  Содержание изменений за промежуток {old} → {new}: TODO (release-notes компонентов).')
-    else:
-        lines.append('Зависимости не изменились относительно предыдущего релиза (сверка *.pw.toml).')
-    if gaps:
-        lines.append('')
-        for gap in gaps:
-            lines.append(f'- ВНИМАНИЕ: пропущенные промежуточные версии: {gap} — сверить перед публикацией.')
-    lines += ['', '## Совместимость и необходимые действия', '', 'TODO: совместимость, нужен ли вайп/перезаход/обновление лаунчера.', '']
-    lines += ['## Известные проблемы', '', 'Нет известных проблем. / TODO.', '']
-    lines += ['## Источники и ограничения полноты', '']
-    if commits:
-        lines.append('Вошли коммиты (по git-истории, проверить в PR):')
-        for sha, subject in commits:
-            lines.append(f'- {sha} {subject}')
-        lines.append('')
-    for src in sources:
-        lines.append(f'- {src}')
-    if not sources and not commits:
-        lines.append('- TODO: перечислить источники (теги, PR, manifests/pins).')
-    lines += ['', 'Неполнота: TODO или «полно — сверено с ...».', '']
+def skeleton(repository, version, previous_version, kind, date, components=()):
+    lines = ['---', 'schema_version: 1', f'repository: {repository}', f'version: {version}',
+             f'previous_version: {previous_version or "null"}', f'date: {date}',
+             f'kind: {kind}', 'backfilled: false', '---', '', f'# {repository} {version}', '',
+             '## Кратко', '', 'TODO: 2–4 предложения: что это за выпуск и зачем обновляться.', '',
+             '## Для игроков', '',
+             'TODO. Новое / исправления / изменения поведения своими словами по выдержкам компонентов ниже.',
+             'Нет игровых изменений — только с подтверждением (например, совпал клиентский digest).', '',
+             '## Технические изменения', '', 'TODO.', '', '## Обновлённые компоненты', '']
+    gaps = []
+    for _key, change, old, new, text in components:
+        lines.append(f'- {text}')
+        if change in ('update', 'rollback'):
+            try:
+                notes, missing = component_notes(old, new)
+            except (subprocess.CalledProcessError, OSError, json.JSONDecodeError) as exc:
+                notes, missing = [], [f"{new['name']}: release-notes не получены ({exc})"]
+            lines += notes
+            gaps += missing
+    if not components:
+        lines.append('Пины не изменились относительно предыдущего релиза (mods/*.pw.toml, resources.lock.json).')
+    for gap in gaps:
+        lines.append(f'- ВНИМАНИЕ: {gap} — восполнить или перенести в «Источники и ограничения полноты».')
+    lines += ['', '## Совместимость и необходимые действия', '',
+              'TODO: совместимость, нужен ли вайп/перезаход/обновление лаунчера.', '',
+              '## Известные проблемы', '', 'TODO: известные проблемы или «Неизвестны».', '',
+              '## Источники и ограничения полноты', '',
+              f'- Сверка пинов {previous_version or "—"} → {version}.',
+              '- TODO: релизный PR, коммиты, release-notes компонентов; явно указать, чего не хватает.', '']
     return '\n'.join(lines)
 
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(description='Скелет и проверка release-notes.md')
     sub = parser.add_subparsers(dest='cmd', required=True)
     c = sub.add_parser('check')
@@ -222,7 +248,8 @@ if __name__ == '__main__':
     c.add_argument('--kind', choices=KINDS)
     s = sub.add_parser('skeleton')
     s.add_argument('--repository', required=True)
-    s.add_argument('--version', required=True)
+    s.add_argument('--version', required=True, help='тег нового релиза (или ref, пока тега нет: HEAD)')
+    s.add_argument('--ref', help='git ref нового состояния пинов (по умолчанию --version)')
     s.add_argument('--previous-version', default=None)
     s.add_argument('--kind', required=True, choices=KINDS)
     s.add_argument('--date', required=True)
@@ -233,39 +260,12 @@ if __name__ == '__main__':
         for err in errs:
             print(f'ERROR: {err}')
         sys.exit(1 if errs else 0)
-    old, new = {}, {}
-    if args.previous_version and args.repo_root != '-':
-        try:
-            old_src = sh(args.repo_root, 'show', f'{args.previous_version}:mods')
-            new_src = sh(args.repo_root, 'show', f'{args.version}:mods')
-            import tempfile
-            with tempfile.TemporaryDirectory() as tmp:
-                for label, ref, store in (('o', args.previous_version, old), ('n', args.version, new)):
-                    d = Path(tmp, label)
-                    d.mkdir()
-                    subprocess.check_call(['git', '-C', args.repo_root, 'archive', ref, 'mods',
-                                           f'resources.lock.json'],
-                                          stdout=open(Path(tmp, f'{label}.tar'), 'wb'))
-        except subprocess.CalledProcessError:
-            pass
-        try:
-            import io
-            import tarfile
-            for label, ref, store in (('o', args.previous_version, old), ('n', args.version, new)):
-                raw = subprocess.check_output(['git', '-C', args.repo_root, 'archive', ref, 'mods'])
-                with tarfile.open(fileobj=io.BytesIO(raw)) as tar:
-                    for member in tar.getmembers():
-                        if member.name.endswith('.pw.toml'):
-                            mod = tomllib.loads(tar.extractfile(member).read().decode())
-                            url = (mod.get('download') or {}).get('url', '')
-                            tag = pin_url_version(url)
-                            if tag:
-                                store[Path(member.name).stem] = {
-                                    'name': mod.get('name', ''), 'filename': mod.get('filename', ''),
-                                    'url': url, 'tag': tag,
-                                    'hash': (mod.get('download') or {}).get('hash', '')}
-        except subprocess.CalledProcessError as exc:
-            print(f'WARNING: не удалось прочитать пины тегов: {exc}', file=sys.stderr)
-    rows = pin_diff(old, new)
-    print(skeleton(args.repository, args.version, args.previous_version,
-                   args.kind, args.date, components=rows))
+    rows = []
+    if args.previous_version and Path(args.repo_root, 'mods').is_dir():
+        rows = pin_diff(read_pins(args.repo_root, args.previous_version),
+                        read_pins(args.repo_root, args.ref or args.version))
+    print(skeleton(args.repository, args.version, args.previous_version, args.kind, args.date, rows))
+
+
+if __name__ == '__main__':
+    main()
