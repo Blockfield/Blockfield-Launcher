@@ -4,10 +4,11 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const script = fileURLToPath(new URL('./validate-production-config.mjs', import.meta.url))
-const run = (value) => spawnSync(process.execPath, [script], {
-  env: { ...process.env, VITE_BLOCKFIELD_PACK_URL: value ?? '' },
-  encoding: 'utf8',
-})
+const run = (value) =>
+  spawnSync(process.execPath, [script], {
+    env: { ...process.env, VITE_BLOCKFIELD_PACK_URL: value ?? '' },
+    encoding: 'utf8',
+  })
 
 test('accepts the configured production origin', () => {
   assert.equal(run('https://blockfield.pro').status, 0)
@@ -20,5 +21,6 @@ test('rejects missing, insecure, private, and mismatching origins', () => {
     'https://localhost/pack',
     'https://10.0.0.1/pack',
     'https://other.example.com',
-  ]) assert.notEqual(run(value).status, 0, value)
+  ])
+    assert.notEqual(run(value).status, 0, value)
 })

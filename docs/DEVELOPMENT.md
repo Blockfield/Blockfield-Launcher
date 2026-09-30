@@ -4,11 +4,11 @@
 > Everything it needs is static, served from the packwiz pack host (`VITE_BLOCKFIELD_PACK_URL`,
 > currently https://blockfield.pro, repo `blockfield-modpack`):
 >
-> | File | Purpose |
-> | --- | --- |
-> | `pack.toml` / `index.toml` | packwiz pack — version, Minecraft/Fabric loader versions, mod list |
-> | `launcher.json` | game server (`host:port`, used for `--quickPlayMultiplayer`), packwiz bootstrap + installer jar hashes, Temurin 21 JRE per supported platform (Windows x86_64; Linux/macOS x86_64 and aarch64) |
-> | `content.json` | UI texts / feed |
+> | File                       | Purpose                                                                                                                                                                                        |
+> | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | `pack.toml` / `index.toml` | packwiz pack — version, Minecraft/Fabric loader versions, mod list                                                                                                                             |
+> | `launcher.json`            | game server (`host:port`, used for `--quickPlayMultiplayer`), packwiz bootstrap + installer jar hashes, Temurin 21 JRE per supported platform (Windows x86_64; Linux/macOS x86_64 and aarch64) |
+> | `content.json`             | UI texts / feed                                                                                                                                                                                |
 >
 > Flow on "Play": download Java (zip on Windows, tar.gz on Linux/macOS) → Fabric launch profile from meta.fabricmc.net →
 > `java -jar packwiz-installer-bootstrap.jar --bootstrap-no-update --bootstrap-main-jar packwiz-installer.jar -g -s client --pack-folder <game dir> <pack.toml>` (it downloads,
@@ -61,23 +61,21 @@ scripts/rust-env.sh cargo test -p blockfield-launcher --lib \
 
 ## Active components
 
-| Component | Location | Responsibility |
-| --- | --- | --- |
-| Desktop UI | `src/` | Launcher screens, local identity/settings and UI state |
-| Native launcher | `src-tauri/` | Pack/runtime installation, launching, status, integrations and signed updates |
-| Shared Rust contracts | `shared/` | Types still imported by the native launcher; not a deployed service |
-| Static pack/content host | Separate `blockfield-modpack` repository | `pack.toml`, `index.toml`, `launcher.json`, `content.json` |
-| Launcher update feed | Releases in this public repository | Signed bundles and `latest.json` |
+| Component                | Location                                 | Responsibility                                                                |
+| ------------------------ | ---------------------------------------- | ----------------------------------------------------------------------------- |
+| Desktop UI               | `src/`                                   | Launcher screens, local identity/settings and UI state                        |
+| Native launcher          | `src-tauri/`                             | Pack/runtime installation, launching, status, integrations and signed updates |
+| Shared Rust contracts    | `shared/`                                | Types still imported by the native launcher; not a deployed service           |
+| Static pack/content host | Separate `blockfield-modpack` repository | `pack.toml`, `index.toml`, `launcher.json`, `content.json`                    |
+| Launcher update feed     | Releases in this public repository       | Signed bundles and `latest.json`                                              |
 
 ## Local development
 
-Install the Node.js version from `.nvmrc`, pnpm 11, a compatible stable Rust
-toolchain, and the platform dependencies required by Tauri. Then:
+Install Node.js 22, Python 3.12+, Just 1.57.0, Rust 1.98.1, and the platform dependencies required by Tauri. Then:
 
 ```sh
-cp .env.example .env
-pnpm install --frozen-lockfile
-pnpm tauri:dev
+just setup
+just tauri-dev
 ```
 
 `VITE_BLOCKFIELD_PACK_URL` points at the static pack directory. Local `.env`
@@ -86,7 +84,7 @@ launcher account is required for this architecture.
 
 On Linux, `scripts/install-tauri-deps.sh` installs the build dependencies;
 `scripts/rust-env.sh` can use the existing local container-builder fallback.
-For frontend-only development use `pnpm dev` with the existing Tauri mocks.
+For frontend-only development use `just dev` with the existing Tauri mocks.
 
 ## Content, accounts and integrations
 
@@ -106,16 +104,10 @@ Rooms, deep links and Discord integration remain supported. Follow
 ## Validation
 
 ```sh
-pnpm legacy:check
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm version:check
-pnpm config:test
-pnpm build
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+just check
+just config-test
+just version-check
+just build
 ```
 
 Release checks run only on version tags; plain pushes and pull requests do not consume release runners.
@@ -153,12 +145,12 @@ live on `main` without changing the player launcher — merging the dev branch i
 construction. Everything else is configured through the environment at runtime, never through a
 saved setting:
 
-| Variable | Effect |
-| --- | --- |
-| `BLOCKFIELD_DEV_SERVER` | `host:port` for Quick Play, or `off` to start at the main menu |
+| Variable                     | Effect                                                         |
+| ---------------------------- | -------------------------------------------------------------- |
+| `BLOCKFIELD_DEV_SERVER`      | `host:port` for Quick Play, or `off` to start at the main menu |
 | `BLOCKFIELD_DEV_FREEZE_PACK` | skip packwiz entirely: no update prompt, no download, no prune |
-| `BLOCKFIELD_DEV_JVM_ARGS` | extra JVM arguments for the game process |
-| `BLOCKFIELD_DEV_GAME_DIR` | default game directory of a fresh dev profile |
+| `BLOCKFIELD_DEV_JVM_ARGS`    | extra JVM arguments for the game process                       |
+| `BLOCKFIELD_DEV_GAME_DIR`    | default game directory of a fresh dev profile                  |
 
 A dev build uses its own bundle identifier and `launcher-config-dev.json`, and defaults to the
 `BlockField-Dev` game directory, so it installs and runs next to a player installation.

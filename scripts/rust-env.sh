@@ -18,7 +18,8 @@ if ! podman image exists "$IMAGE"; then
     podman build -q -t "$IMAGE" -f "$ROOT/scripts/tauri-builder.Containerfile" "$ROOT/scripts"
 fi
 mkdir -p "$HOME/.cargo/registry" "${BLOCKFIELD_CARGO_TARGET:=$HOME/.cache/bf-cargo-target}"
-TTY=(); [ -t 0 ] && TTY=(-it)
+TTY=()
+[ -t 0 ] && TTY=(-it)
 exec podman run --rm "${TTY[@]}" --tmpfs /tmp:rw,size=4g \
     -v "$ROOT:/work:z" \
     -v "$HOME/.cargo/registry:/usr/local/cargo/registry:z" \

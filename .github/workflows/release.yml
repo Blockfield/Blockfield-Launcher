@@ -32,13 +32,19 @@ jobs:
           [ "launcher-v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != package.json version $v"; exit 1; }
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: pnpm/action-setup@v4
+        if: runner.os == 'macOS'
         with:
           version: 11
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
+          node-version: '22.23.2'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: runner.os != 'macOS'
+        with:
+          python-version: '3.12.10'
+      - run: python -I -X utf8 scripts/toolchain.py --ci
+        if: runner.os != 'macOS'
+      - uses: dtolnay/rust-toolchain@1.98.1
       - uses: Swatinem/rust-cache@v2
         with:
           # A cache built on Tenki (Ubuntu 24.04) restored here as a full match and broke clippy with
@@ -53,18 +59,16 @@ jobs:
       - name: Install Tauri system dependencies
         timeout-minutes: 8
         run: scripts/install-tauri-deps.sh libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: just setup
+        if: runner.os != 'macOS'
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: python3 scripts/test-prepare-updater.py
-      - run: pnpm version:check
-      - run: pnpm build
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      - run: pnpm audit --audit-level high
-      - run: cargo audit
+        if: runner.os == 'macOS'
+      - run: just check
+      - run: just version-check
+      - run: just config-test
+      - run: just build
+      - run: just audit
+      - run: just cargo-audit
 
   secret-scan:
     name: Secret scan
@@ -115,13 +119,19 @@ jobs:
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@v4
+        if: runner.os == 'macOS'
         with:
           version: 11
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
+          node-version: '22.23.2'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: runner.os != 'macOS'
+        with:
+          python-version: '3.12.10'
+      - run: python -I -X utf8 scripts/toolchain.py --ci
+        if: runner.os != 'macOS'
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           targets: ${{ matrix.target || '' }}
       - uses: Swatinem/rust-cache@v2
@@ -135,8 +145,16 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 8
         run: scripts/install-tauri-deps.sh libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - run: just setup
+        if: runner.os != 'macOS'
       - run: pnpm install --frozen-lockfile
+        if: runner.os == 'macOS'
+      - run: just config-check
+        if: runner.os != 'macOS'
+        env:
+          VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
       - run: pnpm config:check
+        if: runner.os == 'macOS'
         env:
           VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
       - name: Patch linuxdeploy GTK plugin for Wayland compatibility and metadata
@@ -193,7 +211,7 @@ jobs:
           BLOCKFIELD_AUTO_UPDATE: ${{ vars.BLOCKFIELD_AUTO_UPDATE || 'true' }}
           BLOCKFIELD_DEFAULT_LANG: ${{ vars.BLOCKFIELD_DEFAULT_LANG || 'en' }}
         with:
-          tauriScript: pnpm tauri
+          tauriScript: ${{ runner.os == 'macOS' && 'pnpm tauri' || 'just tauri' }}
           args: --config src-tauri/tauri.prod.conf.json ${{ matrix.args }}
           # Empty on main: the cache run builds and signs but creates no release.
           tagName: ${{ github.ref_type == 'tag' && 'launcher-v__VERSION__' || '' }}
@@ -215,6 +233,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12.10'
+      - run: python -I -X utf8 scripts/toolchain.py --ci
       - name: Validate updater assets and publish the completed draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -223,11 +245,11 @@ jobs:
           version=$(node -p "require('./package.json').version")
           tag="launcher-v$version"
           test -f "release-notes/$tag.md" || { echo "missing release-notes/$tag.md: prepare it in the release PR"; exit 1; }
-          python3 scripts/release-notes-tool.py check "release-notes/$tag.md" \
+          just python scripts/release-notes-tool.py check "release-notes/$tag.md" \
             --repository Blockfield/Blockfield-Launcher --version "$tag" --kind launcher
           mkdir -p release
           gh release download "$tag" --dir release
-          python3 scripts/prepare-updater.py release "$version"
+          just python scripts/prepare-updater.py release "$version"
           gh release upload "$tag" release/latest.json --clobber
           # Имя asset = имя файла; `file#text` задал бы только подпись.
           mkdir -p rn && cp "release-notes/$tag.md" rn/release-notes.md

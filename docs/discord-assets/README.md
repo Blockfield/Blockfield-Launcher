@@ -2,13 +2,13 @@
 
 Upload these 512×512 PNGs in Discord Developer Portal → application `1548300877125779456` → Rich Presence → Art Assets. Use the filename without `.png` as the asset key.
 
-| Key | Server mode |
-| --- | --- |
-| `mode-room` | Захват точек |
-| `mode-campaign` | Кампания |
-| `mode-tdm` | Командный бой |
-| `mode-deathmatch` | Каждый сам за себя |
-| `mode-snipers` | Перелётные снайперы |
+| Key               | Server mode         |
+| ----------------- | ------------------- |
+| `mode-room`       | Захват точек        |
+| `mode-campaign`   | Кампания            |
+| `mode-tdm`        | Командный бой       |
+| `mode-deathmatch` | Каждый сам за себя  |
+| `mode-snipers`    | Перелётные снайперы |
 
 The launcher keeps `blockfield` as its large image and omits the small image for unknown/missing modes and outside the running game. Discord silently omits an asset until it is uploaded for the configured application. Custom application IDs need the same keys uploaded separately.
 

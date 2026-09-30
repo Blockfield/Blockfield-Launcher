@@ -21,9 +21,9 @@ staged_binary=$(mktemp "$APP/.blockfield-install.XXXXXX")
 trap 'rm -f "$staged_binary"' EXIT
 install -m 755 "$TARGET/release/blockfield-launcher" "$staged_binary"
 mv -f "$staged_binary" "$APP/blockfield-launcher"
-printf '1\n' > "$APP/.blockfield-native-install"
+printf '1\n' >"$APP/.blockfield-native-install"
 install -m 644 src-tauri/icons/256x256.png "$APP/icon.png"
-cat > "$HOME/.local/share/applications/blockfield-launcher.desktop" <<DESKTOP
+cat >"$HOME/.local/share/applications/blockfield-launcher.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Blockfield Launcher

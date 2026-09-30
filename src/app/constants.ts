@@ -5,5 +5,4 @@ export const BRAND = import.meta.env.VITE_BRAND ?? 'BLOCKFIELD'
 export const OPERATION_NAME = BRAND
 export const COPYRIGHT = import.meta.env.VITE_COPYRIGHT ?? '© 2026 BLOCKFIELD'
 export const RELEASES_REPO_URL =
-  import.meta.env.VITE_RELEASES_REPO_URL ??
-  'https://github.com/Blockfield/Blockfield-Launcher'
+  import.meta.env.VITE_RELEASES_REPO_URL ?? 'https://github.com/Blockfield/Blockfield-Launcher'

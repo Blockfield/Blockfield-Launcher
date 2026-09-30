@@ -38,13 +38,19 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
       - uses: pnpm/action-setup@v4
+        if: runner.os == 'macOS'
         with:
           version: 11
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
+          node-version: '22.23.2'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: runner.os != 'macOS'
+        with:
+          python-version: '3.12.10'
+      - run: python -I -X utf8 scripts/toolchain.py --ci
+        if: runner.os != 'macOS'
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           targets: ${{ inputs.platform == 'macos-aarch64' && 'aarch64-apple-darwin' || inputs.platform == 'macos-x86_64' && 'x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
@@ -57,12 +63,16 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 8
         run: scripts/install-tauri-deps.sh libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - run: just setup
+        if: runner.os != 'macOS'
       - run: pnpm install --frozen-lockfile
+        if: runner.os == 'macOS'
       - uses: tauri-apps/tauri-action@v0
         env:
           BLOCKFIELD_DEV_BUILD: '1'
           VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
         with:
+          tauriScript: ${{ runner.os == 'macOS' && 'pnpm tauri' || 'just tauri' }}
           args: >-
             --config src-tauri/tauri.dev.conf.json
             ${{ inputs.platform == 'macos-aarch64' && '--target aarch64-apple-darwin' || inputs.platform == 'macos-x86_64' && '--target x86_64-apple-darwin' || '' }}

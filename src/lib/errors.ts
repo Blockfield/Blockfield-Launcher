@@ -25,8 +25,7 @@ const CONTEXT_FALLBACK: Record<ErrorContext, string> = {
 }
 
 const CONTEXT_NETWORK: Record<ErrorContext, string> = {
-  'modpack-check':
-    'Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите.',
+  'modpack-check': 'Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите.',
   'modpack-download':
     'Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите.',
   launch: 'Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите.',
