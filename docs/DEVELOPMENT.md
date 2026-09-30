@@ -1,22 +1,33 @@
 # Launcher development
 
-> **2026-08 architecture.** The launcher no longer talks to the Rust API server or the Filament CMS.
-> Everything it needs is static, served from the packwiz pack host (`VITE_BLOCKFIELD_PACK_URL`,
-> currently https://blockfield.pro, repo `blockfield-modpack`):
->
-> | File                       | Purpose                                                                                                                                                                                        |
-> | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-> | `pack.toml` / `index.toml` | packwiz pack — version, Minecraft/Fabric loader versions, mod list                                                                                                                             |
-> | `launcher.json`            | game server (`host:port`, used for `--quickPlayMultiplayer`), packwiz bootstrap + installer jar hashes, Temurin 21 JRE per supported platform (Windows x86_64; Linux/macOS x86_64 and aarch64) |
-> | `content.json`             | UI texts / feed                                                                                                                                                                                |
->
-> Flow on "Play": download Java (zip on Windows, tar.gz on Linux/macOS) → Fabric launch profile from meta.fabricmc.net →
-> `java -jar packwiz-installer-bootstrap.jar --bootstrap-no-update --bootstrap-main-jar packwiz-installer.jar -g -s client --pack-folder <game dir> <pack.toml>` (it downloads,
-> verifies and prunes the pack) → vanilla runtime files → launch with the offline username from
-> Settings. Server status is a direct Server List Ping from Rust (`src-tauri/src/status.rs`).
-> Launcher builds and the updater's `latest.json` are published by CI to the public
-> https://github.com/Blockfield/Blockfield-Launcher/releases. Linux install without root: `scripts/install-linux.sh` (plain `cargo build --release` needs `--features tauri/custom-protocol`, otherwise the window tries to load the Vite dev server).
-> The retired API/CMS source has been removed from the active tree. See [historical notes](legacy/README.md) for recovery from Git history.
+The [shared architecture map](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/ARCHITECTURE.md)
+describes the repositories and their contracts. The launcher installs the public client pack from
+`VITE_BLOCKFIELD_PACK_URL` (currently https://blockfield.pro). Its static files are built by
+[blockfield-client](https://github.com/Blockfield/blockfield-client):
+
+| File                       | Purpose                                                                        |
+| -------------------------- | ------------------------------------------------------------------------------ |
+| `pack.toml` / `index.toml` | Pack version, Minecraft/Fabric versions and client files                       |
+| `launcher.json`            | Game server, installer hashes, Java downloads and optional Drasl URL (`skins`) |
+| `content.json`             | UI texts and feed                                                              |
+
+On **Play**, the launcher validates or refreshes the Drasl session, prepares Java and Fabric,
+runs the pinned packwiz installer, prepares the vanilla runtime and launches Minecraft with the
+account's player name, UUID and access token. The client mod completes authentication through
+Drasl; the Velocity plugin verifies the session before routing the player.
+
+`src-tauri/src/commands.rs` combines a direct Server List Ping to the public server with room data
+from the site's `/api/rooms`. The site queries the internal game server's SLP extension and the
+public proxy separately. The launcher polls this combined status every 10 seconds; rooms do not
+come from the public proxy's ping response.
+
+Launcher bundles and the signed updater's `latest.json` are published to
+[this repository's releases](https://github.com/Blockfield/Blockfield-Launcher/releases).
+Linux installation without root uses `scripts/install-linux.sh`.
+
+The August 2026 migration replaced the old Rust API/Filament CMS installation flow with packwiz.
+Those retired services remain documented in [historical notes](legacy/README.md); current accounts
+and dynamic room/statistics APIs are provided by Drasl and blockfield-site.
 
 The launcher checks the installed pack on startup; **Settings → Check at startup** also enables
 packwiz verification and repair of an up-to-date installation. **Verify files** runs this manually.
@@ -61,13 +72,17 @@ scripts/rust-env.sh cargo test -p blockfield-launcher --lib \
 
 ## Active components
 
-| Component                | Location                                 | Responsibility                                                                |
-| ------------------------ | ---------------------------------------- | ----------------------------------------------------------------------------- |
-| Desktop UI               | `src/`                                   | Launcher screens, local identity/settings and UI state                        |
-| Native launcher          | `src-tauri/`                             | Pack/runtime installation, launching, status, integrations and signed updates |
-| Shared Rust contracts    | `shared/`                                | Types still imported by the native launcher; not a deployed service           |
-| Static pack/content host | Separate `blockfield-modpack` repository | `pack.toml`, `index.toml`, `launcher.json`, `content.json`                    |
-| Launcher update feed     | Releases in this public repository       | Signed bundles and `latest.json`                                              |
+| Component                | Location                           | Responsibility                                                                |
+| ------------------------ | ---------------------------------- | ----------------------------------------------------------------------------- |
+| Desktop UI               | `src/`                             | Launcher screens, account/settings and UI state                               |
+| Native launcher          | `src-tauri/`                       | Pack/runtime installation, launching, status, integrations and signed updates |
+| Shared Rust contracts    | `shared/`                          | Types still imported by the native launcher; not a deployed service           |
+| Static pack/content host | `Blockfield/blockfield-client`     | `pack.toml`, `index.toml`, `launcher.json`, `content.json`                    |
+| Accounts                 | Drasl at `skins.blockfield.pro`    | Yggdrasil sessions, account API, skins and capes                              |
+| Site API                 | `Blockfield/blockfield-site`       | `/api/rooms`, public statistics and web accounts                              |
+| Login and routing        | `Blockfield/blockfield-proxy`      | Drasl session verification, backend routing and login forwarding              |
+| Game bridge              | `Blockfield/blockfield-mod`        | Client authentication, room requests, presence and server SLP snapshot        |
+| Launcher update feed     | Releases in this public repository | Signed bundles and `latest.json`                                              |
 
 ## Local development
 
@@ -78,25 +93,33 @@ just setup
 just tauri-dev
 ```
 
-`VITE_BLOCKFIELD_PACK_URL` points at the static pack directory. Local `.env`
-files stay untracked. No API container, CMS, database, CMS token, or remote
-launcher account is required for this architecture.
+`VITE_BLOCKFIELD_PACK_URL` points at the pack and site API origin. Local `.env` files stay untracked.
+`just dev` runs frontend-only development with the existing Tauri mocks. A real game launch requires
+a Drasl account; the frontend mocks do not.
 
 On Linux, `scripts/install-tauri-deps.sh` installs the build dependencies;
 `scripts/rust-env.sh` can use the existing local container-builder fallback.
-For frontend-only development use `just dev` with the existing Tauri mocks.
+For game or mod development, use [blockfield-workspace](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/DEVELOPING.md).
+It owns the isolated server, direct Minecraft launch and testbot on Linux and Windows. Separate
+dev-launcher releases are retired. The older integration-profile code in `src-tauri/src/dev.rs`
+remains in the source tree while that cleanup is completed.
 
 ## Content, accounts and integrations
 
-Modpack/content changes belong in the separate pack repository and its
+Modpack/content changes belong in [blockfield-client](https://github.com/Blockfield/blockfield-client) and its
 publishing workflow, not in this launcher repository. Keep the installer
 and Java artifact hashes in `launcher.json` consistent with the pack.
 Do not use the retired CMS publication workflow.
 
-The launcher uses local/offline Minecraft identities and the saved nickname.
-This is not proof of ownership of a Microsoft account. Authentication and
-gameplay access rules on the Minecraft server are a separate concern; the
-retired API's HMAC ticket flow is not part of this launcher setup.
+`src-tauri/src/account.rs` signs in through Drasl's Yggdrasil API and API v3. The Yggdrasil access
+token is passed to Minecraft; the API v3 token is used for account, skin and cape changes. The
+client mod sends the game token only to Drasl's session service, then the proxy checks `hasJoined`.
+Players using an offline launcher can instead authenticate with `/login` in the proxy lobby and
+use the client mod's remembered-session protocol. This is separate from the retired Rust API's
+HMAC ticket flow.
+
+Changing authentication requires checking the launcher, client mod and proxy together; web
+accounts use the same Drasl service. Room/schema changes also require the site's `/api/rooms`.
 
 Rooms, deep links and Discord integration remain supported. Follow
 [the current rooms and Discord guide](ROOMS-AND-DISCORD.md).
@@ -135,33 +158,6 @@ buttons use that shared status, and the backend rejects overlapping launches. Op
 launcher again focuses its existing window. While a game session is active, closing the window
 hides it so the process monitor and exit hooks continue to run. Settings → General includes
 an opt-in “Hide while playing” toggle; a hidden window returns after exit, including crashes.
-
-## Dev build
-
-`src-tauri/src/dev.rs` holds every developer-only behaviour, and all of it hangs off the
-compile-time `BLOCKFIELD_DEV_BUILD=1`. A production build compiles those functions to constants
-(`dev_status` returns `null`, the panel in Settings → Launcher renders nothing), so this code can
-live on `main` without changing the player launcher — merging the dev branch is safe by
-construction. Everything else is configured through the environment at runtime, never through a
-saved setting:
-
-| Variable                     | Effect                                                         |
-| ---------------------------- | -------------------------------------------------------------- |
-| `BLOCKFIELD_DEV_SERVER`      | `host:port` for Quick Play, or `off` to start at the main menu |
-| `BLOCKFIELD_DEV_FREEZE_PACK` | skip packwiz entirely: no update prompt, no download, no prune |
-| `BLOCKFIELD_DEV_JVM_ARGS`    | extra JVM arguments for the game process                       |
-| `BLOCKFIELD_DEV_GAME_DIR`    | default game directory of a fresh dev profile                  |
-
-A dev build uses its own bundle identifier and `launcher-config-dev.json`, and defaults to the
-`BlockField-Dev` game directory, so it installs and runs next to a player installation.
-
-```sh
-BLOCKFIELD_DEV_BUILD=1 pnpm tauri build --config src-tauri/tauri.dev.conf.json
-```
-
-Actions → **Launcher Dev Build** does the same for Windows, Linux or macOS and uploads the bundle
-to the rolling `launcher-dev` prerelease; it never changes the stable updater manifest. The local stack the
-build is meant for (server, testbot client, AI tester) is `blockfield-modpack/docs/DEVELOPING.md`.
 
 ## License
 
