@@ -5,7 +5,7 @@ import { useI18n, type TKey } from '../i18n'
 import { Logo } from './Logo'
 import { PlayerHead } from './PlayerHead'
 import { StatusDot } from './ui-bits'
-import { BRAND, RELEASES_REPO_URL, SERVER_IP } from '../constants'
+import { BRAND, DISCORD_URL, SERVER_IP } from '../constants'
 import { contentText, localizedContentText, useLauncherContent } from '../../lib/content'
 import { useLauncherVersion } from '../../lib/version'
 import { openExternalUrl } from '../../lib/api'
@@ -57,7 +57,7 @@ export function Shell({
   const supportLabel =
     localizedContentText(content, lang, 'content.supportLabel', 'supportLabel', 'support_label') ??
     t('shell.support')
-  const supportUrl = contentText(content, 'supportUrl', 'support_url') ?? RELEASES_REPO_URL
+  const supportUrl = contentText(content, 'supportUrl', 'support_url') ?? DISCORD_URL
   const networkStatus = t('shell.offlineMode')
   const brand = contentText(content, 'brand') ?? BRAND
   const brandSubtitle =

@@ -29,6 +29,7 @@ interface ImportMetaEnv {
   readonly VITE_COORDINATES?: string
   readonly VITE_COPYRIGHT?: string
   readonly VITE_RELEASES_REPO_URL?: string
+  readonly VITE_DISCORD_URL?: string
 }
 
 interface ImportMeta {
