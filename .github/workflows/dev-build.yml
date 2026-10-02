@@ -75,7 +75,7 @@ jobs:
         id: pnpm-store-1
         if: runner.os != 'macOS'
         shell: bash
-        run: echo "path=$(python -I -X utf8 scripts/toolchain.py scripts/quality.py run pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        run: echo "path=$(python -I -X utf8 scripts/quality.py run pnpm store path --silent)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         if: runner.os != 'macOS'
         with:
