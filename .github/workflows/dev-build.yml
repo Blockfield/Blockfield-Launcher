@@ -48,6 +48,14 @@ jobs:
         if: runner.os != 'macOS'
         with:
           python-version: '3.12.10'
+      - name: Cache pinned project tools
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: runner.os != 'macOS'
+        with:
+          path: |
+            .cache/quality
+            .dev/jdk
+          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
         if: runner.os != 'macOS'
       - uses: dtolnay/rust-toolchain@1.98.1
@@ -63,8 +71,28 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 8
         run: scripts/install-tauri-deps.sh libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Locate pnpm store
+        id: pnpm-store-1
+        if: runner.os != 'macOS'
+        shell: bash
+        run: echo "path=$(python -I -X utf8 scripts/toolchain.py scripts/quality.py run pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: runner.os != 'macOS'
+        with:
+          path: ${{ steps.pnpm-store-1.outputs.path }}
+          key: pnpm-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: just setup
         if: runner.os != 'macOS'
+      - name: Locate pnpm store
+        id: pnpm-store-2
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: runner.os == 'macOS'
+        with:
+          path: ${{ steps.pnpm-store-2.outputs.path }}
+          key: pnpm-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm install --frozen-lockfile
         if: runner.os == 'macOS'
       - uses: tauri-apps/tauri-action@v0

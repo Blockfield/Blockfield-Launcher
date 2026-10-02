@@ -1,8 +1,20 @@
-name: Code standards
+name: Windows portability
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'release-notes/**'
+      - 'LICENSE'
+      - 'NOTICE'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'release-notes/**'
+      - 'LICENSE'
+      - 'NOTICE'
 permissions:
   contents: read
 concurrency:
@@ -10,9 +22,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    runs-on: windows-latest
     timeout-minutes: 30
     steps:
+      - if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
