@@ -64,4 +64,5 @@ jobs:
           path: ${{ steps.pnpm-store-1.outputs.path }}
           key: pnpm-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: just setup
-      - run: just check
+      - name: Check Rust, frontend and production configuration
+        run: just check
