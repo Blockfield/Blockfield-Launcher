@@ -86,7 +86,7 @@ scripts/rust-env.sh cargo test -p blockfield-launcher --lib \
 
 ## Local development
 
-Install Node.js 22.23.3 (see `.nvmrc`), Python 3.12.15+, Just 1.58.0, Rust 1.99.0, and the platform dependencies required by Tauri.
+Install Node.js 24.21.0 LTS (see `.nvmrc`), Python 3.12.15+, Just 1.58.0, Rust 1.99.0, and the platform dependencies required by Tauri.
 
 `just setup` installs the pinned pnpm, formatters, and linters into `.cache/quality`.
 Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux and Windows so archive

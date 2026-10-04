@@ -108,7 +108,7 @@ it('selects and joins a room by keyboard, retaining focus and decorative Lucide 
   await act(async () => trigger.click())
   const outsideListener = addListener.mock.calls
     .filter(([type]) => type === 'pointerdown')
-    .at(-1)![1]
+    .pop()![1]
   await act(async () => root!.unmount())
   root = null
   expect(removeListener).toHaveBeenCalledWith('pointerdown', outsideListener)
