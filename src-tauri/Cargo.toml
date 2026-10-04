@@ -1,12 +1,12 @@
 [package]
 name = "blockfield-launcher"
-version = "1.0.8"
+version = "1.0.9"
 description = "Blockfield Launcher"
 authors = ["you"]
 license = "GPL-3.0-only"
 repository = "https://github.com/Blockfield/Blockfield-Launcher"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.90"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -15,25 +15,25 @@ name = "blockfield_launcher_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.2", features = [] }
+tauri-build = { version = "2.7.1", features = [] }
 
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.11.2", features = [] }
-tauri-plugin-log = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-updater = "2"
-tauri-plugin-process = "2"
-tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
-tauri-plugin-deep-link = "2"
-reqwest = { version = "0.12", features = ["gzip", "json", "stream"] }
-base64 = "0.22"
-rand = "0.8"
-sha2 = "0.10"
-md-5 = "0.10"
-zip = "4"
+tauri = { version = "2.12.1", features = [] }
+tauri-plugin-log = "2.10.0"
+tauri-plugin-dialog = "2.8.1"
+tauri-plugin-updater = "2.13.1"
+tauri-plugin-process = "2.4.0"
+tauri-plugin-single-instance = { version = "2.5.2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2.6.1"
+reqwest = { version = "0.13", features = ["gzip", "json", "query", "stream"] }
+base64 = "0.23"
+sha2 = "0.11"
+sha1 = "0.11"
+md-5 = "0.11"
+zip = "8"
 directories = "6"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "time", "macros", "net", "io-util"] }
@@ -52,5 +52,6 @@ tar = "0.4"
 tempfile = "3"
 
 [dev-dependencies]
+flate2 = "1"
 tempfile = "=3.27.0"
-tauri = { version = "2.11.2", features = ["test"] }
+tauri = { version = "2.12.1", features = ["test"] }

@@ -284,9 +284,15 @@ input[type='range']:focus-visible {
   }
 
   .shell-header > div:last-child,
-  .shell-footer > div:last-child,
+  .shell-footer > div:last-child > :not(:first-child),
   .shell-footer > div:first-child > :not(:first-child) {
     display: none;
+  }
+
+  .shell-footer {
+    padding-inline: 12px;
+    gap: 8px;
+    letter-spacing: 0.08em;
   }
 
   .update-summary {

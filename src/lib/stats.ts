@@ -1,14 +1,7 @@
 export type StatsMode = 'room' | 'campaign' | 'deathmatch'
 export type StatsPeriod = 'all' | 'week' | 'month'
 export type StatsSort =
-  | 'score'
-  | 'kills'
-  | 'captures'
-  | 'pointSeconds'
-  | 'playSeconds'
-  | 'wins'
-  | 'kd'
-  | 'rating'
+  'score' | 'kills' | 'captures' | 'pointSeconds' | 'playSeconds' | 'wins' | 'kd' | 'rating'
 
 export interface StatsMmr {
   rating: number

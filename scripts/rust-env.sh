@@ -6,12 +6,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE=blockfield-tauri-builder
 
-if pkg-config --exists gdk-3.0 webkit2gtk-4.1 2>/dev/null || [ "$(uname -s)" != Linux ]; then
+if [ "$(uname -s)" != Linux ] ||
+    { pkg-config --exists gdk-3.0 webkit2gtk-4.1 2>/dev/null && command -v "${CC:-cc}" >/dev/null; }; then
     exec "$@"
 fi
 if ! command -v podman >/dev/null; then
-    echo "Neither Tauri build deps nor podman found; skipping: $*" >&2
-    exit 0
+    echo "Neither a native Tauri build environment nor podman found: $*" >&2
+    exit 1
 fi
 if ! podman image exists "$IMAGE"; then
     echo "Building $IMAGE (one-time, a few minutes)..." >&2
