@@ -717,6 +717,10 @@ fn extract_native_libraries(
     native_libraries: &[Artifact],
 ) -> Result<(), String> {
     let dest_dir = natives_dir(game_dir, minecraft_version);
+    let tracked = crate::installed_files::ExternalInstall::new(
+        game_dir,
+        &format!("natives/{minecraft_version}"),
+    )?;
     if dest_dir.exists() {
         std::fs::remove_dir_all(&dest_dir)
             .map_err(|e| format!("Failed to clear natives dir: {e}"))?;
@@ -755,7 +759,7 @@ fn extract_native_libraries(
         }
     }
 
-    Ok(())
+    tracked.finish_tree(&dest_dir)
 }
 
 fn build_classpath(

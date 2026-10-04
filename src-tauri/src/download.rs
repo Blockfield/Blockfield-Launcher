@@ -112,26 +112,7 @@ impl Downloader {
     }
 
     pub fn cleanup_partials(game_dir: &Path) {
-        fn visit(dir: &Path) {
-            let Ok(entries) = std::fs::read_dir(dir) else {
-                return;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let Ok(kind) = entry.file_type() else {
-                    continue;
-                };
-                if kind.is_symlink() {
-                    continue;
-                }
-                if kind.is_dir() {
-                    visit(&path);
-                } else if path.to_string_lossy().ends_with(".part") {
-                    let _ = std::fs::remove_file(path);
-                }
-            }
-        }
-        visit(game_dir);
+        crate::installed_files::cleanup_partials(game_dir);
     }
 
     /// Expected bytes still to come; the grand total becomes what is already downloaded plus this.
@@ -174,18 +155,22 @@ impl Downloader {
         _total_downloaded: &mut u64,
         _total_bytes_all: u64,
     ) -> Result<(), DownloadError> {
-        self.download_one_with_client(
-            &self.client,
-            url,
-            dest,
-            file_path,
-            file_size,
-            file_index,
-            file_count,
-            _total_downloaded,
-            _total_bytes_all,
-        )
-        .await
+        let owned = crate::installed_files::Write::new(dest);
+        let result = self
+            .download_one_with_client(
+                &self.client,
+                url,
+                dest,
+                file_path,
+                file_size,
+                file_index,
+                file_count,
+                _total_downloaded,
+                _total_bytes_all,
+            )
+            .await;
+        owned.finish();
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -402,8 +387,18 @@ impl Downloader {
         let mut file = std::fs::File::open(path)?;
         let mut hasher = sha2::Sha256::new();
         std::io::copy(&mut file, &mut HashWriter(&mut hasher))?;
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(hex_digest(&hasher.finalize()))
     }
+}
+
+pub(crate) fn hex_digest(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut hex, byte| {
+            write!(hex, "{byte:02x}").expect("formatting into a String cannot fail");
+            hex
+        })
 }
 
 pub(crate) fn partial_path(path: &Path) -> PathBuf {
@@ -413,8 +408,11 @@ pub(crate) fn partial_path(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn activate_partial(partial: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    let owned = crate::installed_files::Write::new(destination);
     if !destination.exists() {
-        return std::fs::rename(partial, destination);
+        std::fs::rename(partial, destination)?;
+        owned.finish();
+        return Ok(());
     }
     let backup = partial_path(destination).with_extension("backup");
     let _ = std::fs::remove_file(&backup);
@@ -424,6 +422,7 @@ pub(crate) fn activate_partial(partial: &Path, destination: &Path) -> Result<(),
         return Err(error);
     }
     let _ = std::fs::remove_file(backup);
+    owned.finish();
     Ok(())
 }
 
@@ -446,6 +445,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sha256_streams_files_and_failed_activation_restores_the_previous_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("artifact.jar");
+        std::fs::write(&destination, b"abc").unwrap();
+        assert_eq!(
+            Downloader::sha256_file(&destination).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let large = temp.path().join("large.jar");
+        std::fs::write(&large, vec![b'a'; 1_000_000]).unwrap();
+        assert_eq!(
+            Downloader::sha256_file(&large).unwrap(),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+        );
+        let partial = partial_path(&destination);
+        assert!(activate_partial(&partial, &destination).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"abc");
+        std::fs::write(&partial, b"new").unwrap();
+        activate_partial(&partial, &destination).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new");
+        assert!(!partial.exists());
+    }
+
+    #[test]
     fn cleanup_preserves_packwiz_resume_files() {
         let game = tempfile::tempdir().unwrap();
         let cache = game.path().join(".packwiz-downloads");
@@ -456,7 +479,7 @@ mod tests {
         std::fs::write(&obsolete, b"old runtime download").unwrap();
         Downloader::cleanup_partials(game.path());
         assert_eq!(std::fs::read(resumable).unwrap(), b"downloaded prefix");
-        assert!(!obsolete.exists());
+        assert_eq!(std::fs::read(obsolete).unwrap(), b"old runtime download");
     }
 
     #[test]

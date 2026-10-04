@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "blockfield-launcher",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "identifier": "com.blockfield.launcher",
   "build": {
     "frontendDist": "../dist",
@@ -53,6 +53,17 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "template": "windows/installer.nsi",
+        "installerHooks": "windows/hooks.nsh",
+        "headerImage": "windows/header.bmp",
+        "sidebarImage": "windows/sidebar.bmp",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "languages": ["English", "Russian", "Ukrainian"]
+      }
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

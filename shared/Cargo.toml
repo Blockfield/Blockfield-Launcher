@@ -3,7 +3,7 @@ name = "blockfield-shared"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-only"
-rust-version = "1.88"
+rust-version = "1.90"
 description = "Shared types between the Blockfield Launcher and its API server"
 
 [dependencies]

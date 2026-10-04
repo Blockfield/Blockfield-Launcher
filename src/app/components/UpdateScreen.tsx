@@ -25,13 +25,7 @@ import { friendlyError, type ErrorContext } from '../../lib/errors'
 
 type StepStatus = 'done' | 'active' | 'pending'
 type Phase =
-  | 'checking'
-  | 'downloading'
-  | 'verifying'
-  | 'launching'
-  | 'complete'
-  | 'error'
-  | 'uptodate'
+  'checking' | 'downloading' | 'verifying' | 'launching' | 'complete' | 'error' | 'uptodate'
 
 /** Whether we're running inside Tauri (vs browser dev). */
 const isTauri = () => '__TAURI_INTERNALS__' in window

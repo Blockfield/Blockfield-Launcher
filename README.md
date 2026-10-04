@@ -46,7 +46,7 @@ just setup
 just tauri-dev
 ```
 
-Сначала установите Node.js из `.nvmrc`, Python 3.12+, Just 1.57.0, Rust 1.98.1 и системные зависимости Tauri. Полные инструкции, устройство проекта и правила выпуска — в [руководстве разработчика](docs/DEVELOPMENT.md).
+Сначала установите Node.js из `.nvmrc`, Python 3.12.15+, Just 1.58.0, Rust 1.99.0 и системные зависимости Tauri. Полные инструкции, устройство проекта и правила выпуска — в [руководстве разработчика](docs/DEVELOPMENT.md).
 
 Игровой стенд, прямой запуск Minecraft и testbot находятся в [workspace](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/DEVELOPING.md). Связи лаунчера, сайта, Drasl и игровых репозиториев — в [общей карте архитектуры](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/ARCHITECTURE.md).
 

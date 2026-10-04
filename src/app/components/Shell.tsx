@@ -57,7 +57,6 @@ export function Shell({
   const supportLabel =
     localizedContentText(content, lang, 'content.supportLabel', 'supportLabel', 'support_label') ??
     t('shell.support')
-  const supportUrl = contentText(content, 'supportUrl', 'support_url') ?? DISCORD_URL
   const networkStatus = t('shell.offlineMode')
   const brand = contentText(content, 'brand') ?? BRAND
   const brandSubtitle =
@@ -124,17 +123,17 @@ export function Shell({
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <a
-            href={supportUrl}
+            href={DISCORD_URL}
             onClick={(e) => {
               e.preventDefault()
-              void openExternalUrl(supportUrl)
+              void openExternalUrl(DISCORD_URL)
             }}
             target="_blank"
             rel="noreferrer"
-            aria-label="Поддержка Blockfield"
-            className="flex items-center gap-1.5 hover:text-[#F5A524] cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-[#F5A524]"
+            aria-label="Поддержка Blockfield в Discord"
+            className="flex items-center gap-1.5 text-[#8E7A5E] hover:text-[#F5A524] cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-[#F5A524]"
           >
-            <LifeBuoy size={11} /> {supportLabel}
+            <LifeBuoy size={11} /> Discord · {supportLabel}
           </a>
           <span className="h-3 w-px bg-[#18130D]" />
           <span className="flex items-center gap-1.5">

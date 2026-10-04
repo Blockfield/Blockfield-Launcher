@@ -35,6 +35,7 @@ import { forgetFace } from '../../lib/player-face'
 import { invalidateModpackCheck } from '../../lib/modpack-check'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
 import { friendlyError, type FriendlyError } from '../../lib/errors'
+import { selectedGameDirectory } from '../../lib/game-directory'
 
 /** Detect whether we're running inside Tauri. */
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -271,7 +272,7 @@ export function SettingsScreen({
         })
         if (selected) {
           const path = selected as string
-          if (field === 'dir') setDir(path)
+          if (field === 'dir') setDir(await selectedGameDirectory(path))
           else setJava(path)
           markDirty()
         }

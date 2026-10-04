@@ -6,6 +6,7 @@ mod discord_ipc;
 mod download;
 mod game;
 mod host_env;
+mod installed_files;
 mod launch_hooks;
 mod minecraft;
 #[cfg(target_os = "linux")]
@@ -24,6 +25,14 @@ use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    if std::env::args().nth(1).as_deref() == Some("--uninstall-cleanup") {
+        std::process::exit(if installed_files::uninstall().is_ok() {
+            0
+        } else {
+            1
+        });
+    }
     // Pre-load .env so env vars are available for plugin configuration below.
     // (setup() will load again and log the result; the second load is a no-op
     // because dotenvy preserves existing env vars.)

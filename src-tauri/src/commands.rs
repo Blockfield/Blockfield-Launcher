@@ -336,6 +336,7 @@ pub async fn download_modpack(
     let mut config = state.config.read().await.clone();
     let game_dir = PathBuf::from(&config.game_dir);
     std::fs::create_dir_all(&game_dir).map_err(|e| format!("Failed to create game dir: {e}"))?;
+    let _tracking = crate::installed_files::begin(&state.app_data_dir, &game_dir)?;
 
     state.downloader.reset_cancel();
     Downloader::cleanup_partials(&game_dir);
@@ -402,8 +403,8 @@ pub async fn download_modpack(
     })
     .await
     .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
-    std::fs::write(
-        game_dir.join(INSTALLED_VERSION_FILE),
+    crate::installed_files::write(
+        &game_dir.join(INSTALLED_VERSION_FILE),
         format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
     )
     .map_err(|e| format!("Failed to record installed version: {e}"))?;
@@ -552,6 +553,7 @@ fn run_packwiz_installer(
         );
         return Ok(());
     }
+    let tracked = crate::installed_files::ExternalInstall::new(game_dir, "")?;
     let mut child = crate::host_env::command(java)
         // The bootstrap normally fetches the installer from GitHub; both jars come from the pack host instead.
         .args([
@@ -624,6 +626,7 @@ fn run_packwiz_installer(
         if cancel.load(Ordering::SeqCst) {
             let _ = child.kill();
             let _ = child.wait();
+            tracked.finish_pack();
             return Err("Download cancelled".to_string());
         }
         match child.try_wait() {
@@ -635,6 +638,7 @@ fn run_packwiz_installer(
     for line in rx {
         handle_line(line);
     }
+    tracked.finish_pack();
     if !status.success() {
         return Err(format!(
             "packwiz-installer failed ({status}):\n{}",
@@ -665,6 +669,8 @@ pub async fn verify_files(
     let config = state.config.read().await.clone();
     let game_dir = PathBuf::from(&config.game_dir);
     let java = resolved_java_path(&config);
+    std::fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
+    let _tracking = crate::installed_files::begin(&state.app_data_dir, &game_dir)?;
     ensure_jar(&state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
     ensure_jar(&state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
     state.downloader.reset_cancel();
@@ -807,6 +813,8 @@ pub async fn launch_game(
     let ram_mb = config.ram_mb;
     let game_dir = config.game_dir.clone();
     let game_dir_path = PathBuf::from(&game_dir);
+    std::fs::create_dir_all(&game_dir_path).map_err(|e| e.to_string())?;
+    let _tracking = crate::installed_files::begin(&state.app_data_dir, &game_dir_path)?;
 
     let loader_version_id = pack
         .as_ref()
@@ -1015,6 +1023,7 @@ fn install_java_archive(
     game_dir: &Path,
     version: &str,
 ) -> Result<PathBuf, String> {
+    let tracked = crate::installed_files::ExternalInstall::new(game_dir, "java")?;
     let java_dir = game_dir.join("java");
     let staging = game_dir.join(".java-staging");
     let backup = game_dir.join(".java-backup");
@@ -1045,6 +1054,7 @@ fn install_java_archive(
         return Err(format!("Failed to activate Java runtime: {error}"));
     }
     remove_path(&backup)?;
+    tracked.finish_tree(&java_dir)?;
     find_bin_java(&java_dir)
         .ok_or_else(|| "Activated Java runtime is missing its executable".to_string())
 }
@@ -1340,10 +1350,38 @@ mod tests {
         std::fs::write(&old_java, b"old").unwrap();
 
         let malicious = root.join("malicious.zip");
-        write_zip(&malicious, &[("jdk/../../evil", b"bad")]);
-        assert!(install_java_archive(&malicious, &root, "2").is_err());
+        for entry in [
+            "jdk/../../evil",
+            "../evil",
+            "jdk/../evil",
+            "C:/evil",
+            "jdk/evil:stream",
+            "jdk\\evil",
+        ] {
+            write_zip(&malicious, &[(entry, b"bad")]);
+            assert!(
+                install_java_archive(&malicious, &root, "2")
+                    .unwrap_err()
+                    .contains("Unsafe archive entry"),
+                "{entry}"
+            );
+            assert_eq!(std::fs::read(&old_java).unwrap(), b"old");
+            assert!(!root.join("evil").exists());
+        }
+
+        let mut links = zip::ZipWriter::new(std::fs::File::create(&malicious).unwrap());
+        links
+            .add_symlink(
+                "jdk/link",
+                "../../evil",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        links.finish().unwrap();
+        assert!(install_java_archive(&malicious, &root, "2")
+            .unwrap_err()
+            .contains("symlink"));
         assert_eq!(std::fs::read(&old_java).unwrap(), b"old");
-        assert!(!root.join("evil").exists());
 
         let missing_java = root.join("missing-java.zip");
         write_zip(&missing_java, &[("jdk/readme.txt", b"no java")]);
@@ -1378,6 +1416,22 @@ mod tests {
         std::fs::create_dir_all(&dest).unwrap();
         let archive = root.join("test.zip");
         write_zip(&archive, &[("jdk/a", b"aa"), ("jdk/b", b"b")]);
+
+        let archive_size = std::fs::metadata(&archive).unwrap().len();
+        let mut limits = blockfield_shared::ArchiveLimits {
+            min_free_space_bytes: 0,
+            max_compressed_bytes: archive_size - 1,
+            ..Default::default()
+        };
+        assert!(extract_archive_with_limits(&archive, &dest, &limits)
+            .unwrap_err()
+            .contains("compressed-size"));
+        limits.max_compressed_bytes = archive_size;
+        limits.max_path_depth = 1;
+        assert!(extract_archive_with_limits(&archive, &dest, &limits)
+            .unwrap_err()
+            .contains("too deep"));
+        assert_eq!(std::fs::read_dir(&dest).unwrap().count(), 0);
 
         let mut limits = blockfield_shared::ArchiveLimits {
             min_free_space_bytes: 0,

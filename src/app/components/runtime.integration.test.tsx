@@ -1,0 +1,186 @@
+// @vitest-environment jsdom
+import { act, StrictMode } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { RoomList } from './RoomList'
+import { LauncherUpdatePanel } from './LauncherUpdatePanel'
+import { checkLauncherUpdate, installLauncherUpdate } from '../../lib/launcher-update'
+
+const { invoke, getVersion, relaunch, channels } = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  getVersion: vi.fn(),
+  relaunch: vi.fn(),
+  channels: [] as Array<{
+    onmessage: (event: { phase: string; downloaded: number; total: number | null }) => void
+  }>,
+}))
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke,
+  Channel: class {
+    onmessage = () => {}
+    constructor() {
+      channels.push(this)
+    }
+  },
+}))
+vi.mock('@tauri-apps/api/app', () => ({ getVersion }))
+vi.mock('@tauri-apps/plugin-process', () => ({ relaunch }))
+
+const rooms = [
+  {
+    id: 'first',
+    name: 'Матч 1',
+    mode: 'Захват точек',
+    map: 'Город',
+    phase: 'IDLE',
+    players: 2,
+    joinable: true,
+  },
+  {
+    id: 'second',
+    name: 'Матч 2',
+    mode: 'Захват точек',
+    map: 'Город',
+    phase: 'VOTING',
+    players: 4,
+    joinable: true,
+  },
+]
+const scrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
+let container: HTMLDivElement
+let root: Root | null
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  })
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
+})
+
+afterEach(async () => {
+  await act(async () => root?.unmount())
+  container.remove()
+  if (scrollIntoView) {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', scrollIntoView)
+  } else {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+  }
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
+
+it('selects and joins a room by keyboard, retaining focus and decorative Lucide icons', async () => {
+  const onJoin = vi.fn()
+  const errors = vi.spyOn(console, 'error')
+  const addListener = vi.spyOn(document, 'addEventListener')
+  const removeListener = vi.spyOn(document, 'removeEventListener')
+  await act(async () => {
+    root!.render(
+      <StrictMode>
+        <RoomList rooms={rooms} onJoin={onJoin} disabled={false} />
+      </StrictMode>,
+    )
+  })
+  const trigger = container.querySelector<HTMLButtonElement>('[role="combobox"]')!
+  trigger.focus()
+  await act(async () => {
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  })
+  const active = document.getElementById(trigger.getAttribute('aria-activedescendant')!)
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  expect(active?.textContent).toContain('Матч 2')
+  expect(trigger.querySelector('svg[aria-hidden="true"] path')).not.toBeNull()
+  await act(async () => {
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  })
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  expect(document.activeElement).toBe(trigger)
+  expect(container.querySelector('article')?.getAttribute('aria-label')).toBe('Матч 2')
+  await act(async () => {
+    container.querySelector<HTMLButtonElement>('[aria-label="Войти: Матч 2"]')!.click()
+  })
+  expect(onJoin).toHaveBeenCalledExactlyOnceWith('second')
+  await act(async () => trigger.click())
+  const outsideListener = addListener.mock.calls
+    .filter(([type]) => type === 'pointerdown')
+    .at(-1)![1]
+  await act(async () => root!.unmount())
+  root = null
+  expect(removeListener).toHaveBeenCalledWith('pointerdown', outsideListener)
+  expect(errors).not.toHaveBeenCalled()
+})
+
+it('disables joining a match during an update while preserving the lobby action', async () => {
+  const onJoin = vi.fn()
+  await act(async () => {
+    root!.render(<RoomList rooms={rooms} updating onJoin={onJoin} disabled={false} />)
+  })
+  const join = container.querySelector<HTMLButtonElement>('[aria-label="Войти: Матч 1"]')!
+  await act(async () => join.click())
+  expect(join.disabled).toBe(true)
+  expect(onJoin).not.toHaveBeenCalled()
+  const lobby = Array.from(container.querySelectorAll('button')).find(
+    (button) => button.textContent === 'Войти в лобби',
+  )!
+  await act(async () => lobby.click())
+  expect(onJoin).toHaveBeenCalledExactlyOnceWith('lobby')
+})
+
+it('renders update channel progress, rejects a failed signature, and waits for an explicit restart', async () => {
+  getVersion.mockResolvedValue('1.0.6')
+  invoke.mockResolvedValue({ currentVersion: '1.0.6', version: '1.0.7', body: 'Fixes' })
+  await act(async () => root!.render(<LauncherUpdatePanel />))
+  await act(async () => {
+    container.querySelector<HTMLButtonElement>('button')!.click()
+    await checkLauncherUpdate()
+  })
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('check_launcher_update')
+  expect(container.querySelector('[role="status"]')?.textContent).toBe('Доступна версия 1.0.7')
+  expect(container.querySelector('button svg path')).not.toBeNull()
+
+  let reject!: (error: Error) => void
+  invoke.mockImplementationOnce(
+    () =>
+      new Promise<void>((_, fail) => {
+        reject = fail
+      }),
+  )
+  await act(async () => container.querySelectorAll<HTMLButtonElement>('button')[1]!.click())
+  await act(async () => {
+    channels[0]!.onmessage({ phase: 'downloading', downloaded: 1048576, total: 2097152 })
+  })
+  expect(container.querySelector('progress')?.value).toBe(50)
+  expect(Array.from(container.querySelectorAll('button')).every((button) => button.disabled)).toBe(
+    true,
+  )
+  await act(async () => {
+    channels[0]!.onmessage({ phase: 'verifying', downloaded: 0, total: null })
+  })
+  expect(container.querySelector('progress')?.value).toBe(100)
+  expect(container.textContent).toContain('1.0 МБ / 2.0 МБ')
+  await act(async () => {
+    reject(new Error('Invalid signature'))
+    await installLauncherUpdate()
+  })
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain('Invalid signature')
+  expect(container.textContent).not.toContain('Перезапустить лаунчер')
+
+  invoke.mockResolvedValueOnce(undefined)
+  await act(async () => {
+    container.querySelectorAll<HTMLButtonElement>('button')[1]!.click()
+    await installLauncherUpdate()
+  })
+  await act(async () => {
+    channels[0]!.onmessage({ phase: 'downloading', downloaded: 1, total: 20 })
+  })
+  expect(container.querySelector('[role="status"]')?.textContent).toContain(
+    'Версия 1.0.7 установлена',
+  )
+  expect(container.querySelector('button')?.textContent).toContain('Перезапустить лаунчер')
+  expect(relaunch).not.toHaveBeenCalled()
+})

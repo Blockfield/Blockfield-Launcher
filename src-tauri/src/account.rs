@@ -369,6 +369,76 @@ async fn update(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn http_decodes_gzip_streams_bytes_and_preserves_server_errors() {
+        use flate2::{write::GzEncoder, Compression};
+        use futures_util::StreamExt;
+        use std::io::Write;
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
+        gzip.write_all(br#"{"accessToken":"token"}"#).unwrap();
+        let responses = [
+            (
+                "200 OK",
+                "Content-Encoding: gzip\r\n",
+                gzip.finish().unwrap(),
+            ),
+            (
+                "401 Unauthorized",
+                "",
+                br#"{"errorMessage":"Invalid credentials"}"#.to_vec(),
+            ),
+            ("503 Service Unavailable", "", b"maintenance".to_vec()),
+            ("200 OK", "", b"streamed binary\0\xff".to_vec()),
+        ];
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/test", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                for (status, headers, body) in responses {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::new();
+                    while !request.ends_with(b"\r\n\r\n") {
+                        let mut chunk = [0; 4096];
+                        let read = socket.read(&mut chunk).await.unwrap();
+                        assert!(read > 0);
+                        request.extend_from_slice(&chunk[..read]);
+                    }
+                    assert!(request.starts_with(b"GET /test?player=Alex+Smith HTTP/1.1\r\n"));
+                    let head = format!(
+                        "HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    socket.write_all(head.as_bytes()).await.unwrap();
+                    socket.write_all(&body).await.unwrap();
+                }
+            })
+            .await
+            .unwrap();
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let request = || client.get(&url).query(&[("player", "Alex Smith")]);
+        assert_eq!(api(request()).await.unwrap()["accessToken"], "token");
+        assert_eq!(
+            api(request()).await.unwrap_err(),
+            "Drasl: Invalid credentials"
+        );
+        assert_eq!(api(request()).await.unwrap_err(), "Drasl: 503");
+        let mut stream = send(request()).await.unwrap().bytes_stream();
+        let mut downloaded = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            downloaded.extend_from_slice(&chunk.unwrap());
+        }
+        assert_eq!(downloaded, b"streamed binary\0\xff");
+        server.await.unwrap();
+    }
+
     #[test]
     fn migrates_legacy_password_and_parses_drasl_session() {
         let mut config = LauncherConfig {

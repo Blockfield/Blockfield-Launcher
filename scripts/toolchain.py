@@ -1,6 +1,7 @@
 """Pinned project-local quality tools and reproducible build Python."""
 
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -17,20 +18,20 @@ ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / ".cache" / "quality"
 PYTHON_ASSETS = {
     "linux-arm64": [
-        "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.12.14%2B20260924-aarch64-unknown-linux-gnu-install_only.tar.gz",
-        "c0574c9c9fec561eb192ad510e4e79aaad039929b3531b3bb873e2f630fb14a9",
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15%2B20261003-aarch64-unknown-linux-gnu-install_only.tar.gz",
+        "95c01982c9fcb9d95b0acfdb5eb8a6e0099dd11edf062314a474228d93f2b765",
     ],
     "linux-amd64": [
-        "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.12.14%2B20260924-x86_64-unknown-linux-gnu-install_only.tar.gz",
-        "5eae8cf79dd47fc2496a4fccc892936be831ce7a84d984b2299dfb1cdb592682",
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15%2B20261003-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        "f937814031eab4698ca6d07ec606ede1825768f3f3e99af76d9db3900bee03c5",
     ],
     "windows-arm64": [
-        "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.12.14%2B20260924-aarch64-pc-windows-msvc-install_only.tar.gz",
-        "394b3bf95c45e5b02e02fe9b201e51df11dbff612db5b26406c6db484581317d",
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15%2B20261003-aarch64-pc-windows-msvc-install_only.tar.gz",
+        "2de96a340fecdabe215094345ed3aea1b473e858bd098360f2253299e18f24d2",
     ],
     "windows-amd64": [
-        "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.12.14%2B20260924-x86_64-pc-windows-msvc-install_only.tar.gz",
-        "c5303174bc29f5205decf6721ac549d4eb41c448f9b8c46cbc562d00348865bb",
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15%2B20261003-x86_64-pc-windows-msvc-install_only.tar.gz",
+        "4b6f0beebbb695a0f3ea237b8c3eaa5bd424f47a7bc25b2fbe3a43390c770f08",
     ],
 }
 BINARY_ASSETS = {
@@ -75,20 +76,20 @@ BINARY_ASSETS = {
         "8a4e35ab0b331c85d73567b12f2a444df187f483e5079ceffa6bda1faa2e740e",
     ],
     "just-windows-arm64": [
-        "https://github.com/casey/just/releases/download/1.57.0/just-1.57.0-aarch64-pc-windows-msvc.zip",
-        "14ff33bbac8d2f07deda30cd3bafe7be083213cdb1c4dae7a55567d375cc17f1",
+        "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-aarch64-pc-windows-msvc.zip",
+        "3a39ed629eb67678976c811a4da46f7985a2c22f4dbabe017b8b2eb5ceb5d01c",
     ],
     "just-linux-arm64": [
-        "https://github.com/casey/just/releases/download/1.57.0/just-1.57.0-aarch64-unknown-linux-musl.tar.gz",
-        "f225044a81adea6e0b3a8b9370aaf374e6af76c8735ae263ac993df55fd137ec",
+        "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-aarch64-unknown-linux-musl.tar.gz",
+        "748237128c4c40cbdabc65e841d05ceba13cc23a91eaba395495894c1d9764df",
     ],
     "just-windows-amd64": [
-        "https://github.com/casey/just/releases/download/1.57.0/just-1.57.0-x86_64-pc-windows-msvc.zip",
-        "4c7391d17cb1d17b758b52004ee6411372b8a13ff37c3c9b9031625cb6026e09",
+        "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-x86_64-pc-windows-msvc.zip",
+        "759f16fb7aa17c5c8b9594b6d4a8c1a6630dfd042cf2b3ff84841454d3d188dc",
     ],
     "just-linux-amd64": [
-        "https://github.com/casey/just/releases/download/1.57.0/just-1.57.0-x86_64-unknown-linux-musl.tar.gz",
-        "45b548094283cb9739af8f13273b8cddeee869f5b4ef2bb631b1f311cb566155",
+        "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-x86_64-unknown-linux-musl.tar.gz",
+        "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d",
     ],
 }
 
@@ -192,35 +193,35 @@ def python_version(python):
 def canonical_python():
     if sys.version_info < (3, 12):
         raise RuntimeError("Install native Python 3.12 or later to run project tools")
-    if sys.version_info[:3] == (3, 12, 14) and (
+    if sys.version_info[:3] == (3, 12, 15) and (
         zlib.ZLIB_VERSION,
         zlib.ZLIB_RUNTIME_VERSION,
     ) == ("1.3.2", "1.3.2"):
         return Path(sys.executable)
     key = "-".join(host())
-    directory = CACHE / ("python-3.12.14-" + key)
+    directory = CACHE / ("python-3.12.15-" + key)
     relative = Path("python") / ("python.exe" if os.name == "nt" else "bin/python3")
     python = directory / relative
     if not python.is_file():
-        archive = download("python-3.12.14-" + key + ".tar.gz", *PYTHON_ASSETS[key])
+        archive = download("python-3.12.15-" + key + ".tar.gz", *PYTHON_ASSETS[key])
         with tempfile.TemporaryDirectory(dir=CACHE) as temporary:
             staging = Path(temporary) / "install"
             staging.mkdir()
             with tarfile.open(archive) as source:
                 source.extractall(staging, filter="data")
             version = python_version(staging / relative)
-            if version != "(3, 12, 14) 1.3.2 1.3.2":
+            if version != "(3, 12, 15) 1.3.2 1.3.2":
                 raise RuntimeError(f"Canonical Python compressor mismatch: {version}")
             staging.rename(directory)
     version = python_version(python)
-    if version != "(3, 12, 14) 1.3.2 1.3.2":
+    if version != "(3, 12, 15) 1.3.2 1.3.2":
         raise RuntimeError(f"Canonical Python compressor mismatch: {version}")
     return python
 
 
 def tool(name):
     if name == "ruff":
-        directory = CACHE / "venv"
+        directory = CACHE / "venv-3.12.15"
         python = directory / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         if not python.is_file():
             call(canonical_python(), "-I", "-m", "venv", "--clear", directory)
@@ -230,7 +231,7 @@ def tool(name):
             capture_output=True,
             text=True,
         )
-        if probe.returncode or probe.stdout.strip() != "ruff 0.15.7":
+        if probe.returncode or probe.stdout.strip() != "ruff 0.16.10":
             call(
                 python,
                 "-I",
@@ -239,11 +240,11 @@ def tool(name):
                 "--isolated",
                 "install",
                 "--disable-pip-version-check",
-                "ruff==0.15.7",
+                "ruff==0.16.10",
             )
         return directory / ("Scripts/ruff.exe" if os.name == "nt" else "bin/ruff")
     if name in ("prettier", "pnpm"):
-        version = {"prettier": "3.8.3", "pnpm": "11.18.0"}[name]
+        version = {"prettier": "3.9.9", "pnpm": "12.9.1"}[name]
         directory = CACHE / "npm"
         binary = (
             directory
@@ -251,7 +252,12 @@ def tool(name):
             / ".bin"
             / (name + ".cmd" if os.name == "nt" else name)
         )
-        if not binary.is_file():
+        package = directory / "node_modules" / name / "package.json"
+        try:
+            installed_version = json.loads(package.read_text()).get("version")
+        except (OSError, ValueError):
+            installed_version = None
+        if not binary.is_file() or installed_version != version:
             call(
                 "npm",
                 "install",

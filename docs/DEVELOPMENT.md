@@ -86,7 +86,11 @@ scripts/rust-env.sh cargo test -p blockfield-launcher --lib \
 
 ## Local development
 
-Install Node.js 22, Python 3.12+, Just 1.57.0, Rust 1.98.1, and the platform dependencies required by Tauri. Then:
+Install Node.js 22.23.3 (see `.nvmrc`), Python 3.12.15+, Just 1.58.0, Rust 1.99.0, and the platform dependencies required by Tauri.
+
+`just setup` installs the pinned pnpm, formatters, and linters into `.cache/quality`.
+Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux and Windows so archive
+compression stays reproducible; stale cached tool versions are replaced automatically.
 
 ```sh
 just setup
@@ -146,6 +150,11 @@ The [archived API/CMS reports](legacy/README.md) are historical only.
 3. Validate all signed updater assets, then publish the completed draft in [this repository](https://github.com/Blockfield/Blockfield-Launcher/releases).
 
 Quality checks and secret scanning gate the platform builds. Standard GitHub-hosted runners build Linux on `ubuntu-22.04` (preserving the glibc baseline), Windows on `windows-2025`, Apple Silicon on `macos-15`, and Intel Macs on `macos-15-intel`. Platform builds run in parallel, with a 60-minute limit, and upload to a draft release. Publication waits for all four builds and updater validation. No self-hosted runner is required.
+
+The pinned Tauri release action uses versioned macOS updater archives
+(`blockfield-launcher_<version>_x64.app.tar.gz` and `_aarch64.app.tar.gz`). The
+publication check requires every installer and its nonempty signature before
+rebuilding `latest.json` with public release download URLs.
 
 Actions caches are scoped per ref, so a tag run cannot read caches saved by earlier tags. The same workflow runs on `main` every Monday (and on demand via `workflow_dispatch`): it runs the checks and builds, publishes nothing and saves the Rust and pnpm caches that tag runs restore read-only. Run it by hand after a dependency or Rust toolchain update.
 

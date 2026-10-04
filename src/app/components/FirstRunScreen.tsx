@@ -7,6 +7,7 @@ import { ErrorDetail } from './ui-bits'
 import { Setting, PathInput, RamSlider } from './SettingsScreen'
 import type { LauncherConfig } from '../../lib/api'
 import { friendlyError } from '../../lib/errors'
+import { selectedGameDirectory } from '../../lib/game-directory'
 import { translate } from '../i18n'
 
 /**
@@ -37,7 +38,7 @@ export function FirstRunScreen({
         title: field === 'dir' ? 'Select Game Directory' : 'Select Java Executable',
       })
       if (selected) {
-        if (field === 'dir') setDir(selected as string)
+        if (field === 'dir') setDir(await selectedGameDirectory(selected as string))
         else setJava(selected as string)
       }
     } catch (e) {

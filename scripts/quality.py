@@ -127,9 +127,9 @@ def formatting(files, write=False):
     java = [f for f in files if f.endswith(".java")]
     if java:
         jar = download(
-            "google-java-format-1.36.1-all-deps.jar",
-            "https://repo.maven.apache.org/maven2/com/google/googlejavaformat/google-java-format/1.36.1/google-java-format-1.36.1-all-deps.jar",
-            "25b400f003089d23cc5320cdaf1a16cabee19b8aa3434d0ff021b3d9f42154b4",
+            "google-java-format-1.37.0-all-deps.jar",
+            "https://repo.maven.apache.org/maven2/com/google/googlejavaformat/google-java-format/1.37.0/google-java-format-1.37.0-all-deps.jar",
+            "834b2a0c38cb774953322a84b5ca3f2f40dd3156650b3cd44d3b744345962f7a",
         )
         each(
             [
@@ -189,14 +189,14 @@ def compile_check(files):
     elif "scripts/PatchLrTactical.java" in files:
         jars = [
             download(
-                "asm-9.8.jar",
-                "https://repo.maven.apache.org/maven2/org/ow2/asm/asm/9.8/asm-9.8.jar",
-                "876eab6a83daecad5ca67eb9fcabb063c97b5aeb8cf1fca7a989ecde17522051",
+                "asm-9.10.1.jar",
+                "https://repo.maven.apache.org/maven2/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
+                "ed825d10ab1399c8c0cb669e688cf0c8c82629b4c8399b58352b68e92ca10fcb",
             ),
             download(
-                "asm-tree-9.8.jar",
-                "https://repo.maven.apache.org/maven2/org/ow2/asm/asm-tree/9.8/asm-tree-9.8.jar",
-                "14b7880cb7c85eed101e2710432fc3ffb83275532a6a894dc4c4095d49ad59f1",
+                "asm-tree-9.10.1.jar",
+                "https://repo.maven.apache.org/maven2/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar",
+                "3dfb0d5b6a106cd40b5b250e39935fbf2f927f4477546a5369a3ac609cf0506b",
             ),
         ]
         with tempfile.TemporaryDirectory() as output:
@@ -238,8 +238,9 @@ def tests():
         run("go", "test", "-p", "1", "./...")
     if (ROOT / "Cargo.toml").is_file():
         run("cargo", "test", "--workspace", "--locked")
-    if (ROOT / "scripts/test-prepare-updater.py").is_file():
-        run("python", "scripts/test-prepare-updater.py")
+    for script in ("scripts/test-prepare-updater.py", "scripts/test-toolchain.py"):
+        if (ROOT / script).is_file():
+            run("python", script)
 
 
 def main():
