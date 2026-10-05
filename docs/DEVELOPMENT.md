@@ -13,7 +13,11 @@ describes the repositories and their contracts. The launcher installs the public
 
 On **Play**, the launcher validates or refreshes the Drasl session, prepares Java and Fabric,
 runs the pinned packwiz installer, prepares the vanilla runtime and launches Minecraft with the
-account's player name, UUID and access token. The client mod completes authentication through
+account's player name, UUID and access token. The pack's `server` field, including
+`raknet;host:port`, passes unchanged as one `--quickPlayMultiplayer` argument and
+as `BLOCKFIELD_SERVER`. The status/region path strips `raknet;` and uses TCP 25565
+for SLP: Blockfield's proxy listens for RakNet on UDP 25566. Automatic pre-login
+TCP retry belongs to the client mod; the launcher does not select a transport. The client mod completes authentication through
 Drasl; the Velocity plugin verifies the session before routing the player.
 
 `src-tauri/src/commands.rs` combines a direct Server List Ping to the public server with room data

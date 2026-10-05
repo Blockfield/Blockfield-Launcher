@@ -225,10 +225,14 @@ fn location_labels(location: &GeoLocation) -> (String, String) {
 }
 
 pub fn split_host_port(target: &str) -> (String, u16) {
-    match target.rsplit_once(':') {
+    let raknet = target.strip_prefix("raknet;");
+    let target = raknet.unwrap_or(target);
+    let (host, port) = match target.rsplit_once(':') {
         Some((host, port)) if !host.is_empty() => (host.to_string(), port.parse().unwrap_or(25565)),
         _ => (target.to_string(), 25565),
-    }
+    };
+    // Status uses TCP SLP; Blockfield's RakNet UDP listener has a separate port.
+    (host, if raknet.is_some() { 25565 } else { port })
 }
 
 pub fn ping(host: &str, port: u16) -> ServerStatus {
@@ -632,5 +636,17 @@ mod tests {
             ("mc.example".into(), 25566)
         );
         assert_eq!(split_host_port("mc.example"), ("mc.example".into(), 25565));
+        assert_eq!(
+            split_host_port("raknet;mc.example:25566"),
+            ("mc.example".into(), 25565)
+        );
+        assert_eq!(
+            split_host_port("raknet;mc.example"),
+            ("mc.example".into(), 25565)
+        );
+        assert_eq!(
+            split_host_port("raknet;[::1]:25566"),
+            ("[::1]".into(), 25565)
+        );
     }
 }
