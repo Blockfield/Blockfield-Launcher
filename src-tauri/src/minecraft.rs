@@ -1058,6 +1058,26 @@ mod tests {
     }
 
     #[test]
+    fn raknet_quick_play_address_is_a_single_unchanged_argument() {
+        let root =
+            std::env::temp_dir().join(format!("blockfield_raknet_args_{}", std::process::id()));
+        let version = "1.21.1";
+        let dir = root.join("versions").join(version);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{version}.json")),
+            r#"{"mainClass":"net.minecraft.client.main.Main","libraries":[],"arguments":{"game":[],"jvm":[]}}"#).unwrap();
+        let identity = crate::commands::GameIdentity {
+            username: "TransportTest".into(),
+            uuid: "00000000000000000000000000000000".into(),
+            access_token: "test".into(),
+        };
+        let server = "raknet;play.blockfield.pro:25566";
+        let args = build_launch_args(&root, 1024, version, None, &identity, Some(server)).unwrap();
+        assert_eq!(&args[args.len() - 2..], &["--quickPlayMultiplayer", server]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn fabric_maven_libraries_resolve_to_repository_paths() {
         let json = serde_json::json!({"libraries": [
             {"name": "org.ow2.asm:asm:9.10.1", "url": "https://maven.fabricmc.net/", "size": 126151},
