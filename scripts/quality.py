@@ -221,7 +221,12 @@ def tests():
             run("pnpm" if (ROOT / "pnpm-lock.yaml").is_file() else "npm", "run", "test")
         if "config:test" in json.loads((ROOT / "package.json").read_text())["scripts"]:
             run("pnpm", "run", "config:test")
-    for directory in ("tests", "scripts/dev/tests", "tools/workshop"):
+    for directory in (
+        "tests",
+        "scripts/dev/tests",
+        "tools/workshop",
+        ".github/actions/release-text",
+    ):
         if (ROOT / directory).is_dir():
             run(
                 "python",

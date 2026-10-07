@@ -288,10 +288,12 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12.15'
@@ -303,6 +305,16 @@ jobs:
             .dev/jdk
           key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
+      - name: Release text
+        uses: ./.github/actions/release-text
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          RELEASE_TEXT_MODEL: ${{ vars.RELEASE_TEXT_MODEL }}
+        with:
+          mode: release
+          version: ${{ github.ref_name }}
+          kind: launcher
+          out-dir: rn
       - name: Validate updater assets and publish the completed draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -310,19 +322,18 @@ jobs:
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
           tag="launcher-v$version"
-          test -f "release-notes/$tag.md" || { echo "missing release-notes/$tag.md: prepare it in the release PR"; exit 1; }
-          just python scripts/release-notes-tool.py check "release-notes/$tag.md" \
+          just python .github/actions/release-text/release_notes_tool.py check rn/release-notes.md \
             --repository Blockfield/Blockfield-Launcher --version "$tag" --kind launcher
           mkdir -p release
           gh release download "$tag" --dir release
           just python scripts/prepare-updater.py release "$version"
           gh release upload "$tag" release/latest.json --clobber
           # Имя asset = имя файла; `file#text` задал бы только подпись.
-          mkdir -p rn && cp "release-notes/$tag.md" rn/release-notes.md
           if gh release download "$tag" --pattern release-notes.md --output rn/published.md 2>/dev/null \
               && cmp -s rn/published.md rn/release-notes.md; then
             echo "release-notes.md already attached"
           else
             gh release upload "$tag" rn/release-notes.md --clobber
           fi
+          [ ! -f rn/announcement.json ] || gh release upload "$tag" rn/announcement.json --clobber
           gh release edit "$tag" --notes-file rn/release-notes.md --draft=false --latest
