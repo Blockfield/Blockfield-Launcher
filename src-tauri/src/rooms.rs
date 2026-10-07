@@ -68,7 +68,16 @@ pub fn pending_room(pending: State<'_, PendingRoom>) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn select_room(id: Option<String>, pending: State<'_, PendingRoom>) -> Result<(), String> {
+pub fn select_room(
+    id: Option<String>,
+    pending: State<'_, PendingRoom>,
+    state: State<'_, LauncherAppState>,
+) -> Result<(), String> {
+    if id.is_some()
+        && state.config.blocking_read().active_profile != crate::config::ClientProfile::Game
+    {
+        return Err("Для приглашения выберите профиль «Игра».".into());
+    }
     if id.as_ref().is_some_and(|id| !valid_target(id)) {
         return Err("Некорректное приглашение".into());
     }
@@ -99,6 +108,9 @@ pub fn write_request(state: &LauncherAppState, id: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn join_running_room(id: String, state: State<'_, LauncherAppState>) -> Result<(), String> {
+    if state.config.blocking_read().active_profile != crate::config::ClientProfile::Game {
+        return Err("Приглашения в матчи доступны в профиле «Игра».".into());
+    }
     if state.game.snapshot().phase != crate::game::GamePhase::Running {
         return Err("Дождитесь запуска игры".into());
     }

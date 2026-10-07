@@ -94,12 +94,19 @@ async fn session(app: &tauri::AppHandle) -> io::Result<()> {
                     return Err(io::ErrorKind::TimedOut.into());
                 }
                 let phase = state.game.snapshot().phase;
+                let config = state.config.read().await;
+                let workshop = config.active_profile == crate::config::ClientProfile::Workshop;
                 if phase == GamePhase::Running && started == 0 { started = now(); }
                 if phase == GamePhase::Idle { started = 0; }
                 let data = if phase == GamePhase::Running {
-                    read_presence(&state.app_data_dir.join("game-presence.json"))
+                    read_presence(&config.bridge_dir(&state.app_data_dir).join("game-presence.json"))
                 } else { None };
-                let activity = activity(phase, data.as_ref(), started, native_invites);
+                let mut activity = activity(phase, data.as_ref(), started, native_invites && !workshop);
+                if workshop {
+                    activity.as_object_mut().unwrap().remove("buttons");
+                    if phase == GamePhase::Running { activity["details"] = "В мастерской".into(); }
+                }
+                drop(config);
                 if (activity != last_activity && last_sent.elapsed() >= Duration::from_secs(2)) || last_sent.elapsed() >= Duration::from_secs(10) {
                     connection.command("SET_ACTIVITY", json!({"pid":std::process::id(),"activity":activity}), None).await?;
                     last_activity = activity;

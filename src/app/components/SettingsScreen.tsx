@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   Folder,
+  Gamepad2,
   Cpu,
   Coffee,
   RefreshCw,
@@ -47,16 +48,20 @@ export function SettingsScreen({
   onAccountChange,
   tab,
   onTabChange: setTab,
+  onWorkshopServerSaved,
 }: {
   username: string
   onAccountChange: (account: AccountStatus) => void
   tab: SettingsTab
   onTabChange: (tab: SettingsTab) => void
+  onWorkshopServerSaved?: (address: string) => void
 }) {
   const { lang, t } = useI18n()
   const content = useLauncherContent()
   const [dir, setDir] = useState('')
   const [java, setJava] = useState('')
+  const [profile, setProfile] = useState<'game' | 'workshop'>('game')
+  const [workshopServer, setWorkshopServer] = useState('')
   const [ram, setRam] = useState(4)
   const [maxRam, setMaxRam] = useState(32)
   const [preLaunchCommand, setPreLaunchCommand] = useState('')
@@ -99,6 +104,8 @@ export function SettingsScreen({
 
     invoke<LauncherConfig>('load_settings')
       .then((cfg) => {
+        setProfile(cfg.activeProfile ?? 'game')
+        setWorkshopServer(cfg.workshopServer ?? '')
         setDir(cfg.gameDir)
         setJava(cfg.javaPath)
         setMaxRam(ramLimitGb(cfg.maxRamMb))
@@ -128,6 +135,8 @@ export function SettingsScreen({
     try {
       await invoke('save_settings', {
         config: {
+          activeProfile: profile,
+          workshopServer,
           gameDir: dir,
           javaPath: java,
           ramMb: ram * 1024,
@@ -140,6 +149,7 @@ export function SettingsScreen({
         } satisfies LauncherConfig,
       })
       invalidateModpackCheck()
+      onWorkshopServerSaved?.(workshopServer)
       setDirty(false)
       setSaveMessage(t('settings.saved'))
       setTimeout(() => setSaveMessage(null), 3000)
@@ -152,6 +162,9 @@ export function SettingsScreen({
       setSaving(false)
     }
   }, [
+    profile,
+    workshopServer,
+    onWorkshopServerSaved,
     dir,
     java,
     ram,
@@ -168,6 +181,8 @@ export function SettingsScreen({
   const handleReset = useCallback(() => {
     invoke<LauncherConfig>('load_settings')
       .then((cfg) => {
+        setProfile(cfg.activeProfile ?? 'game')
+        setWorkshopServer(cfg.workshopServer ?? '')
         setDir(cfg.gameDir)
         setJava(cfg.javaPath)
         setMaxRam(ramLimitGb(cfg.maxRamMb))
@@ -348,7 +363,7 @@ export function SettingsScreen({
             id={`settings-panel-${tab}`}
             role="tabpanel"
             aria-labelledby={`settings-tab-${tab}`}
-            className="settings-panel min-h-0 flex-1 px-3 md:px-5 py-2"
+            className="settings-panel min-h-0 flex-1 overflow-y-auto px-3 md:px-5 py-2"
           >
             {tab === 'launcher' && (
               <>
@@ -430,11 +445,15 @@ export function SettingsScreen({
                 </Setting>
                 <Setting
                   icon={<Folder size={14} />}
-                  label={t('settings.gameDir')}
-                  hint={t('settings.gameDirHint')}
+                  label={profile === 'workshop' ? 'Папка мастерской' : t('settings.gameDir')}
+                  hint={
+                    profile === 'workshop'
+                      ? 'Настройки, клавиши, миры и логи мастерской хранятся отдельно от игры.'
+                      : t('settings.gameDirHint')
+                  }
                 >
                   <PathInput
-                    label={t('settings.gameDir')}
+                    label={profile === 'workshop' ? 'Папка мастерской' : t('settings.gameDir')}
                     value={dir}
                     onChange={(v) => {
                       setDir(v)
@@ -444,6 +463,24 @@ export function SettingsScreen({
                     onBrowse={() => handleBrowse('dir')}
                   />
                 </Setting>
+                {profile === 'workshop' && (
+                  <Setting
+                    icon={<Gamepad2 size={14} />}
+                    label="Адрес мастерской"
+                    hint="Отдельный хост подключения к мастерской. Аккаунт должен иметь доступ к строительству."
+                  >
+                    <input
+                      aria-label="Адрес мастерской"
+                      value={workshopServer}
+                      onChange={(event) => {
+                        setWorkshopServer(event.target.value)
+                        markDirty()
+                      }}
+                      placeholder="Хост или хост:порт"
+                      className="h-10 w-full min-w-0 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] text-[#F3E7D0] placeholder:text-[#C7AE86] focus-visible:outline-2 focus-visible:outline-[#F5A524]"
+                    />
+                  </Setting>
+                )}
                 <Setting
                   compact
                   icon={<RefreshCw size={14} />}
