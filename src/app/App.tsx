@@ -61,6 +61,25 @@ export default function App() {
   const [configError, setConfigError] = useState<FriendlyError | null>(null)
   const [configAttempt, setConfigAttempt] = useState(0)
   const [configLoaded, setConfigLoaded] = useState(!isTauri())
+  const [profile, setProfile] = useState<'game' | 'workshop'>('game')
+  const [profileChanging, setProfileChanging] = useState(false)
+  const [profileError, setProfileError] = useState<string | null>(null)
+
+  const selectProfile = async (next: 'game' | 'workshop') => {
+    if (next === profile || profileChanging) return
+    setProfileChanging(true)
+    setProfileError(null)
+    try {
+      const config = await invoke<LauncherConfig>('select_profile', { profile: next })
+      invalidateModpackCheck()
+      setUpdatesVisited(false)
+      setProfile(config.activeProfile ?? next)
+    } catch (error) {
+      setProfileError(String(error))
+    } finally {
+      setProfileChanging(false)
+    }
+  }
 
   useEffect(() => {
     if (!isTauri()) return
@@ -117,6 +136,7 @@ export default function App() {
         ]),
       )
       .then(([cfg, status]) => {
+        setProfile(cfg.activeProfile ?? 'game')
         setAccount(status)
         checkModpack().catch((error) => console.error('Startup check failed:', error))
         if (!cfg.username) setFirstRunConfig(cfg)
@@ -255,6 +275,11 @@ export default function App() {
           )}
           {screen === 'main' && (
             <MainScreen
+              key={profile}
+              profile={profile}
+              profileChanging={profileChanging}
+              profileError={profileError}
+              onSelectProfile={(next) => void selectProfile(next)}
               onPlay={() => {
                 setUpdateRequest((value) => value + 1)
                 navigate('update')

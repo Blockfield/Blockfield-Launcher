@@ -228,9 +228,21 @@ pub fn split_host_port(target: &str) -> (String, u16) {
     let raknet = target.strip_prefix("raknet;");
     let target = raknet.unwrap_or(target);
     let (host, port) = match target.rsplit_once(':') {
+        _ if target
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .is_ok() =>
+        {
+            (target.to_string(), 25565)
+        }
         Some((host, port)) if !host.is_empty() => (host.to_string(), port.parse().unwrap_or(25565)),
         _ => (target.to_string(), 25565),
     };
+    let host = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_owned();
     // Status uses TCP SLP; Blockfield's RakNet UDP listener has a separate port.
     (host, if raknet.is_some() { 25565 } else { port })
 }
@@ -644,9 +656,9 @@ mod tests {
             split_host_port("raknet;mc.example"),
             ("mc.example".into(), 25565)
         );
-        assert_eq!(
-            split_host_port("raknet;[::1]:25566"),
-            ("[::1]".into(), 25565)
-        );
+        assert_eq!(split_host_port("raknet;[::1]:25566"), ("::1".into(), 25565));
+        assert_eq!(split_host_port("[::1]"), ("::1".into(), 25565));
+        assert_eq!(split_host_port("[::1]:25567"), ("::1".into(), 25567));
+        assert_eq!(split_host_port("raknet;[::1]"), ("::1".into(), 25565));
     }
 }

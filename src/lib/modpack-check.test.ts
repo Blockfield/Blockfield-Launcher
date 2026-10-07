@@ -38,9 +38,9 @@ it('respects disabled startup verification but permits manual verification', asy
   })
   const { checkModpack } = await import('./modpack-check')
   await checkModpack()
-  expect(invoke).not.toHaveBeenCalledWith('verify_files')
+  expect(invoke.mock.calls.some(([command]) => command === 'verify_files')).toBe(false)
   await checkModpack(true)
-  expect(invoke).toHaveBeenCalledWith('verify_files')
+  expect(invoke).toHaveBeenCalledWith('verify_files', { profile: 'game' })
 })
 
 it('does not install a newer pack during the startup check', async () => {
@@ -51,7 +51,7 @@ it('does not install a newer pack during the startup check', async () => {
   )
   const { checkModpack } = await import('./modpack-check')
   expect((await checkModpack()).needsUpdate).toBe(true)
-  expect(invoke).not.toHaveBeenCalledWith('verify_files')
+  expect(invoke.mock.calls.some(([command]) => command === 'verify_files')).toBe(false)
   expect(invoke).not.toHaveBeenCalledWith('download_modpack')
 })
 
@@ -75,4 +75,51 @@ it('rechecks after settings or an installation changes', async () => {
   expect(invoke.mock.calls.filter(([command]) => command === 'check_modpack_version')).toHaveLength(
     2,
   )
+})
+
+it('discards a profile check invalidated during the native request without verifying another directory', async () => {
+  const { checkModpack, invalidateModpackCheck, getModpackVersionSnapshot } = await import('./modpack-check')
+  let finish!: (value: unknown) => void
+  const implementation = invoke.getMockImplementation()!
+  invoke.mockImplementation(async (command: string) => {
+    if (command === 'check_modpack_version') return new Promise((resolve) => { finish = resolve })
+    return implementation(command)
+  })
+  const oldCheck = checkModpack()
+  const failed = expect(oldCheck).rejects.toThrow('Профиль изменён')
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+  invalidateModpackCheck()
+  invoke.mockImplementation(implementation)
+  const current = await checkModpack()
+  finish({ needsUpdate: false, javaOk: true, loaderOk: true, installedVersion: 'old-profile' })
+  await failed
+  expect(getModpackVersionSnapshot()).toBe(current)
+  expect(invoke.mock.calls.filter(([command]) => command === 'verify_files')).toHaveLength(1)
+})
+
+it('does not verify files when the profile changes during the game-state request', async () => {
+  const { checkModpack, invalidateModpackCheck } = await import('./modpack-check')
+  let finish!: (value: unknown) => void
+  const implementation = invoke.getMockImplementation()!
+  invoke.mockImplementation(async (command: string) => {
+    if (command === 'game_status') return new Promise((resolve) => { finish = resolve })
+    return implementation(command)
+  })
+  const check = checkModpack()
+  const failed = expect(check).rejects.toThrow('Профиль изменён')
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+  invalidateModpackCheck()
+  finish({ phase: 'idle' })
+  await failed
+  expect(invoke.mock.calls.some(([command]) => command === 'verify_files')).toBe(false)
+})
+
+it('binds verification to the workshop profile that was checked', async () => {
+  const implementation = invoke.getMockImplementation()!
+  invoke.mockImplementation(async (command: string) => command === 'load_settings'
+    ? { autoUpdate: true, activeProfile: 'workshop' }
+    : implementation(command))
+  const { checkModpack } = await import('./modpack-check')
+  await checkModpack()
+  expect(invoke).toHaveBeenCalledWith('verify_files', { profile: 'workshop' })
 })

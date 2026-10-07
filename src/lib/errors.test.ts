@@ -34,6 +34,10 @@ describe('friendlyError', () => {
 })
 
 describe('settings validation errors', () => {
+  it('keeps profile recovery instructions visible instead of hiding them behind a generic launch failure', () => {
+    const message = 'Укажите адрес мастерской в настройках выбранного профиля.'
+    expect(friendlyError(new Error(message), 'launch').message).toBe(message)
+  })
   it.each([
     ['Game directory must be a safe absolute path, not a filesystem root', 'а не корень диска'],
     ['Game directory cannot be created: Access is denied. (os error 5)', 'создать папку игры'],

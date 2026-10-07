@@ -162,6 +162,8 @@ export interface LauncherContent {
 
 /** Launcher configuration persisted to disk. */
 export interface LauncherConfig {
+  activeProfile?: 'game' | 'workshop'
+  workshopServer?: string
   gameDir: string
   javaPath: string
   maxRamMb?: number

@@ -72,6 +72,20 @@ export interface FriendlyError {
 
 export function friendlyError(raw: unknown, context: ErrorContext): FriendlyError {
   const text = String(raw)
+  const profileErrors = [
+    'Укажите адрес мастерской в настройках выбранного профиля.',
+    'Мастерской нужен отдельный адрес: смена порта игрового адреса не меняет профиль.',
+    'Для игры и мастерской нужны отдельные папки, без вложения одной в другую.',
+    'Нужен адрес сервера: хост и необязательный порт, без ссылки или пробелов.',
+    'Закройте игру перед сменой профиля.',
+    'Закройте игру перед изменением настроек.',
+    'Дождитесь завершения текущей операции.',
+    'Профиль изменился. Откройте настройки заново.',
+    'Профиль изменился. Повторите проверку файлов.',
+    'Профиль изменён. Повторите проверку.',
+  ]
+  const profileError = profileErrors.find((message) => text.includes(message))
+  if (profileError) return { message: profileError, raw: text }
   if (text.includes(SESSION_EXPIRED)) {
     return { message: 'Сессия истекла — войдите снова.', raw: text }
   }

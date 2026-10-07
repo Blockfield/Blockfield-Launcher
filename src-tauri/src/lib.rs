@@ -149,6 +149,7 @@ pub fn run() {
             account::change_password,
             commands::load_settings,
             commands::save_settings,
+            commands::select_profile,
             commands::check_modpack_version,
             commands::download_modpack,
             commands::verify_files,

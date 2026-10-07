@@ -1078,6 +1078,53 @@ mod tests {
     }
 
     #[test]
+    fn profiles_use_separate_game_arguments_and_quick_play_targets() {
+        let scratch = tempfile::tempdir().unwrap();
+        let mut config = crate::config::LauncherConfig {
+            game_dir: scratch.path().join("game").to_string_lossy().into_owned(),
+            workshop_game_dir: scratch
+                .path()
+                .join("workshop")
+                .to_string_lossy()
+                .into_owned(),
+            workshop_server: "raknet;workshop.example:25566".into(),
+            ..crate::config::LauncherConfig::default()
+        };
+        let identity = crate::commands::GameIdentity {
+            username: "ProfileTest".into(),
+            uuid: "00000000000000000000000000000000".into(),
+            access_token: "fake-test-session".into(),
+        };
+        for (profile, expected_target) in [
+            (
+                crate::config::ClientProfile::Game,
+                "raknet;game.example:25566",
+            ),
+            (
+                crate::config::ClientProfile::Workshop,
+                "raknet;workshop.example:25566",
+            ),
+        ] {
+            config.active_profile = profile;
+            let active = config.active();
+            let root = Path::new(&active.game_dir);
+            let version = "1.21.1";
+            let directory = root.join("versions").join(version);
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join(format!("{version}.json")), r#"{"mainClass":"net.minecraft.client.main.Main","libraries":[],"arguments":{"game":["--gameDir","${game_directory}"],"jvm":[]}}"#).unwrap();
+            let target = active.target("raknet;game.example:25566").unwrap();
+            let args =
+                build_launch_args(root, 4096, version, None, &identity, target.as_deref()).unwrap();
+            let game_directory_arg = args.iter().position(|arg| arg == "--gameDir").unwrap();
+            assert_eq!(args[game_directory_arg + 1], active.game_dir);
+            assert_eq!(
+                &args[args.len() - 2..],
+                &["--quickPlayMultiplayer", expected_target]
+            );
+        }
+    }
+
+    #[test]
     fn fabric_maven_libraries_resolve_to_repository_paths() {
         let json = serde_json::json!({"libraries": [
             {"name": "org.ow2.asm:asm:9.10.1", "url": "https://maven.fabricmc.net/", "size": 126151},

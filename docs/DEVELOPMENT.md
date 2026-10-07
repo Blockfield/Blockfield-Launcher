@@ -74,6 +74,57 @@ scripts/rust-env.sh cargo test -p blockfield-launcher --lib \
   native_update::tests::published_deb_has_a_valid_signature_and_native_payload -- --ignored
 ```
 
+## Game and Workshop profiles
+
+The main screen selects two fixed client profiles: **Игра** (`game`) and **Мастерская**
+(`workshop`). Both install the same published pack and index pins from `launcher.json`,
+as the server controller uses the same server image for its mutually exclusive backends.
+Each profile owns a separate installation, Java runtime, pack-version marker, Minecraft
+options/keybinds, mods/configs, worlds, logs and crash reports. Checking, updating, verifying,
+launch arguments, process working directory and launch hooks use the selected directory.
+Changing profiles or settings while a game/file operation is active is refused.
+
+Existing `gameDir`/`javaPath` stay assigned to Game, at exactly the old paths. No worlds,
+settings or account files are copied or moved. An old config defaults to `activeProfile: game`;
+its new `workshopGameDir` is a sibling with `-Workshop` appended to the game folder name.
+Selection is persisted. Workshop stores its own `workshopGameDir` and `workshopJavaPath`;
+the settings response projects these into the existing `gameDir`/`javaPath` fields for the
+selected profile. Canonical directories must neither alias nor contain one another.
+Drasl credentials stay in the shared private launcher config and remain redacted from
+settings responses. RAM, language, account, startup verification, window/Discord preferences
+and hook commands remain shared; hooks execute in the selected game directory.
+
+Game keeps the published `launcher.json.server` Quick Play target. Set Workshop's
+**Настройки → Адрес мастерской** (`workshopServer`) explicitly; its optional initial
+runtime/build default is `BLOCKFIELD_WORKSHOP_SERVER`. An empty value refuses launch
+with instructions to configure it. The target accepts a host with an optional port and
+`raknet;` transport prefix, including bracketed IPv6. It must have a **different host**
+from Game after transport/port, DNS case/trailing dot and numeric IPv6 normalization.
+A different port on the Game host does not create a Workshop profile.
+
+The companion [proxy routing](https://github.com/Blockfield/blockfield-proxy/pull/24)
+requires `BLOCKFIELD_WORKSHOP_HOST` set to that distinct plain host, without `raknet;`
+or port. Both addresses resolve to the proxy; do not bypass it with a direct backend
+address. No production Workshop hostname or DNS record is assumed here. Empty proxy
+configuration disables Workshop routing, so leave `workshopServer` empty until the
+matching proxy setting and address are configured. The handshake host expresses intent;
+Drasl authentication, controller readiness and Workshop ACL still determine admission.
+An opposite active backend keeps the player in Limbo instead of connecting the wrong
+profile. Controller contract: [Workshop OPERATIONS](https://github.com/Blockfield/blockfield-workshop/blob/main/docs/OPERATIONS.md).
+
+Game room links and invites remain Game-only. Workshop does not consume a pending Game
+invite, advertise joinable Game presence or apply Game room maintenance to its own ping.
+Its local bridge files are under the app-data `workshop/` directory; account credentials
+remain outside that directory. Game retains the original app-data bridge path.
+
+Acceptance after the launcher/proxy changes are deployed together: migrate a legacy
+config with existing worlds/options, switch/update both profiles and confirm independent
+markers/settings, compare native `--gameDir`, cwd, log paths and Quick Play arguments,
+reject nested/aliased directories and changing profiles during installation/running,
+check Game room invitations while Workshop is selected, and exercise both distinct
+handshake hosts through auth/Limbo/gate round trips with permitted and unpermitted accounts.
+Unit tests are not evidence of live RakNet handshakes, DNS or production deployment.
+
 ## Active components
 
 | Component                | Location                           | Responsibility                                                                |

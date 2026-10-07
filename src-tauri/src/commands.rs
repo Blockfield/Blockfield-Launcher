@@ -1,4 +1,4 @@
-use crate::config::LauncherConfig;
+use crate::config::{ClientProfile, LauncherConfig};
 use crate::download::Downloader;
 use crate::pack::{self, JavaInfo, LauncherInfo, PackMeta};
 use crate::status::ServerStatus;
@@ -198,7 +198,10 @@ pub struct SettingsResponse {
 
 #[tauri::command]
 pub fn load_settings(state: State<'_, LauncherAppState>) -> Result<SettingsResponse, String> {
-    let mut config = state.config.blocking_read().clone();
+    Ok(settings_response(state.config.blocking_read().active()))
+}
+
+fn settings_response(mut config: LauncherConfig) -> SettingsResponse {
     for secret in [
         &mut config.access_token,
         &mut config.client_token,
@@ -213,10 +216,30 @@ pub fn load_settings(state: State<'_, LauncherAppState>) -> Result<SettingsRespo
             config.java_path = bundled.to_string_lossy().to_string();
         }
     }
-    Ok(SettingsResponse {
+    SettingsResponse {
         config,
         max_ram_mb: crate::config::max_ram_mb(),
-    })
+    }
+}
+
+#[tauri::command]
+pub async fn select_profile(
+    profile: ClientProfile,
+    state: State<'_, LauncherAppState>,
+) -> Result<SettingsResponse, String> {
+    let _operation = state
+        .operation
+        .try_lock()
+        .map_err(|_| "Дождитесь завершения текущей операции.")?;
+    if state.game.is_busy() {
+        return Err("Закройте игру перед сменой профиля.".into());
+    }
+    let mut current = state.config.write().await;
+    let mut updated = current.clone();
+    updated.active_profile = profile;
+    crate::config::save_config(&state.app_data_dir, &updated)?;
+    *current = updated;
+    Ok(settings_response(current.active()))
 }
 
 #[tauri::command]
@@ -225,15 +248,26 @@ pub fn save_settings(
     state: State<'_, LauncherAppState>,
     config: LauncherConfig,
 ) -> Result<(), String> {
+    let _operation = state
+        .operation
+        .try_lock()
+        .map_err(|_| "Дождитесь завершения текущей операции.")?;
+    if state.game.is_busy() {
+        return Err("Закройте игру перед изменением настроек.".into());
+    }
     let app_data_dir = app_handle
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
     let mut current = state.config.blocking_write();
+    if config.active_profile != current.active_profile {
+        return Err("Профиль изменился. Откройте настройки заново.".into());
+    }
+    let directory = config.game_dir.clone();
+    let java = config.java_path.clone();
     // The settings form does not own the account.
-    let config = LauncherConfig {
-        game_dir: config.game_dir,
-        java_path: config.java_path,
+    let mut config = LauncherConfig {
+        workshop_server: config.workshop_server,
         ram_mb: config.ram_mb,
         auto_update: config.auto_update,
         lang: config.lang,
@@ -243,6 +277,7 @@ pub fn save_settings(
         discord_presence: config.discord_presence,
         ..current.clone()
     };
+    config.set_active_paths(directory, java);
     crate::config::save_config(&app_data_dir, &config)?;
     *current = config;
     Ok(())
@@ -264,11 +299,15 @@ fn installed_pack(game_dir: &Path) -> (String, String) {
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
 ) -> Result<VersionCheckResult, String> {
+    let _operation = state
+        .operation
+        .try_lock()
+        .map_err(|_| "Дождитесь завершения текущей операции.")?;
     let base = pack_base_url()?;
     let info = pack::fetch_launcher_info(&base).await?;
     let meta = pack::fetch_pack_meta(&info.pack).await?;
 
-    let config = state.config.read().await.clone();
+    let config = state.config.read().await.active();
     let game_dir = PathBuf::from(&config.game_dir);
     let (installed_hash, installed) = installed_pack(&game_dir);
     // A frozen dev pack must not turn "Играть" into "Обновить": the developer manages these files.
@@ -333,7 +372,7 @@ pub async fn download_modpack(
         .await
         .clone()
         .ok_or_else(|| "No pack info cached – call check_modpack_version first".to_string())?;
-    let mut config = state.config.read().await.clone();
+    let mut config = state.config.read().await.validated_active()?;
     let game_dir = PathBuf::from(&config.game_dir);
     std::fs::create_dir_all(&game_dir).map_err(|e| format!("Failed to create game dir: {e}"))?;
     let _tracking = crate::installed_files::begin(&state.app_data_dir, &game_dir)?;
@@ -359,7 +398,10 @@ pub async fn download_modpack(
             let java_exe = install_java(&app_handle, &state, &game_dir, &java).await?;
             let java_path = java_exe.to_string_lossy().to_string();
             let mut cfg = state.config.write().await;
-            cfg.java_path = java_path.clone();
+            match cfg.active_profile {
+                ClientProfile::Game => cfg.java_path = java_path.clone(),
+                ClientProfile::Workshop => cfg.workshop_java_path = java_path.clone(),
+            }
             config.java_path = java_path.clone();
             let _ = crate::config::save_config(&state.app_data_dir, &cfg);
             log::info!("Java installed, path saved: {java_path}");
@@ -652,6 +694,7 @@ fn run_packwiz_installer(
 pub async fn verify_files(
     app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
+    profile: Option<ClientProfile>,
 ) -> Result<Vec<String>, String> {
     let _operation = state
         .operation
@@ -666,7 +709,13 @@ pub async fn verify_files(
         .await
         .clone()
         .ok_or("Check the modpack first")?;
-    let config = state.config.read().await.clone();
+    let config = {
+        let config = state.config.read().await;
+        if profile.is_some_and(|profile| profile != config.active_profile) {
+            return Err("Профиль изменился. Повторите проверку файлов.".into());
+        }
+        config.validated_active()?
+    };
     let game_dir = PathBuf::from(&config.game_dir);
     let java = resolved_java_path(&config);
     std::fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
@@ -694,16 +743,26 @@ pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), S
 #[tauri::command]
 pub async fn server_status(state: State<'_, LauncherAppState>) -> Result<ServerStatus, String> {
     let base = pack_base_url()?;
-    let target = match state.pack.read().await.as_ref() {
+    let config = state.config.read().await.clone();
+    let game_target = match state.pack.read().await.as_ref() {
         Some(pack) => pack.info.server.clone(),
         None => pack::fetch_launcher_info(&base).await?.server,
     };
+    let target = config
+        .target(&game_target)?
+        .ok_or("Адрес игрового сервера не настроен.")?;
     let (host, port) = crate::status::split_host_port(&target);
     let ping_host = host.clone();
     let (status, (region_code, location_name), rooms) = tokio::join!(
         tokio::task::spawn_blocking(move || crate::status::ping(&ping_host, port)),
         crate::status::locate(&host, port),
-        crate::status::fetch_rooms(&base),
+        async {
+            if config.active_profile == ClientProfile::Game {
+                crate::status::fetch_rooms(&base).await
+            } else {
+                None
+            }
+        },
     );
     let mut status = status.map_err(|e| format!("status task failed: {e}"))?;
     if let Some((available, rooms, maintenance)) = rooms {
@@ -798,7 +857,7 @@ pub async fn launch_game(
         .try_lock()
         .map_err(|_| "Another launcher operation is in progress")?;
     let running = state.game.begin()?;
-    let config = state.config.read().await.clone();
+    let config = state.config.read().await.validated_active()?;
     let identity = crate::account::game_identity(&app_handle, &state).await?;
     let pack = state.pack.read().await.clone();
 
@@ -842,10 +901,14 @@ pub async fn launch_game(
                 .or_else(|| option_env!("BLOCKFIELD_MINECRAFT_VERSION").map(String::from))
                 .unwrap_or_else(|| "1.21.1".to_string())
         });
-    let quick_play = pack
-        .as_ref()
-        .map(|p| p.info.server.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let game_server = match &pack {
+        Some(pack) => pack.info.server.clone(),
+        None if config.active_profile == ClientProfile::Workshop => {
+            pack::fetch_launcher_info(&pack_base_url()?).await?.server
+        }
+        None => String::new(),
+    };
+    let quick_play = config.target(&game_server)?;
     // Dev build: another server, or none at all so the game opens on the title screen.
     let quick_play = crate::dev::server_override().unwrap_or(quick_play);
 
@@ -914,14 +977,17 @@ pub async fn launch_game(
         .lock()
         .unwrap()
         .clone();
+    let pending_room = pending_room.filter(|_| config.active_profile == ClientProfile::Game);
+    let bridge_dir = config.bridge_dir(&state.app_data_dir);
+    std::fs::create_dir_all(&bridge_dir).map_err(|e| e.to_string())?;
     if let Some(id) = pending_room.as_ref() {
         crate::rooms::write_request(&state, id)?;
     } else {
-        let _ = std::fs::remove_file(state.app_data_dir.join("room-request.json"));
+        let _ = std::fs::remove_file(bridge_dir.join("room-request.json"));
     }
-    let _ = std::fs::remove_file(state.app_data_dir.join("game-presence.json"));
+    let _ = std::fs::remove_file(bridge_dir.join("game-presence.json"));
     let mut child = crate::host_env::command(&java)
-        .env("BLOCKFIELD_BRIDGE_DIR", &state.app_data_dir)
+        .env("BLOCKFIELD_BRIDGE_DIR", &bridge_dir)
         .env("BLOCKFIELD_SERVER", quick_play.as_deref().unwrap_or(""))
         .args(&args)
         .current_dir(&game_dir)

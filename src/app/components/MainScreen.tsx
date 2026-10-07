@@ -52,7 +52,13 @@ const FEATURE_ICONS: Record<string, ReactNode> = {
 /** Whether we're running inside Tauri (vs browser dev). */
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
-export function MainScreen({ onPlay }: { onPlay: () => void }) {
+export function MainScreen({ onPlay, profile = 'game', profileChanging = false, profileError, onSelectProfile }: {
+  onPlay: () => void
+  profile?: 'game' | 'workshop'
+  profileChanging?: boolean
+  profileError?: string | null
+  onSelectProfile?: (profile: 'game' | 'workshop') => void
+}) {
   const { lang, t } = useI18n()
   const game = useGameState()
   const gameBusy = game.phase !== 'idle'
@@ -74,7 +80,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
 
   const handleDeploy = useCallback(async () => {
     // Don't allow deploy until version check completes
-    if (!versionInfo || checking || launching || gameBusy) return
+    if (!versionInfo || checking || launching || gameBusy || profileChanging) return
     // Update needed OR Java not ready OR Fabric not installed → go to update screen
     if (versionInfo.needsUpdate || !versionInfo.javaOk || !versionInfo.loaderOk) {
       onPlay()
@@ -112,7 +118,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
         setLaunching(false)
       }
     }
-  }, [versionInfo, checking, launching, gameBusy, onPlay, t])
+  }, [versionInfo, checking, launching, gameBusy, profileChanging, onPlay, t])
 
   const handleJoin = useCallback(
     async (id: string) => {
@@ -158,6 +164,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
   useEffect(() => {
     if (
       !pendingRoom ||
+      profile !== 'game' ||
       // Left unhandled so the invite is joined once maintenance ends.
       (pendingRoom !== 'lobby' && serverStatus?.maintenance) ||
       (game.phase !== 'running' && (checking || !versionInfo)) ||
@@ -170,6 +177,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
     void handleJoin(pendingRoom)
   }, [
     pendingRoom,
+    profile,
     serverStatus?.maintenance,
     checking,
     versionInfo,
@@ -273,7 +281,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
         : needsSetup
           ? { value: t(needsUpdate ? 'main.updateAvailable' : 'main.setupRequired'), tone: 'warn' }
           : { value: t('main.upToDate'), tone: 'muted' }
-  const operationName =
+  const operationName = profile === 'workshop' ? 'Мастерская карт' :
     localizedContentText(
       content,
       lang,
@@ -282,13 +290,13 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
       'operation_name',
     ) ?? OPERATION_NAME
   const season = localizedContentText(content, lang, 'content.season', 'season') ?? t('main.season')
-  const description =
+  const description = profile === 'workshop' ? 'Строительство карт с отдельными настройками и папкой игры.' :
     localizedContentText(content, lang, 'content.description', 'description') ??
     t('main.description')
-  const serverName =
+  const serverName = profile === 'workshop' ? 'Мастерская' :
     localizedContentText(content, lang, 'content.serverName', 'serverName', 'server_name') ??
     t('main.serverName')
-  const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
+  const serverIp = profile === 'workshop' ? 'Адрес в настройках профиля' : contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
   const gameUpdating = serverStatus?.online === true && serverStatus.gameAvailable === false
   const maintenance = serverStatus?.online ? (serverStatus.maintenance?.message ?? null) : null
   const players = serverStatus?.playersOnline?.toString() ?? '—'
@@ -348,11 +356,30 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
 
           {/* PLAY zone */}
           <GlowPanel className="main-play p-4 md:p-5">
+            {onSelectProfile && (
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <label htmlFor="client-profile" className="text-[12px] text-[#C7AE86]">Профиль</label>
+                <select
+                  id="client-profile"
+                  value={profile}
+                  disabled={profileChanging || checking || launching || gameBusy}
+                  onChange={(event) => onSelectProfile(event.target.value as 'game' | 'workshop')}
+                  className="h-9 border border-[#2A2116] bg-[#11100D] px-3 text-[12px] text-[#F3E7D0] focus-visible:outline-2 focus-visible:outline-[#F5A524] disabled:opacity-50"
+                >
+                  <option value="game">Игра</option>
+                  <option value="workshop">Мастерская</option>
+                </select>
+                <span role="status" className="text-[12px] text-[#C7AE86]">
+                  {profileChanging ? 'Смена профиля…' : profile === 'workshop' ? 'Свои игровые настройки и файлы. Аккаунт общий.' : 'Основная игровая установка.'}
+                </span>
+                {profileError && <p role="alert" className="w-full text-[12px] text-[#c98b8b]">{profileError}</p>}
+              </div>
+            )}
             <div className="flex flex-wrap items-center justify-between gap-5">
               <div className="flex flex-wrap min-w-0 items-center gap-4">
                 <DeployButton
                   onPlay={handleDeploy}
-                  disabled={!isChecked || checking || launching || gameBusy}
+                  disabled={!isChecked || checking || launching || gameBusy || profileChanging}
                   label={launchLabel}
                   sub={launchSub}
                   busy={launching}
@@ -394,19 +421,19 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
             </div>
           </GlowPanel>
 
-          {roomMessage && (
+          {(roomMessage || (profile === 'workshop' && pendingRoom)) && (
             <div
               role="status"
               className="mt-2 flex shrink-0 items-start gap-3 text-[12px] text-[#C7AE86]"
             >
-              <p className="min-w-0 flex-1 break-words">{roomMessage}</p>
-              <button
+              <p className="min-w-0 flex-1 break-words">{roomMessage || 'Есть приглашение в игру. Для входа выберите профиль «Игра».'}</p>
+              {roomMessage && <button
                 type="button"
                 onClick={() => setRoomMessage('')}
                 className="shrink-0 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-[#F5A524]"
               >
                 Закрыть
-              </button>
+              </button>}
             </div>
           )}
 
@@ -441,7 +468,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                 ))}
               </div>
               <div hidden={detailsView !== 'rooms'} className="min-h-0 flex-1 flex flex-col">
-                <RoomList
+                {profile === 'workshop' ? <p className="text-[13px] leading-relaxed text-[#C7AE86]">Вход доступен участникам мастерской во время открытой сессии. Адрес подключения задаётся в настройках этого профиля.</p> : <RoomList
                   rooms={serverStatus?.rooms}
                   updating={gameUpdating}
                   maintenance={maintenance}
@@ -452,7 +479,7 @@ export function MainScreen({ onPlay }: { onPlay: () => void }) {
                     launching ||
                     (game.phase !== 'running' && (checking || !versionInfo || gameBusy))
                   }
-                />
+                />}
               </div>
               <div
                 hidden={detailsView === 'rooms'}

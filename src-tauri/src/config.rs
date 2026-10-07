@@ -1,12 +1,28 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ClientProfile {
+    #[default]
+    Game,
+    Workshop,
+}
+
 /// Launcher configuration persisted in Tauri's app data directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LauncherConfig {
     /// Absolute path to the game directory where modpack files are installed
     pub game_dir: String,
+    #[serde(default)]
+    pub active_profile: ClientProfile,
+    #[serde(default)]
+    pub workshop_game_dir: String,
+    #[serde(default)]
+    pub workshop_java_path: String,
+    #[serde(default = "default_workshop_server")]
+    pub workshop_server: String,
     /// Absolute path to the Java runtime executable
     pub java_path: String,
     /// Allocated RAM in megabytes
@@ -47,8 +63,14 @@ pub struct LauncherConfig {
 impl Default for LauncherConfig {
     fn default() -> Self {
         // Runtime first (dotenvy for local dev), then compile-time (CI build), then hardcoded.
+        let game_dir = default_game_dir();
+        let workshop_game_dir = workshop_directory(&game_dir);
         Self {
-            game_dir: default_game_dir(),
+            game_dir,
+            active_profile: ClientProfile::Game,
+            workshop_game_dir,
+            workshop_java_path: String::new(),
+            workshop_server: default_workshop_server(),
             java_path: String::new(),
             ram_mb: std::env::var("BLOCKFIELD_DEFAULT_RAM_MB")
                 .ok()
@@ -78,6 +100,114 @@ impl Default for LauncherConfig {
             skin_username: String::new(),
         }
     }
+}
+
+impl LauncherConfig {
+    /// Keep the legacy game directory in persisted settings; only operation snapshots use the
+    /// selected directory. Accounts and launcher preferences remain shared.
+    pub fn active(&self) -> Self {
+        let mut config = self.clone();
+        if self.active_profile == ClientProfile::Workshop {
+            config.game_dir = self.workshop_game_dir.clone();
+            config.java_path = self.workshop_java_path.clone();
+        }
+        config
+    }
+
+    pub fn validated_active(&self) -> Result<Self, String> {
+        validate_config(self)?;
+        Ok(self.active())
+    }
+
+    pub fn set_active_paths(&mut self, directory: String, java: String) {
+        match self.active_profile {
+            ClientProfile::Game => {
+                self.game_dir = directory;
+                self.java_path = java;
+            }
+            ClientProfile::Workshop => {
+                self.workshop_game_dir = directory;
+                self.workshop_java_path = java;
+            }
+        }
+    }
+
+    pub fn bridge_dir(&self, app_data_dir: &Path) -> PathBuf {
+        match self.active_profile {
+            ClientProfile::Game => app_data_dir.to_path_buf(),
+            ClientProfile::Workshop => app_data_dir.join("workshop"),
+        }
+    }
+
+    pub fn target(&self, game_server: &str) -> Result<Option<String>, String> {
+        if self.active_profile == ClientProfile::Game {
+            return Ok((!game_server.trim().is_empty()).then(|| game_server.trim().to_owned()));
+        }
+        let server = self.workshop_server.trim();
+        if server.is_empty() {
+            return Err("Укажите адрес мастерской в настройках выбранного профиля.".into());
+        }
+        if server_host(server)? == server_host(game_server)? {
+            return Err(
+                "Мастерской нужен отдельный адрес: смена порта игрового адреса не меняет профиль."
+                    .into(),
+            );
+        }
+        Ok(Some(server.to_owned()))
+    }
+}
+
+fn default_workshop_server() -> String {
+    std::env::var("BLOCKFIELD_WORKSHOP_SERVER")
+        .ok()
+        .or_else(|| option_env!("BLOCKFIELD_WORKSHOP_SERVER").map(str::to_owned))
+        .unwrap_or_default()
+}
+
+fn workshop_directory(game_dir: &str) -> String {
+    let path = Path::new(game_dir);
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    path.with_file_name(format!("{name}-Workshop"))
+        .to_string_lossy()
+        .into_owned()
+}
+
+pub fn server_host(address: &str) -> Result<String, String> {
+    let address = address
+        .trim()
+        .strip_prefix("raknet;")
+        .unwrap_or(address.trim());
+    let invalid =
+        || "Нужен адрес сервера: хост и необязательный порт, без ссылки или пробелов.".to_string();
+    if address.is_empty()
+        || address
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '/' | '?' | '#' | '@' | '%' | ';'))
+    {
+        return Err(invalid());
+    }
+    let url = tauri::Url::parse(&format!("minecraft://{address}")).map_err(|_| invalid())?;
+    if url.port() == Some(0) {
+        return Err(invalid());
+    }
+    let host = url.host_str().ok_or_else(invalid)?;
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let host = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return Ok(ip.to_string());
+    }
+    if host.len() > 253
+        || host.split('.').any(|label| {
+            label.is_empty()
+                || label.len() > 63
+                || !label.starts_with(|c: char| c.is_ascii_alphanumeric())
+                || !label.ends_with(|c: char| c.is_ascii_alphanumeric())
+                || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+    {
+        return Err(invalid());
+    }
+    Ok(host)
 }
 
 /// Platform-appropriate default game directory. A dev build keeps its own, so a developer's
@@ -112,7 +242,7 @@ pub fn config_path(app_data_dir: &Path) -> PathBuf {
 /// Load the launcher config from disk, or return defaults.
 pub fn load_config(app_data_dir: &Path) -> LauncherConfig {
     let path = config_path(app_data_dir);
-    match std::fs::read_to_string(&path) {
+    let mut config: LauncherConfig = match std::fs::read_to_string(&path) {
         Ok(json) => serde_json::from_str(&json).unwrap_or_else(|e| {
             log::warn!("Failed to parse launcher config, using defaults: {e}");
             LauncherConfig::default()
@@ -121,7 +251,11 @@ pub fn load_config(app_data_dir: &Path) -> LauncherConfig {
             log::info!("No existing launcher config ({e}), using defaults");
             LauncherConfig::default()
         }
+    };
+    if config.workshop_game_dir.is_empty() {
+        config.workshop_game_dir = workshop_directory(&config.game_dir);
     }
+    config
 }
 
 /// Save the launcher config to disk.
@@ -156,19 +290,74 @@ pub fn save_config(app_data_dir: &PathBuf, config: &LauncherConfig) -> Result<()
 }
 
 pub fn validate_config(config: &LauncherConfig) -> Result<(), String> {
-    let game_dir = PathBuf::from(config.game_dir.trim());
-    if !game_dir.is_absolute() || game_dir.parent().is_none() {
+    let game = configured_directory(&config.game_dir)?;
+    let workshop = configured_directory(&config.workshop_game_dir)?;
+    if game.starts_with(&workshop) || workshop.starts_with(&game) {
         return Err(
-            "Game directory must be a safe absolute path, not a filesystem root".to_string(),
+            "Для игры и мастерской нужны отдельные папки, без вложения одной в другую.".into(),
         );
     }
+    if !config.workshop_server.trim().is_empty() {
+        server_host(&config.workshop_server)?;
+    }
+    validate_directory(match config.active_profile {
+        ClientProfile::Game => &config.game_dir,
+        ClientProfile::Workshop => &config.workshop_game_dir,
+    })?;
+    validate_runtime(&config.active())
+}
+
+fn validate_directory(directory: &str) -> Result<PathBuf, String> {
+    let game_dir = absolute_directory(directory)?;
     std::fs::create_dir_all(&game_dir)
         .map_err(|e| format!("Game directory cannot be created: {e}"))?;
     let probe = game_dir.join(".blockfield-write-test");
     std::fs::write(&probe, b"")
         .and_then(|_| std::fs::remove_file(&probe))
         .map_err(|e| format!("Game directory is not writable: {e}"))?;
+    game_dir.canonicalize().map_err(|e| e.to_string())
+}
 
+fn absolute_directory(directory: &str) -> Result<PathBuf, String> {
+    let game_dir = PathBuf::from(directory);
+    if !game_dir.is_absolute() || game_dir.parent().is_none() {
+        return Err(
+            "Game directory must be a safe absolute path, not a filesystem root".to_string(),
+        );
+    }
+    Ok(game_dir)
+}
+
+// Resolve existing symlinks without creating or write-probing the inactive installation.
+fn configured_directory(directory: &str) -> Result<PathBuf, String> {
+    let mut ancestor = absolute_directory(directory)?;
+    let mut missing = Vec::new();
+    loop {
+        match ancestor.canonicalize() {
+            Ok(mut path) => {
+                for name in missing.into_iter().rev() {
+                    path.push(name);
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if std::fs::symlink_metadata(&ancestor).is_ok() {
+                    return Err(error.to_string());
+                }
+                missing.push(
+                    ancestor
+                        .file_name()
+                        .ok_or_else(|| error.to_string())?
+                        .to_owned(),
+                );
+                ancestor.pop();
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
+fn validate_runtime(config: &LauncherConfig) -> Result<(), String> {
     let max_ram = max_ram_mb();
     if config.ram_mb < 2_048 || config.ram_mb > max_ram {
         return Err(format!("RAM must be between 2048 and {max_ram} MB"));
@@ -259,8 +448,162 @@ mod tests {
             .join(format!("blockfield-config-{}", std::process::id()))
             .to_string_lossy()
             .to_string();
+        config.workshop_game_dir = format!("{}-workshop", config.game_dir);
         config.ram_mb = 1;
         assert!(validate_config(&config).is_err());
         let _ = std::fs::remove_dir_all(&config.game_dir);
+        let _ = std::fs::remove_dir_all(&config.workshop_game_dir);
+    }
+
+    #[test]
+    fn legacy_game_files_and_account_stay_in_place() {
+        let scratch = tempfile::tempdir().unwrap();
+        let game = scratch.path().join("legacy-game");
+        std::fs::create_dir_all(&game).unwrap();
+        let options = game.join("options.txt");
+        std::fs::write(&options, "key_key.attack:key.mouse.left\n").unwrap();
+        let mut legacy = serde_json::to_value(LauncherConfig::default()).unwrap();
+        for field in [
+            "activeProfile",
+            "workshopGameDir",
+            "workshopJavaPath",
+            "workshopServer",
+        ] {
+            legacy.as_object_mut().unwrap().remove(field);
+        }
+        legacy["gameDir"] = game.to_string_lossy().as_ref().into();
+        legacy["accessToken"] = "fake-test-session".into();
+        std::fs::write(config_path(scratch.path()), legacy.to_string()).unwrap();
+        let mut config = load_config(scratch.path());
+        assert_eq!(config.active_profile, ClientProfile::Game);
+        assert_eq!(Path::new(&config.game_dir), game);
+        assert_eq!(
+            config.workshop_game_dir,
+            workshop_directory(&config.game_dir)
+        );
+        config.active_profile = ClientProfile::Workshop;
+        let active = config.active();
+        assert_eq!(active.game_dir, config.workshop_game_dir);
+        assert_eq!(active.access_token, "fake-test-session");
+        assert_eq!(Path::new(&config.game_dir), game);
+        assert_eq!(
+            std::fs::read_to_string(options).unwrap(),
+            "key_key.attack:key.mouse.left\n"
+        );
+        assert!(!Path::new(&active.game_dir).exists());
+    }
+
+    #[test]
+    fn profile_paths_java_and_bridge_are_independent() {
+        let mut config = LauncherConfig::default();
+        let game = config.game_dir.clone();
+        config.active_profile = ClientProfile::Workshop;
+        config.set_active_paths("workshop-directory".into(), "workshop-java".into());
+        assert_eq!(config.game_dir, game);
+        assert_eq!(config.active().java_path, "workshop-java");
+        let app_data = Path::new("app-data");
+        assert_eq!(config.bridge_dir(app_data), app_data.join("workshop"));
+        let round_trip: LauncherConfig =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(round_trip.active_profile, ClientProfile::Workshop);
+        config.active_profile = ClientProfile::Game;
+        assert_eq!(config.active().game_dir, game);
+        assert_eq!(config.bridge_dir(app_data), app_data);
+    }
+
+    #[test]
+    fn profile_directories_cannot_overlap_or_alias() {
+        let scratch = tempfile::tempdir().unwrap();
+        let game = scratch.path().join("game");
+        let mut config = LauncherConfig {
+            game_dir: game.to_string_lossy().into_owned(),
+            workshop_game_dir: game.to_string_lossy().into_owned(),
+            ..LauncherConfig::default()
+        };
+        assert!(validate_config(&config).is_err());
+        config.workshop_game_dir = game.join("inside").to_string_lossy().into_owned();
+        assert!(validate_config(&config).is_err());
+        #[cfg(unix)]
+        {
+            std::fs::create_dir_all(&game).unwrap();
+            let alias = scratch.path().join("alias");
+            std::os::unix::fs::symlink(&game, &alias).unwrap();
+            config.workshop_game_dir = alias.to_string_lossy().into_owned();
+            assert!(validate_config(&config).is_err());
+        }
+        config.workshop_game_dir = scratch
+            .path()
+            .join("workshop")
+            .to_string_lossy()
+            .into_owned();
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn validating_one_profile_does_not_create_the_other_installation() {
+        let scratch = tempfile::tempdir().unwrap();
+        let game = scratch.path().join("game");
+        let workshop = scratch.path().join("not-created").join("workshop");
+        let mut config = LauncherConfig {
+            game_dir: game.to_string_lossy().into_owned(),
+            workshop_game_dir: workshop.to_string_lossy().into_owned(),
+            ..LauncherConfig::default()
+        };
+        validate_config(&config).unwrap();
+        assert!(game.is_dir());
+        assert!(!workshop.parent().unwrap().exists());
+        config.active_profile = ClientProfile::Workshop;
+        config.game_dir = scratch
+            .path()
+            .join("absent-game")
+            .to_string_lossy()
+            .into_owned();
+        validate_config(&config).unwrap();
+        assert!(workshop.is_dir());
+        assert!(!Path::new(&config.game_dir).exists());
+    }
+
+    #[test]
+    fn workshop_requires_a_distinct_valid_handshake_host() {
+        let mut config = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: String::new(),
+            ..LauncherConfig::default()
+        };
+        assert!(config.target("raknet;game.example:25566").is_err());
+        for address in ["GAME.example.:25570", "raknet;game.example:25566"] {
+            config.workshop_server = address.into();
+            assert!(config.target("game.example:25565").is_err());
+        }
+        config.workshop_server = "raknet;workshop.example:25566".into();
+        assert_eq!(
+            config.target("game.example:25565").unwrap().as_deref(),
+            Some("raknet;workshop.example:25566")
+        );
+        for address in [
+            "https://workshop.example",
+            "a b:25565",
+            "user@host",
+            "host:0",
+            "host:65536",
+            "host?query",
+            "host#fragment",
+            "host..",
+            "-host.example",
+            "host_.example",
+        ] {
+            assert!(server_host(address).is_err(), "{address}");
+        }
+        assert_eq!(server_host("raknet;[::1]:25566").unwrap(), "::1");
+        config.workshop_server = "[0:0:0:0:0:0:0:1]:25566".into();
+        assert!(config.target("raknet;[::1]:25565").is_err());
+        config.active_profile = ClientProfile::Game;
+        assert_eq!(
+            config
+                .target("raknet;game.example:25566")
+                .unwrap()
+                .as_deref(),
+            Some("raknet;game.example:25566")
+        );
     }
 }
