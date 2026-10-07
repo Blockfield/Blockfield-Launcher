@@ -206,6 +206,8 @@ The [archived API/CMS reports](legacy/README.md) are historical only.
 
 Quality checks and secret scanning gate the platform builds. Standard GitHub-hosted runners build Linux on `ubuntu-22.04` (preserving the glibc baseline), Windows on `windows-2025`, Apple Silicon on `macos-15`, and Intel Macs on `macos-15-intel`. Platform builds run in parallel, with a 60-minute limit, and upload to a draft release. Publication waits for all four builds and updater validation. No self-hosted runner is required.
 
+CI generates `release-notes.md` and, when available, `announcement.json` from the last published launcher release and merged PRs. The public repository uses its pinned local copy of the shared `release-text` action; without an AI key, it produces validated notes from facts. New release notes are not committed in the release PR.
+
 The pinned Tauri release action uses versioned macOS updater archives
 (`blockfield-launcher_<version>_x64.app.tar.gz` and `_aarch64.app.tar.gz`). The
 publication check requires every installer and its nonempty signature before
