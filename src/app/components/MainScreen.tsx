@@ -381,10 +381,14 @@ export function MainScreen({
                   value={profile}
                   disabled={profileChanging || checking || launching || gameBusy}
                   onChange={(event) => onSelectProfile(event.target.value as 'game' | 'workshop')}
-                  className="h-9 border border-[#2A2116] bg-[#11100D] px-3 text-[12px] text-[#F3E7D0] focus-visible:outline-2 focus-visible:outline-[#F5A524] disabled:opacity-50"
+                  className="h-9 border border-[#2A2116] bg-[#11100D] px-3 text-[12px] text-[#F3E7D0] [color-scheme:dark] focus-visible:outline-2 focus-visible:outline-[#F5A524] disabled:opacity-50"
                 >
-                  <option value="game">Игра</option>
-                  <option value="workshop">Мастерская</option>
+                  <option value="game" className="bg-[#11100D] text-[#F3E7D0]">
+                    Игра
+                  </option>
+                  <option value="workshop" className="bg-[#11100D] text-[#F3E7D0]">
+                    Мастерская
+                  </option>
                 </select>
                 <span role="status" className="text-[12px] text-[#C7AE86]">
                   {profileChanging
