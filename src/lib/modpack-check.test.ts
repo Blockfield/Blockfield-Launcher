@@ -78,11 +78,15 @@ it('rechecks after settings or an installation changes', async () => {
 })
 
 it('discards a profile check invalidated during the native request without verifying another directory', async () => {
-  const { checkModpack, invalidateModpackCheck, getModpackVersionSnapshot } = await import('./modpack-check')
+  const { checkModpack, invalidateModpackCheck, getModpackVersionSnapshot } =
+    await import('./modpack-check')
   let finish!: (value: unknown) => void
   const implementation = invoke.getMockImplementation()!
   invoke.mockImplementation(async (command: string) => {
-    if (command === 'check_modpack_version') return new Promise((resolve) => { finish = resolve })
+    if (command === 'check_modpack_version')
+      return new Promise((resolve) => {
+        finish = resolve
+      })
     return implementation(command)
   })
   const oldCheck = checkModpack()
@@ -102,7 +106,10 @@ it('does not verify files when the profile changes during the game-state request
   let finish!: (value: unknown) => void
   const implementation = invoke.getMockImplementation()!
   invoke.mockImplementation(async (command: string) => {
-    if (command === 'game_status') return new Promise((resolve) => { finish = resolve })
+    if (command === 'game_status')
+      return new Promise((resolve) => {
+        finish = resolve
+      })
     return implementation(command)
   })
   const check = checkModpack()
@@ -116,9 +123,11 @@ it('does not verify files when the profile changes during the game-state request
 
 it('binds verification to the workshop profile that was checked', async () => {
   const implementation = invoke.getMockImplementation()!
-  invoke.mockImplementation(async (command: string) => command === 'load_settings'
-    ? { autoUpdate: true, activeProfile: 'workshop' }
-    : implementation(command))
+  invoke.mockImplementation(async (command: string) =>
+    command === 'load_settings'
+      ? { autoUpdate: true, activeProfile: 'workshop' }
+      : implementation(command),
+  )
   const { checkModpack } = await import('./modpack-check')
   await checkModpack()
   expect(invoke).toHaveBeenCalledWith('verify_files', { profile: 'workshop' })

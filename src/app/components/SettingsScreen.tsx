@@ -48,11 +48,13 @@ export function SettingsScreen({
   onAccountChange,
   tab,
   onTabChange: setTab,
+  onWorkshopServerSaved,
 }: {
   username: string
   onAccountChange: (account: AccountStatus) => void
   tab: SettingsTab
   onTabChange: (tab: SettingsTab) => void
+  onWorkshopServerSaved?: (address: string) => void
 }) {
   const { lang, t } = useI18n()
   const content = useLauncherContent()
@@ -147,6 +149,7 @@ export function SettingsScreen({
         } satisfies LauncherConfig,
       })
       invalidateModpackCheck()
+      onWorkshopServerSaved?.(workshopServer)
       setDirty(false)
       setSaveMessage(t('settings.saved'))
       setTimeout(() => setSaveMessage(null), 3000)
@@ -161,6 +164,7 @@ export function SettingsScreen({
   }, [
     profile,
     workshopServer,
+    onWorkshopServerSaved,
     dir,
     java,
     ram,
@@ -359,7 +363,7 @@ export function SettingsScreen({
             id={`settings-panel-${tab}`}
             role="tabpanel"
             aria-labelledby={`settings-tab-${tab}`}
-            className="settings-panel min-h-0 flex-1 px-3 md:px-5 py-2"
+            className="settings-panel min-h-0 flex-1 overflow-y-auto px-3 md:px-5 py-2"
           >
             {tab === 'launcher' && (
               <>
@@ -442,10 +446,14 @@ export function SettingsScreen({
                 <Setting
                   icon={<Folder size={14} />}
                   label={profile === 'workshop' ? 'Папка мастерской' : t('settings.gameDir')}
-                  hint={profile === 'workshop' ? 'Настройки, клавиши, миры и логи мастерской хранятся отдельно от игры.' : t('settings.gameDirHint')}
+                  hint={
+                    profile === 'workshop'
+                      ? 'Настройки, клавиши, миры и логи мастерской хранятся отдельно от игры.'
+                      : t('settings.gameDirHint')
+                  }
                 >
                   <PathInput
-                    label={t('settings.gameDir')}
+                    label={profile === 'workshop' ? 'Папка мастерской' : t('settings.gameDir')}
                     value={dir}
                     onChange={(v) => {
                       setDir(v)
@@ -456,11 +464,18 @@ export function SettingsScreen({
                   />
                 </Setting>
                 {profile === 'workshop' && (
-                  <Setting icon={<Gamepad2 size={14} />} label="Адрес мастерской" hint="Отдельный хост подключения к мастерской. Аккаунт должен иметь доступ к строительству.">
+                  <Setting
+                    icon={<Gamepad2 size={14} />}
+                    label="Адрес мастерской"
+                    hint="Отдельный хост подключения к мастерской. Аккаунт должен иметь доступ к строительству."
+                  >
                     <input
                       aria-label="Адрес мастерской"
                       value={workshopServer}
-                      onChange={(event) => { setWorkshopServer(event.target.value); markDirty() }}
+                      onChange={(event) => {
+                        setWorkshopServer(event.target.value)
+                        markDirty()
+                      }}
                       placeholder="Хост или хост:порт"
                       className="h-10 w-full min-w-0 border border-[#2A2116] bg-[#0B0906] px-3 text-[12px] text-[#F3E7D0] placeholder:text-[#C7AE86] focus-visible:outline-2 focus-visible:outline-[#F5A524]"
                     />

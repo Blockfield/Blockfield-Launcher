@@ -62,6 +62,7 @@ export default function App() {
   const [configAttempt, setConfigAttempt] = useState(0)
   const [configLoaded, setConfigLoaded] = useState(!isTauri())
   const [profile, setProfile] = useState<'game' | 'workshop'>('game')
+  const [workshopServer, setWorkshopServer] = useState('')
   const [profileChanging, setProfileChanging] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
 
@@ -74,6 +75,7 @@ export default function App() {
       invalidateModpackCheck()
       setUpdatesVisited(false)
       setProfile(config.activeProfile ?? next)
+      setWorkshopServer(config.workshopServer ?? '')
     } catch (error) {
       setProfileError(String(error))
     } finally {
@@ -137,6 +139,7 @@ export default function App() {
       )
       .then(([cfg, status]) => {
         setProfile(cfg.activeProfile ?? 'game')
+        setWorkshopServer(cfg.workshopServer ?? '')
         setAccount(status)
         checkModpack().catch((error) => console.error('Startup check failed:', error))
         if (!cfg.username) setFirstRunConfig(cfg)
@@ -246,6 +249,7 @@ export default function App() {
     <I18nContext.Provider value={i18n}>
       <WindowChrome>
         <Shell
+          serverAddress={profile === 'workshop' ? workshopServer : undefined}
           user={{
             username: account.username || '—',
             role: ROLE_LABELS[(staff?.uuid === uuid && staff.role) || ''] ?? 'игрок',
@@ -295,6 +299,7 @@ export default function App() {
           {screen === 'settings' && (
             <SettingsScreen
               username={account.username}
+              onWorkshopServerSaved={setWorkshopServer}
               onAccountChange={setAccount}
               tab={settingsTab}
               onTabChange={setSettingsTab}

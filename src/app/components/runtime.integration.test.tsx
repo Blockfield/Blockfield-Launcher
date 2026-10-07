@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { RoomList } from './RoomList'
 import { LauncherUpdatePanel } from './LauncherUpdatePanel'
+import { Shell } from './Shell'
 import { checkLauncherUpdate, installLauncherUpdate } from '../../lib/launcher-update'
 
 const { invoke, getVersion, relaunch, channels } = vi.hoisted(() => ({
@@ -129,6 +130,40 @@ it('disables joining a match during an update while preserving the lobby action'
   )!
   await act(async () => lobby.click())
   expect(onJoin).toHaveBeenCalledExactlyOnceWith('lobby')
+})
+
+it('shows the selected Workshop target or its unset state and restores the Game address', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(JSON.stringify({ serverIp: 'game.example:25565' }))),
+  )
+  const render = async (serverAddress?: string) => {
+    await act(async () =>
+      root!.render(
+        <Shell
+          active="main"
+          user={{ username: 'ProfileTest', role: 'игрок' }}
+          serverAddress={serverAddress}
+          onNavigate={() => {}}
+          onLauncherUpdate={() => {}}
+        >
+          <div />
+        </Shell>,
+      ),
+    )
+  }
+  await render()
+  await vi.waitFor(() =>
+    expect(container.querySelector('footer')?.textContent).toContain('game.example:25565'),
+  )
+  await render('raknet;workshop.example:25566')
+  expect(container.querySelector('footer')?.textContent).toContain('raknet;workshop.example:25566')
+  expect(container.querySelector('footer')?.textContent).not.toContain('game.example:25565')
+  await render('')
+  expect(container.querySelector('footer')?.textContent).toContain('Адрес мастерской не задан')
+  expect(container.querySelector('footer')?.textContent).not.toContain('game.example:25565')
+  await render()
+  expect(container.querySelector('footer')?.textContent).toContain('game.example:25565')
 })
 
 it('renders update channel progress, rejects a failed signature, and waits for an explicit restart', async () => {

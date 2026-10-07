@@ -50,12 +50,15 @@ export function checkModpack(verify = false): Promise<VersionCheckResult> {
     if (requestedGeneration !== generation) throw new Error('Профиль изменён. Повторите проверку.')
     if ((verify || config.autoUpdate) && !result.needsUpdate && result.javaOk && result.loaderOk) {
       const game = await invoke<GameStatus>('game_status')
-      if (requestedGeneration !== generation) throw new Error('Профиль изменён. Повторите проверку.')
+      if (requestedGeneration !== generation)
+        throw new Error('Профиль изменён. Повторите проверку.')
       if (game.phase !== 'idle') {
         if (verify) throw new Error('Закройте игру перед проверкой файлов')
         return result
       }
-      const failed = await invoke<string[]>('verify_files', { profile: config.activeProfile ?? 'game' })
+      const failed = await invoke<string[]>('verify_files', {
+        profile: config.activeProfile ?? 'game',
+      })
       if (failed.length) throw new Error(`Не удалось проверить файлы: ${failed.join(', ')}`)
     }
     if (requestedGeneration !== generation) throw new Error('Профиль изменён. Повторите проверку.')

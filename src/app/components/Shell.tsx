@@ -24,12 +24,14 @@ export function Shell({
   user,
   onNavigate,
   onLauncherUpdate,
+  serverAddress,
   children,
 }: {
   active: Screen
   user: { username: string; role: string }
   onNavigate: (s: Screen) => void
   onLauncherUpdate: () => void
+  serverAddress?: string
   children: ReactNode
 }) {
   const { lang, t } = useI18n()
@@ -51,7 +53,8 @@ export function Shell({
               : update.phase === 'error'
                 ? 'Ошибка обновления'
                 : null
-  const serverIp = contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
+  const serverIp =
+    serverAddress?.trim() ?? contentText(content, 'serverIp', 'server_ip') ?? SERVER_IP
   const operatorHandle = user.username
   const operatorRank = user.role.toUpperCase()
   const supportLabel =
@@ -80,7 +83,7 @@ export function Shell({
           >
             <Logo size={26} withWordmark wordmark={brand} subtitle={brandSubtitle} />
           </button>
-          <nav className="flex items-center gap-1">
+          <nav className="flex max-w-full flex-wrap items-center gap-1">
             {NAV_ITEMS.map((item) => (
               <NavItem
                 key={item.id}
@@ -119,7 +122,7 @@ export function Shell({
             {updateLabel && <span className="text-[#F5A524] tracking-normal">· {updateLabel}</span>}
           </button>
           <span className="h-3 w-px bg-[#18130D]" />
-          <span>{t('shell.ip', { ip: serverIp })}</span>
+          <span>{serverIp ? t('shell.ip', { ip: serverIp }) : 'Адрес мастерской не задан'}</span>
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <a
