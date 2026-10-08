@@ -116,7 +116,8 @@ export function MainScreen({
 
   const handleDeploy = useCallback(async () => {
     // Don't allow deploy until version check completes
-    if (!versionInfo || checking || launching || gameBusy || profileChanging || profileBlocked) return
+    if (!versionInfo || checking || launching || gameBusy || profileChanging || profileBlocked)
+      return
     // Update needed OR Java not ready OR Fabric not installed → go to update screen
     if (versionInfo.needsUpdate || !versionInfo.javaOk || !versionInfo.loaderOk) {
       onPlay()
@@ -431,7 +432,14 @@ export function MainScreen({
               <div className="flex flex-wrap min-w-0 items-center gap-4">
                 <DeployButton
                   onPlay={handleDeploy}
-                  disabled={!isChecked || checking || launching || gameBusy || profileChanging || profileBlocked}
+                  disabled={
+                    !isChecked ||
+                    checking ||
+                    launching ||
+                    gameBusy ||
+                    profileChanging ||
+                    profileBlocked
+                  }
                   label={launchLabel}
                   sub={launchSub}
                   busy={launching}

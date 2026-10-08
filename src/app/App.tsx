@@ -43,40 +43,26 @@ export default function App() {
   const [account, setAccount] = useState<AccountStatus | null>(null)
   const [accountLoaded, setAccountLoaded] = useState(!isTauri())
   const [staff, setStaff] = useState<{ uuid: string; role: string | null } | null>(null)
-  const [staffLoading, setStaffLoading] = useState(false)
   const uuid = account?.loggedIn ? account.uuid : null
 
-  const refreshRole = useCallback(
-    async (targetUuid?: string | null) => {
-      const id = targetUuid ?? (account?.loggedIn ? account.uuid : null)
-      if (!id) {
-        setStaff(null)
-        setStaffLoading(false)
-        return
-      }
-      try {
-        const result = await loadStats<PlayerStats>({ kind: 'player', uuid: id, query: {} })
-        if (!result.stale) {
-          setStaff({ uuid: id, role: result.data?.profile.role ?? null })
-        }
-      } catch {
-        setStaff((prev) => prev ?? { uuid: id, role: null })
-      } finally {
-        setStaffLoading(false)
-      }
-    },
-    [account?.loggedIn, account?.uuid],
-  )
+  const refreshRole = useCallback(async (id: string) => {
+    try {
+      const result = await loadStats<PlayerStats>({ kind: 'player', uuid: id, query: {} })
+      if (!result.stale) setStaff({ uuid: id, role: result.data?.profile.role ?? null })
+    } catch {
+      setStaff((previous) => (previous?.uuid === id ? previous : { uuid: id, role: null }))
+    }
+  }, [])
 
   useEffect(() => {
-    if (!uuid) {
-      setStaff(null)
-      setStaffLoading(false)
-      return
+    if (!uuid) return
+    let active = true
+    queueMicrotask(() => {
+      if (active) void refreshRole(uuid)
+    })
+    return () => {
+      active = false
     }
-    setStaff(null)
-    setStaffLoading(true)
-    void refreshRole(uuid)
   }, [uuid, refreshRole])
 
   const handleAccountChange = useCallback(
@@ -84,7 +70,6 @@ export default function App() {
       setAccount(acc)
       if (!acc.loggedIn) {
         setStaff(null)
-        setStaffLoading(false)
       } else {
         void refreshRole(acc.uuid)
       }
@@ -113,51 +98,69 @@ export default function App() {
   const currentRole = account?.loggedIn && staff?.uuid === account.uuid ? staff.role : null
   const canWorkshop = hasWorkshopAccess(currentRole)
 
-  // Auth resolution: account status must be resolved, and if logged in, staff lookup settled
-  const authResolved = accountLoaded && (!account?.loggedIn || (!staffLoading && staff !== null))
+  const authResolved = accountLoaded && (!account?.loggedIn || staff?.uuid === uuid)
   const profileBlocked =
     profileChanging || (!canWorkshop && profile === 'workshop') || profileError !== null
 
-  useEffect(() => {
-    if (!configLoaded || !authResolved) return
-    if (!canWorkshop && profile === 'workshop') {
-      void selectProfile('game')
-    }
-  }, [configLoaded, authResolved, canWorkshop, profile])
+  const selectProfile = useCallback(
+    async (next: 'game' | 'workshop') => {
+      if (next === 'workshop' && !canWorkshop) return
+      if (next === profile && !profileError) return
+      setProfileChanging(true)
+      setProfileError(null)
+      try {
+        const config = await invoke<LauncherConfig>('select_profile', { profile: next })
+        invalidateModpackCheck()
+        setUpdatesVisited(false)
+        setProfile(config.activeProfile ?? next)
+        setWorkshopServer(config.workshopServer ?? '')
+        setPendingProfileRetry(null)
+      } catch (e) {
+        const message = friendlyError(e, 'select-profile').message
+        setProfileError(message)
+        setPendingProfileRetry(next)
+      } finally {
+        setProfileChanging(false)
+      }
+    },
+    [canWorkshop, profile, profileError],
+  )
 
-  // Automatically retry profile switch when game becomes idle
+  useEffect(() => {
+    if (
+      !configLoaded ||
+      !authResolved ||
+      canWorkshop ||
+      profile !== 'workshop' ||
+      profileChanging ||
+      profileError
+    )
+      return
+    let active = true
+    queueMicrotask(() => {
+      if (active) void selectProfile('game')
+    })
+    return () => {
+      active = false
+    }
+  }, [
+    configLoaded,
+    authResolved,
+    canWorkshop,
+    profile,
+    profileChanging,
+    profileError,
+    selectProfile,
+  ])
+
   const prevGameBusy = useRef(gameBusy)
   useEffect(() => {
     const wasBusy = prevGameBusy.current
     prevGameBusy.current = gameBusy
     if (wasBusy && !gameBusy && pendingProfileRetry && !profileChanging) {
-      const target = pendingProfileRetry
-      void selectProfile(target)
+      void selectProfile(canWorkshop ? pendingProfileRetry : 'game')
     }
-  }, [gameBusy, pendingProfileRetry, profileChanging])
-
-  const selectProfile = async (next: 'game' | 'workshop') => {
-    if (next === 'workshop' && !canWorkshop) return
-    if (next === profile && !profileError) return
-    setProfileChanging(true)
-    setProfileError(null)
-    try {
-      const config = await invoke<LauncherConfig>('select_profile', { profile: next })
-      invalidateModpackCheck()
-      setUpdatesVisited(false)
-      setProfile(config.activeProfile ?? next)
-      setWorkshopServer(config.workshopServer ?? '')
-      setPendingProfileRetry(null)
-    } catch (e) {
-      const message = friendlyError(e, 'select-profile').message
-      setProfileError(message)
-      if (next === 'game') {
-        setPendingProfileRetry('game')
-      }
-    } finally {
-      setProfileChanging(false)
-    }
-  }
+  }, [gameBusy, pendingProfileRetry, profileChanging, canWorkshop, selectProfile])
 
   useEffect(() => {
     if (!isTauri()) return
@@ -174,7 +177,6 @@ export default function App() {
     const subscription = listen('account://expired', () => {
       setAccount((current) => current && { ...current, loggedIn: false })
       setStaff(null)
-      setStaffLoading(false)
     })
     return () => {
       void subscription.then((stop) => stop())

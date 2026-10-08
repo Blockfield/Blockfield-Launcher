@@ -14,7 +14,9 @@ const { invoke, getVersion, relaunch, listen, channels } = vi.hoisted(() => ({
   invoke: vi.fn(),
   getVersion: vi.fn(),
   relaunch: vi.fn(),
-  listen: vi.fn(async (_event?: any, _handler?: any) => () => {}),
+  listen: vi.fn<
+    (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void>
+  >(async () => () => {}),
   channels: [] as Array<{
     onmessage: (event: { phase: string; downloaded: number; total: number | null }) => void
   }>,
@@ -289,26 +291,14 @@ it('hides profile select from ordinary or unloaded users and displays it only wh
 
   // 1. Unauthorized / unloaded user has no onSelectProfile callback
   await act(async () => {
-    root!.render(
-      <MainScreen
-        onPlay={() => {}}
-        profile="game"
-        onSelectProfile={undefined}
-      />,
-    )
+    root!.render(<MainScreen onPlay={() => {}} profile="game" onSelectProfile={undefined} />)
   })
   expect(container.querySelector('#client-profile')).toBeNull()
   expect(container.textContent).not.toContain('Профиль')
 
   // 2. Authorized user receives onSelectProfile callback
   await act(async () => {
-    root!.render(
-      <MainScreen
-        onPlay={() => {}}
-        profile="game"
-        onSelectProfile={onSelectProfile}
-      />,
-    )
+    root!.render(<MainScreen onPlay={() => {}} profile="game" onSelectProfile={onSelectProfile} />)
   })
   const select = container.querySelector('#client-profile')
   expect(select).not.toBeNull()
@@ -356,7 +346,11 @@ it('preserves owner workshop profile on boot and does not overwrite during initi
   ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {}
   invoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'load_settings') {
-      return { activeProfile: 'workshop', workshopServer: 'workshop.blockfield.pro:25565', username: 'OwnerUser' }
+      return {
+        activeProfile: 'workshop',
+        workshopServer: 'workshop.blockfield.pro:25565',
+        username: 'OwnerUser',
+      }
     }
     if (cmd === 'account_status') {
       return { loggedIn: true, uuid: 'owner-uuid-1', username: 'OwnerUser' }
@@ -365,7 +359,13 @@ it('preserves owner workshop profile on boot and does not overwrite during initi
       return { profile: { uuid: 'owner-uuid-1', role: 'owner' } }
     }
     if (cmd === 'check_modpack_version') {
-      return { localVersion: '1.0.0', remoteVersion: '1.0.0', needsUpdate: false, javaOk: true, loaderOk: true }
+      return {
+        localVersion: '1.0.0',
+        remoteVersion: '1.0.0',
+        needsUpdate: false,
+        javaOk: true,
+        loaderOk: true,
+      }
     }
     if (cmd === 'game_status') {
       return { phase: 'idle', revision: 0 }
@@ -397,7 +397,11 @@ it('blocks actions for unauthorized user on stored workshop profile until persis
 
   invoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'load_settings') {
-      return { activeProfile: 'workshop', workshopServer: 'workshop.blockfield.pro:25565', username: 'PlayerUser' }
+      return {
+        activeProfile: 'workshop',
+        workshopServer: 'workshop.blockfield.pro:25565',
+        username: 'PlayerUser',
+      }
     }
     if (cmd === 'account_status') {
       return { loggedIn: true, uuid: 'player-uuid-1', username: 'PlayerUser' }
@@ -409,7 +413,13 @@ it('blocks actions for unauthorized user on stored workshop profile until persis
       return selectProfilePromise
     }
     if (cmd === 'check_modpack_version') {
-      return { localVersion: '1.0.0', remoteVersion: '1.0.0', needsUpdate: false, javaOk: true, loaderOk: true }
+      return {
+        localVersion: '1.0.0',
+        remoteVersion: '1.0.0',
+        needsUpdate: false,
+        javaOk: true,
+        loaderOk: true,
+      }
     }
     if (cmd === 'game_status') {
       return { phase: 'idle', revision: 0 }
@@ -447,7 +457,11 @@ it('handles select_profile failure when game is busy by showing visible error an
   let selectAttempt = 0
   invoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'load_settings') {
-      return { activeProfile: 'workshop', workshopServer: 'workshop.blockfield.pro:25565', username: 'PlayerUser' }
+      return {
+        activeProfile: 'workshop',
+        workshopServer: 'workshop.blockfield.pro:25565',
+        username: 'PlayerUser',
+      }
     }
     if (cmd === 'account_status') {
       return { loggedIn: true, uuid: 'player-uuid-1', username: 'PlayerUser' }
@@ -463,7 +477,13 @@ it('handles select_profile failure when game is busy by showing visible error an
       return { activeProfile: 'game' }
     }
     if (cmd === 'check_modpack_version') {
-      return { localVersion: '1.0.0', remoteVersion: '1.0.0', needsUpdate: false, javaOk: true, loaderOk: true }
+      return {
+        localVersion: '1.0.0',
+        remoteVersion: '1.0.0',
+        needsUpdate: false,
+        javaOk: true,
+        loaderOk: true,
+      }
     }
     if (cmd === 'game_status') {
       return { phase: 'running', revision: 1 }
@@ -514,8 +534,8 @@ it('blocks SettingsScreen from loading or saving while profile switch is blocked
   )
 
   // Save button is disabled
-  const saveBtn = Array.from(container.querySelectorAll('button')).find(
-    (b) => b.textContent?.toUpperCase().includes('СОХРАНИТЬ'),
+  const saveBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+    b.textContent?.toUpperCase().includes('СОХРАНИТЬ'),
   )
   expect(saveBtn?.disabled).toBe(true)
 })
@@ -528,13 +548,15 @@ it('handles live demotion of builder to player: hides custom selector, blocks ac
   let role: 'builder' | 'player' = 'builder'
 
   const listeners: Record<string, Set<(event: { payload: unknown }) => void>> = {}
-  listen.mockImplementation(async (event: string, handler: (event: { payload: unknown }) => void) => {
-    if (!listeners[event]) listeners[event] = new Set()
-    listeners[event]!.add(handler)
-    return () => {
-      listeners[event]?.delete(handler)
-    }
-  })
+  listen.mockImplementation(
+    async (event: string, handler: (event: { payload: unknown }) => void) => {
+      if (!listeners[event]) listeners[event] = new Set()
+      listeners[event]!.add(handler)
+      return () => {
+        listeners[event]?.delete(handler)
+      }
+    },
+  )
 
   invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
     if (cmd === 'load_settings') {
@@ -612,9 +634,7 @@ it('handles live demotion of builder to player: hides custom selector, blocks ac
   // 5. Game exits: transition game phase to 'idle'
   gamePhase = 'idle'
   await act(async () => {
-    listeners['game://status']?.forEach((fn) =>
-      fn({ payload: { phase: 'idle', revision: 2 } }),
-    )
+    listeners['game://status']?.forEach((fn) => fn({ payload: { phase: 'idle', revision: 2 } }))
   })
 
   // 6. Automatic retry triggers select_profile('game') now that game is idle
