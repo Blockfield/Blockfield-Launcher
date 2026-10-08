@@ -11,6 +11,7 @@ import { FirstRunScreen } from './components/FirstRunScreen'
 import { LoginScreen } from './components/LoginScreen'
 import { I18nContext, translate } from './i18n'
 import type { AccountStatus, LauncherConfig, VersionCheckResult } from '../lib/api'
+import { hasWorkshopAccess } from '../lib/workshop'
 import {
   checkModpack,
   invalidateModpackCheck,
@@ -43,11 +44,23 @@ export default function App() {
   const [staff, setStaff] = useState<{ uuid: string; role: string | null } | null>(null)
   const uuid = account?.loggedIn ? account.uuid : null
   useEffect(() => {
-    if (!uuid) return
+    if (!uuid) {
+      setStaff(null)
+      return
+    }
+    setStaff(null)
     let current = true
-    void loadStats<PlayerStats>({ kind: 'player', uuid, query: {} }).then(
-      (result) => current && setStaff({ uuid, role: result.data?.profile.role ?? null }),
-    )
+    void loadStats<PlayerStats>({ kind: 'player', uuid, query: {} })
+      .then((result) => {
+        if (current) {
+          setStaff({ uuid, role: result.data?.profile.role ?? null })
+        }
+      })
+      .catch(() => {
+        if (current) {
+          setStaff({ uuid, role: null })
+        }
+      })
     return () => {
       current = false
     }
@@ -66,7 +79,25 @@ export default function App() {
   const [profileChanging, setProfileChanging] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
 
+  const currentRole = account?.loggedIn && staff?.uuid === account.uuid ? staff.role : null
+  const canWorkshop = hasWorkshopAccess(currentRole)
+  const effectiveProfile = canWorkshop ? profile : 'game'
+
+  useEffect(() => {
+    if (!configLoaded) return
+    if (!account?.loggedIn) {
+      if (profile === 'workshop') {
+        void selectProfile('game')
+      }
+      return
+    }
+    if (staff && staff.uuid === account.uuid && !canWorkshop && profile === 'workshop') {
+      void selectProfile('game')
+    }
+  }, [configLoaded, account?.loggedIn, account?.uuid, staff, canWorkshop, profile])
+
   const selectProfile = async (next: 'game' | 'workshop') => {
+    if (next === 'workshop' && !canWorkshop) return
     if (next === profile || profileChanging) return
     setProfileChanging(true)
     setProfileError(null)
@@ -95,9 +126,10 @@ export default function App() {
 
   useEffect(() => {
     if (!isTauri()) return
-    const subscription = listen('account://expired', () =>
-      setAccount((current) => current && { ...current, loggedIn: false }),
-    )
+    const subscription = listen('account://expired', () => {
+      setAccount((current) => current && { ...current, loggedIn: false })
+      setStaff(null)
+    })
     return () => {
       void subscription.then((stop) => stop())
     }
@@ -249,10 +281,10 @@ export default function App() {
     <I18nContext.Provider value={i18n}>
       <WindowChrome>
         <Shell
-          serverAddress={profile === 'workshop' ? workshopServer : undefined}
+          serverAddress={effectiveProfile === 'workshop' ? workshopServer : undefined}
           user={{
             username: account.username || '—',
-            role: ROLE_LABELS[(staff?.uuid === uuid && staff.role) || ''] ?? 'игрок',
+            role: ROLE_LABELS[currentRole || ''] ?? 'игрок',
           }}
           active={screen}
           onNavigate={navigate}
@@ -279,11 +311,11 @@ export default function App() {
           )}
           {screen === 'main' && (
             <MainScreen
-              key={profile}
-              profile={profile}
+              key={effectiveProfile}
+              profile={effectiveProfile}
               profileChanging={profileChanging}
               profileError={profileError}
-              onSelectProfile={(next) => void selectProfile(next)}
+              onSelectProfile={canWorkshop ? (next) => void selectProfile(next) : undefined}
               onPlay={() => {
                 setUpdateRequest((value) => value + 1)
                 navigate('update')
@@ -299,6 +331,8 @@ export default function App() {
           {screen === 'settings' && (
             <SettingsScreen
               username={account.username}
+              canWorkshop={canWorkshop}
+              profile={effectiveProfile}
               onWorkshopServerSaved={setWorkshopServer}
               onAccountChange={setAccount}
               tab={settingsTab}

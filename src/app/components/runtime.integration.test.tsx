@@ -5,6 +5,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { RoomList } from './RoomList'
 import { LauncherUpdatePanel } from './LauncherUpdatePanel'
 import { Shell } from './Shell'
+import { MainScreen, ProfileSelect } from './MainScreen'
+import { SettingsScreen } from './SettingsScreen'
 import { checkLauncherUpdate, installLauncherUpdate } from '../../lib/launcher-update'
 
 const { invoke, getVersion, relaunch, channels } = vi.hoisted(() => ({
@@ -218,4 +220,129 @@ it('renders update channel progress, rejects a failed signature, and waits for a
   )
   expect(container.querySelector('button')?.textContent).toContain('Перезапустить лаунчер')
   expect(relaunch).not.toHaveBeenCalled()
+})
+
+it('navigates custom profile select via keyboard, shows checkmark, and respects disabled state', async () => {
+  const onChange = vi.fn()
+  const addListener = vi.spyOn(document, 'addEventListener')
+  const removeListener = vi.spyOn(document, 'removeEventListener')
+
+  await act(async () => {
+    root!.render(
+      <StrictMode>
+        <ProfileSelect value="game" disabled={false} onChange={onChange} />
+      </StrictMode>,
+    )
+  })
+
+  const trigger = container.querySelector<HTMLButtonElement>('[role="combobox"]')!
+  expect(trigger).not.toBeNull()
+  expect(trigger.id).toBe('client-profile')
+  expect(trigger.getAttribute('aria-label')).toBe('Профиль')
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  expect(trigger.textContent).toContain('Игра')
+
+  // Open via ArrowDown
+  trigger.focus()
+  await act(async () => {
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  })
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  const listbox = container.querySelector('[role="listbox"]')!
+  expect(listbox).not.toBeNull()
+  const options = container.querySelectorAll('[role="option"]')
+  expect(options.length).toBe(2)
+  expect(options[0].textContent).toContain('Игра')
+  expect(options[1].textContent).toContain('Мастерская')
+
+  // First option is selected so it has the check icon
+  expect(options[0].getAttribute('aria-selected')).toBe('true')
+  expect(options[0].querySelector('svg')).not.toBeNull()
+  expect(options[1].getAttribute('aria-selected')).toBe('false')
+  expect(options[1].querySelector('svg')).toBeNull()
+
+  // Press Enter on active item (which is now options[1] / workshop)
+  await act(async () => {
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  })
+  expect(onChange).toHaveBeenCalledWith('workshop')
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+  // Verify outside pointer listener clean up
+  await act(async () => trigger.click())
+  const outsideListener = addListener.mock.calls
+    .filter(([type]) => type === 'pointerdown')
+    .pop()![1]
+  await act(async () => root!.unmount())
+  root = null
+  expect(removeListener).toHaveBeenCalledWith('pointerdown', outsideListener)
+})
+
+it('hides profile select from ordinary or unloaded users and displays it only when authorized', async () => {
+  const onSelectProfile = vi.fn()
+
+  // 1. Unauthorized / unloaded user has no onSelectProfile callback
+  await act(async () => {
+    root!.render(
+      <MainScreen
+        onPlay={() => {}}
+        profile="game"
+        onSelectProfile={undefined}
+      />,
+    )
+  })
+  expect(container.querySelector('#client-profile')).toBeNull()
+  expect(container.textContent).not.toContain('Профиль')
+
+  // 2. Authorized user receives onSelectProfile callback
+  await act(async () => {
+    root!.render(
+      <MainScreen
+        onPlay={() => {}}
+        profile="game"
+        onSelectProfile={onSelectProfile}
+      />,
+    )
+  })
+  const select = container.querySelector('#client-profile')
+  expect(select).not.toBeNull()
+  expect(select?.getAttribute('role')).toBe('combobox')
+})
+
+it('hides workshop settings from unauthorized accounts in SettingsScreen', async () => {
+  // 1. Unauthorized account: workshop server input and workshop directory label are hidden
+  await act(async () => {
+    root!.render(
+      <SettingsScreen
+        username="OrdinaryPlayer"
+        canWorkshop={false}
+        profile="game"
+        onAccountChange={() => {}}
+        tab="general"
+        onTabChange={() => {}}
+      />,
+    )
+    await Promise.resolve()
+  })
+  expect(container.querySelector('input[aria-label="Адрес мастерской"]')).toBeNull()
+  expect(container.textContent).not.toContain('Папка мастерской')
+  expect(container.textContent).not.toContain('Адрес мастерской')
+
+  // 2. Authorized account on workshop profile: workshop settings are visible
+  await act(async () => {
+    root!.render(
+      <SettingsScreen
+        username="AuthorizedBuilder"
+        canWorkshop={true}
+        profile="workshop"
+        onAccountChange={() => {}}
+        tab="general"
+        onTabChange={() => {}}
+      />,
+    )
+    await Promise.resolve()
+  })
+  expect(container.querySelector('input[aria-label="Адрес мастерской"]')).not.toBeNull()
+  expect(container.textContent).toContain('Папка мастерской')
 })

@@ -2,7 +2,7 @@ import { GAME_MAINTENANCE, GAME_UPDATING, RoomList } from './RoomList'
 import { useGameState, gameStateLabel, launchGame } from '../../lib/game-state'
 import { checkModpack, useModpackVersion } from '../../lib/modpack-check'
 import { invoke } from '@tauri-apps/api/core'
-import { useCallback, useEffect, useState, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, useRef, useId, type ReactNode } from 'react'
 import {
   Play,
   Gamepad2,
@@ -16,6 +16,8 @@ import {
   Crosshair,
   RefreshCw,
   LoaderCircle,
+  Check,
+  ChevronDown,
 } from 'lucide-react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { GridBackdrop, TopoBackdrop } from './Backdrop'
@@ -51,6 +53,176 @@ const FEATURE_ICONS: Record<string, ReactNode> = {
 
 /** Whether we're running inside Tauri (vs browser dev). */
 const isTauri = () => '__TAURI_INTERNALS__' in window
+
+const PROFILE_OPTIONS: Array<{ value: 'game' | 'workshop'; label: string }> = [
+  { value: 'game', label: 'Игра' },
+  { value: 'workshop', label: 'Мастерская' },
+]
+
+export function ProfileSelect({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: 'game' | 'workshop'
+  disabled: boolean
+  onChange: (profile: 'game' | 'workshop') => void
+}) {
+  const id = useId()
+  const root = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
+  const [activeValue, setActiveValue] = useState<'game' | 'workshop'>(value)
+  const activeIndex = Math.max(
+    0,
+    PROFILE_OPTIONS.findIndex((opt) => opt.value === activeValue),
+  )
+
+  useEffect(() => {
+    if (!open) return
+    const closeOutside = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOutside)
+    return () => document.removeEventListener('pointerdown', closeOutside)
+  }, [open])
+
+  useEffect(() => {
+    if (open) {
+      document.getElementById(`${id}-${activeIndex}`)?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [open, activeIndex, id])
+
+  const choose = (next: 'game' | 'workshop') => {
+    onChange(next)
+    setOpen(false)
+    trigger.current?.focus()
+  }
+
+  const selectedOption = PROFILE_OPTIONS.find((opt) => opt.value === value) ?? PROFILE_OPTIONS[0]
+
+  return (
+    <div
+      ref={root}
+      className="relative min-w-[140px]"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false)
+      }}
+    >
+      <button
+        ref={trigger}
+        id="client-profile"
+        type="button"
+        role="combobox"
+        aria-label="Профиль"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={id}
+        aria-activedescendant={open ? `${id}-${activeIndex}` : undefined}
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return
+          setActiveValue(value)
+          setOpen(!open)
+        }}
+        onKeyDown={(event) => {
+          if (disabled) return
+          if (event.key === 'Tab') {
+            setOpen(false)
+            return
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            setOpen(false)
+            return
+          }
+          if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+            event.preventDefault()
+            const index = open
+              ? activeIndex
+              : Math.max(
+                  0,
+                  PROFILE_OPTIONS.findIndex((opt) => opt.value === value),
+                )
+            const next =
+              event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? PROFILE_OPTIONS.length - 1
+                  : Math.max(
+                      0,
+                      Math.min(
+                        PROFILE_OPTIONS.length - 1,
+                        index + (event.key === 'ArrowDown' ? 1 : -1),
+                      ),
+                    )
+            setActiveValue(PROFILE_OPTIONS[next].value)
+            setOpen(true)
+          } else if ((event.key === 'Enter' || event.key === ' ') && open) {
+            event.preventDefault()
+            choose(PROFILE_OPTIONS[activeIndex].value)
+          } else if (
+            event.key.length === 1 &&
+            event.key !== ' ' &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.altKey
+          ) {
+            event.preventDefault()
+            const match = PROFILE_OPTIONS.find((opt) =>
+              opt.label.toLocaleLowerCase().startsWith(event.key.toLocaleLowerCase()),
+            )
+            if (match) {
+              setActiveValue(match.value)
+              setOpen(true)
+            }
+          }
+        }}
+        className={`flex h-9 w-full min-w-0 items-center justify-between gap-3 border bg-[#11100D] px-3 text-left text-[12px] text-[#F3E7D0] transition-colors hover:border-[#8A571C] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F5A524] disabled:cursor-not-allowed disabled:opacity-50 ${
+          open ? 'border-[#8A571C]' : 'border-[#2A2116]'
+        }`}
+      >
+        <span className="truncate">{selectedOption.label}</span>
+        <ChevronDown
+          aria-hidden="true"
+          size={14}
+          className={`shrink-0 text-[#C7AE86] transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      <ul
+        id={id}
+        role="listbox"
+        aria-label="Профиль"
+        hidden={!open}
+        className="absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-y-auto overscroll-contain border border-[#8A571C] bg-[#11100D] p-1 shadow-lg [scrollbar-color:#8A571C_#11100D] [scrollbar-width:thin]"
+      >
+        {PROFILE_OPTIONS.map((opt, index) => {
+          const isSelected = opt.value === value
+          const isActive = index === activeIndex
+          return (
+            <li
+              key={opt.value}
+              id={`${id}-${index}`}
+              role="option"
+              aria-selected={isSelected}
+              onPointerMove={() => setActiveValue(opt.value)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => choose(opt.value)}
+              className={`flex min-h-8 cursor-pointer items-center justify-between gap-3 px-2 py-1.5 text-[12px] ${
+                isActive ? 'bg-[#2A2116] text-[#F3E7D0]' : 'text-[#C7AE86]'
+              } ${isSelected ? 'text-[#F5A524]' : ''}`}
+            >
+              <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+              {isSelected && (
+                <Check aria-hidden="true" size={14} className="shrink-0 text-[#F5A524]" />
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
 
 export function MainScreen({
   onPlay,
@@ -376,20 +548,11 @@ export function MainScreen({
                 <label htmlFor="client-profile" className="text-[12px] text-[#C7AE86]">
                   Профиль
                 </label>
-                <select
-                  id="client-profile"
+                <ProfileSelect
                   value={profile}
                   disabled={profileChanging || checking || launching || gameBusy}
-                  onChange={(event) => onSelectProfile(event.target.value as 'game' | 'workshop')}
-                  className="h-9 border border-[#2A2116] bg-[#11100D] px-3 text-[12px] text-[#F3E7D0] [color-scheme:dark] focus-visible:outline-2 focus-visible:outline-[#F5A524] disabled:opacity-50"
-                >
-                  <option value="game" className="bg-[#11100D] text-[#F3E7D0]">
-                    Игра
-                  </option>
-                  <option value="workshop" className="bg-[#11100D] text-[#F3E7D0]">
-                    Мастерская
-                  </option>
-                </select>
+                  onChange={onSelectProfile}
+                />
                 <span role="status" className="text-[12px] text-[#C7AE86]">
                   {profileChanging
                     ? 'Смена профиля…'

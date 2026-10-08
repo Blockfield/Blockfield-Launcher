@@ -161,7 +161,7 @@ fn default_workshop_server() -> String {
     std::env::var("BLOCKFIELD_WORKSHOP_SERVER")
         .ok()
         .or_else(|| option_env!("BLOCKFIELD_WORKSHOP_SERVER").map(str::to_owned))
-        .unwrap_or_default()
+        .unwrap_or_else(|| "workshop.blockfield.pro:25565".to_string())
 }
 
 fn workshop_directory(game_dir: &str) -> String {
@@ -254,6 +254,9 @@ pub fn load_config(app_data_dir: &Path) -> LauncherConfig {
     };
     if config.workshop_game_dir.is_empty() {
         config.workshop_game_dir = workshop_directory(&config.game_dir);
+    }
+    if config.workshop_server.trim().is_empty() {
+        config.workshop_server = default_workshop_server();
     }
     config
 }
@@ -481,6 +484,7 @@ mod tests {
             config.workshop_game_dir,
             workshop_directory(&config.game_dir)
         );
+        assert_eq!(config.workshop_server, "workshop.blockfield.pro:25565");
         config.active_profile = ClientProfile::Workshop;
         let active = config.active();
         assert_eq!(active.game_dir, config.workshop_game_dir);
@@ -561,6 +565,22 @@ mod tests {
         validate_config(&config).unwrap();
         assert!(workshop.is_dir());
         assert!(!Path::new(&config.game_dir).exists());
+    }
+
+    #[test]
+    fn default_workshop_server_migrates_empty_persisted_value_and_preserves_custom() {
+        let scratch = tempfile::tempdir().unwrap();
+        let mut empty_config = serde_json::to_value(LauncherConfig::default()).unwrap();
+        empty_config["workshopServer"] = "".into();
+        std::fs::write(config_path(scratch.path()), empty_config.to_string()).unwrap();
+        let loaded = load_config(scratch.path());
+        assert_eq!(loaded.workshop_server, "workshop.blockfield.pro:25565");
+
+        let mut custom_config = serde_json::to_value(LauncherConfig::default()).unwrap();
+        custom_config["workshopServer"] = "custom.example:25565".into();
+        std::fs::write(config_path(scratch.path()), custom_config.to_string()).unwrap();
+        let loaded_custom = load_config(scratch.path());
+        assert_eq!(loaded_custom.workshop_server, "custom.example:25565");
     }
 
     #[test]

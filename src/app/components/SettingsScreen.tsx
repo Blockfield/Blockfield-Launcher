@@ -45,12 +45,16 @@ export type SettingsTab = 'general' | 'runtime' | 'commands' | 'skin' | 'launche
 
 export function SettingsScreen({
   username,
+  canWorkshop = false,
+  profile: initialProfile = 'game',
   onAccountChange,
   tab,
   onTabChange: setTab,
   onWorkshopServerSaved,
 }: {
   username: string
+  canWorkshop?: boolean
+  profile?: 'game' | 'workshop'
   onAccountChange: (account: AccountStatus) => void
   tab: SettingsTab
   onTabChange: (tab: SettingsTab) => void
@@ -60,7 +64,8 @@ export function SettingsScreen({
   const content = useLauncherContent()
   const [dir, setDir] = useState('')
   const [java, setJava] = useState('')
-  const [profile, setProfile] = useState<'game' | 'workshop'>('game')
+  const [profile, setProfile] = useState<'game' | 'workshop'>(canWorkshop ? initialProfile : 'game')
+  const isWorkshop = canWorkshop && profile === 'workshop'
   const [workshopServer, setWorkshopServer] = useState('')
   const [ram, setRam] = useState(4)
   const [maxRam, setMaxRam] = useState(32)
@@ -104,7 +109,7 @@ export function SettingsScreen({
 
     invoke<LauncherConfig>('load_settings')
       .then((cfg) => {
-        setProfile(cfg.activeProfile ?? 'game')
+        setProfile(canWorkshop ? (cfg.activeProfile ?? 'game') : 'game')
         setWorkshopServer(cfg.workshopServer ?? '')
         setDir(cfg.gameDir)
         setJava(cfg.javaPath)
@@ -118,7 +123,15 @@ export function SettingsScreen({
       })
       .catch((e) => console.error('Failed to load settings:', e))
       .finally(() => setLoading(false))
-  }, [])
+  }, [canWorkshop])
+
+  useEffect(() => {
+    if (!canWorkshop && profile === 'workshop') {
+      setProfile('game')
+    } else if (canWorkshop && initialProfile) {
+      setProfile(initialProfile)
+    }
+  }, [canWorkshop, initialProfile, profile])
 
   const markDirty = useCallback(() => setDirty(true), [])
 
@@ -135,7 +148,7 @@ export function SettingsScreen({
     try {
       await invoke('save_settings', {
         config: {
-          activeProfile: profile,
+          activeProfile: isWorkshop ? 'workshop' : 'game',
           workshopServer,
           gameDir: dir,
           javaPath: java,
@@ -181,7 +194,7 @@ export function SettingsScreen({
   const handleReset = useCallback(() => {
     invoke<LauncherConfig>('load_settings')
       .then((cfg) => {
-        setProfile(cfg.activeProfile ?? 'game')
+        setProfile(canWorkshop ? (cfg.activeProfile ?? 'game') : 'game')
         setWorkshopServer(cfg.workshopServer ?? '')
         setDir(cfg.gameDir)
         setJava(cfg.javaPath)
@@ -254,6 +267,8 @@ export function SettingsScreen({
           setNewPassword('')
           setPasswordOpen(false)
           setPasswordChanged(true)
+        } else if (command === 'logout') {
+          setProfile('game')
         }
         onAccountChange(account)
       } catch (e) {
@@ -445,15 +460,15 @@ export function SettingsScreen({
                 </Setting>
                 <Setting
                   icon={<Folder size={14} />}
-                  label={profile === 'workshop' ? 'Папка мастерской' : t('settings.gameDir')}
+                  label={isWorkshop ? 'Папка мастерской' : t('settings.gameDir')}
                   hint={
-                    profile === 'workshop'
+                    isWorkshop
                       ? 'Настройки, клавиши, миры и логи мастерской хранятся отдельно от игры.'
                       : t('settings.gameDirHint')
                   }
                 >
                   <PathInput
-                    label={profile === 'workshop' ? 'Папка мастерской' : t('settings.gameDir')}
+                    label={isWorkshop ? 'Папка мастерской' : t('settings.gameDir')}
                     value={dir}
                     onChange={(v) => {
                       setDir(v)
@@ -463,7 +478,7 @@ export function SettingsScreen({
                     onBrowse={() => handleBrowse('dir')}
                   />
                 </Setting>
-                {profile === 'workshop' && (
+                {isWorkshop && (
                   <Setting
                     icon={<Gamepad2 size={14} />}
                     label="Адрес мастерской"
