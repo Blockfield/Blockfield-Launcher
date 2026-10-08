@@ -12,6 +12,7 @@ export type ErrorContext =
   | 'settings-load'
   | 'skin-upload'
   | 'account'
+  | 'select-profile'
 
 const CONTEXT_FALLBACK: Record<ErrorContext, string> = {
   'modpack-check': 'Не удалось проверить обновление модпака.',
@@ -22,6 +23,7 @@ const CONTEXT_FALLBACK: Record<ErrorContext, string> = {
   'settings-load': 'Не удалось загрузить настройки. Проверьте доступ к папке настроек и повторите.',
   'skin-upload': 'Не удалось загрузить скин. Откройте подробности ошибки.',
   account: 'Не удалось выполнить запрос к серверу аккаунтов.',
+  'select-profile': 'Не удалось переключить профиль.',
 }
 
 const CONTEXT_NETWORK: Record<ErrorContext, string> = {
@@ -35,6 +37,7 @@ const CONTEXT_NETWORK: Record<ErrorContext, string> = {
   'skin-upload':
     'Нет доступа к серверу скинов skins.blockfield.pro — проверьте интернет и повторите.',
   account: 'Нет доступа к серверу аккаунтов skins.blockfield.pro — проверьте интернет и повторите.',
+  'select-profile': 'Не удалось переключить профиль. Проверьте интернет и повторите.',
 }
 
 export const SESSION_EXPIRED = 'SESSION_EXPIRED'

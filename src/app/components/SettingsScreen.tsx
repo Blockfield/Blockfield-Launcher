@@ -45,12 +45,20 @@ export type SettingsTab = 'general' | 'runtime' | 'commands' | 'skin' | 'launche
 
 export function SettingsScreen({
   username,
+  canWorkshop = false,
+  profile: initialProfile = 'game',
+  profileBlocked = false,
+  profileError = null,
   onAccountChange,
   tab,
   onTabChange: setTab,
   onWorkshopServerSaved,
 }: {
   username: string
+  canWorkshop?: boolean
+  profile?: 'game' | 'workshop'
+  profileBlocked?: boolean
+  profileError?: string | null
   onAccountChange: (account: AccountStatus) => void
   tab: SettingsTab
   onTabChange: (tab: SettingsTab) => void
@@ -60,7 +68,7 @@ export function SettingsScreen({
   const content = useLauncherContent()
   const [dir, setDir] = useState('')
   const [java, setJava] = useState('')
-  const [profile, setProfile] = useState<'game' | 'workshop'>('game')
+  const isWorkshop = canWorkshop && initialProfile === 'workshop'
   const [workshopServer, setWorkshopServer] = useState('')
   const [ram, setRam] = useState(4)
   const [maxRam, setMaxRam] = useState(32)
@@ -95,35 +103,44 @@ export function SettingsScreen({
       'settings_preferences',
     ) ?? t('settings.preferences')
 
-  // Load settings on mount
   useEffect(() => {
-    if (!isTauri()) {
-      queueMicrotask(() => setLoading(false))
-      return
+    if (profileBlocked) return
+    let active = true
+    queueMicrotask(() => {
+      if (!active) return
+      if (!isTauri()) {
+        setLoading(false)
+        return
+      }
+      setLoading(true)
+      invoke<LauncherConfig>('load_settings')
+        .then((cfg) => {
+          if (!active) return
+          setWorkshopServer(cfg.workshopServer ?? '')
+          setDir(cfg.gameDir)
+          setJava(cfg.javaPath)
+          setMaxRam(ramLimitGb(cfg.maxRamMb))
+          setRam(clampRamGb(cfg.ramMb / 1024, ramLimitGb(cfg.maxRamMb)))
+          setAutoUpdate(cfg.autoUpdate)
+          setHideWhilePlaying(cfg.hideWhilePlaying ?? false)
+          setDiscordPresence(cfg.discordPresence ?? true)
+          setPreLaunchCommand(cfg.preLaunchCommand ?? '')
+          setPostExitCommand(cfg.postExitCommand ?? '')
+        })
+        .catch((e) => console.error('Failed to load settings:', e))
+        .finally(() => {
+          if (active) setLoading(false)
+        })
+    })
+    return () => {
+      active = false
     }
-
-    invoke<LauncherConfig>('load_settings')
-      .then((cfg) => {
-        setProfile(cfg.activeProfile ?? 'game')
-        setWorkshopServer(cfg.workshopServer ?? '')
-        setDir(cfg.gameDir)
-        setJava(cfg.javaPath)
-        setMaxRam(ramLimitGb(cfg.maxRamMb))
-        setRam(clampRamGb(cfg.ramMb / 1024, ramLimitGb(cfg.maxRamMb)))
-        setAutoUpdate(cfg.autoUpdate)
-        setHideWhilePlaying(cfg.hideWhilePlaying ?? false)
-        setDiscordPresence(cfg.discordPresence ?? true)
-        setPreLaunchCommand(cfg.preLaunchCommand ?? '')
-        setPostExitCommand(cfg.postExitCommand ?? '')
-      })
-      .catch((e) => console.error('Failed to load settings:', e))
-      .finally(() => setLoading(false))
-  }, [])
+  }, [initialProfile, profileBlocked])
 
   const markDirty = useCallback(() => setDirty(true), [])
 
   const handleSave = useCallback(async () => {
-    if (!isTauri()) return
+    if (!isTauri() || profileBlocked) return
     if (maxRam < 2) {
       setSaveMessage('Недостаточно памяти: для игры нужно выделить минимум 2 ГБ.')
       setSaveErrorRaw(null)
@@ -135,7 +152,7 @@ export function SettingsScreen({
     try {
       await invoke('save_settings', {
         config: {
-          activeProfile: profile,
+          activeProfile: isWorkshop ? 'workshop' : 'game',
           workshopServer,
           gameDir: dir,
           javaPath: java,
@@ -162,7 +179,6 @@ export function SettingsScreen({
       setSaving(false)
     }
   }, [
-    profile,
     workshopServer,
     onWorkshopServerSaved,
     dir,
@@ -176,12 +192,14 @@ export function SettingsScreen({
     lang,
     t,
     maxRam,
+    profileBlocked,
+    isWorkshop,
   ])
 
   const handleReset = useCallback(() => {
+    if (profileBlocked) return
     invoke<LauncherConfig>('load_settings')
       .then((cfg) => {
-        setProfile(cfg.activeProfile ?? 'game')
         setWorkshopServer(cfg.workshopServer ?? '')
         setDir(cfg.gameDir)
         setJava(cfg.javaPath)
@@ -195,7 +213,7 @@ export function SettingsScreen({
       })
       .catch(console.error)
     setDirty(false)
-  }, [])
+  }, [profileBlocked])
 
   useEffect(() => {
     if (tab !== 'skin' || !isTauri()) return
@@ -298,7 +316,7 @@ export function SettingsScreen({
     [markDirty],
   )
 
-  if (loading) {
+  if (loading && !profileBlocked) {
     return (
       <div className="relative h-full w-full overflow-hidden bg-[#070604] flex items-center justify-center">
         <LoaderCircle size={24} className="animate-spin text-[#8E7A5E]" />
@@ -445,15 +463,15 @@ export function SettingsScreen({
                 </Setting>
                 <Setting
                   icon={<Folder size={14} />}
-                  label={profile === 'workshop' ? 'Папка мастерской' : t('settings.gameDir')}
+                  label={isWorkshop ? 'Папка мастерской' : t('settings.gameDir')}
                   hint={
-                    profile === 'workshop'
+                    isWorkshop
                       ? 'Настройки, клавиши, миры и логи мастерской хранятся отдельно от игры.'
                       : t('settings.gameDirHint')
                   }
                 >
                   <PathInput
-                    label={profile === 'workshop' ? 'Папка мастерской' : t('settings.gameDir')}
+                    label={isWorkshop ? 'Папка мастерской' : t('settings.gameDir')}
                     value={dir}
                     onChange={(v) => {
                       setDir(v)
@@ -463,7 +481,7 @@ export function SettingsScreen({
                     onBrowse={() => handleBrowse('dir')}
                   />
                 </Setting>
-                {profile === 'workshop' && (
+                {isWorkshop && (
                   <Setting
                     icon={<Gamepad2 size={14} />}
                     label="Адрес мастерской"
@@ -710,6 +728,11 @@ export function SettingsScreen({
                 {t('settings.reset')}
               </button>
               <div className="flex flex-wrap items-center justify-end gap-2">
+                {profileError && (
+                  <div role="alert" className="max-w-[320px] text-[11px] text-[#F5A524]">
+                    {profileError}
+                  </div>
+                )}
                 {saveMessage && saveMessage !== t('settings.saved') && (
                   <div className="max-w-[320px]">
                     <ErrorDetail message={saveMessage} raw={saveErrorRaw} />
@@ -718,7 +741,7 @@ export function SettingsScreen({
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={!dirty || saving}
+                  disabled={!dirty || saving || profileBlocked}
                   className={`h-10 px-6 flex items-center gap-3 border transition-colors ${
                     dirty
                       ? 'border-[#F5A524]/40 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524]'

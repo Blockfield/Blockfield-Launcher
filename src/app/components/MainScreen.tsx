@@ -3,6 +3,7 @@ import { useGameState, gameStateLabel, launchGame } from '../../lib/game-state'
 import { checkModpack, useModpackVersion } from '../../lib/modpack-check'
 import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useState, useRef, type ReactNode } from 'react'
+import { Select } from './Select'
 import {
   Play,
   Gamepad2,
@@ -52,16 +53,45 @@ const FEATURE_ICONS: Record<string, ReactNode> = {
 /** Whether we're running inside Tauri (vs browser dev). */
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
+const PROFILE_OPTIONS = [
+  { value: 'game', label: 'Игра' },
+  { value: 'workshop', label: 'Мастерская' },
+]
+
+export function ProfileSelect({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: 'game' | 'workshop'
+  disabled: boolean
+  onChange: (profile: 'game' | 'workshop') => void
+}) {
+  return (
+    <Select
+      id="client-profile"
+      ariaLabel="Профиль"
+      value={value}
+      options={PROFILE_OPTIONS}
+      disabled={disabled}
+      className="min-w-[140px]"
+      onChange={(next) => onChange(next as 'game' | 'workshop')}
+    />
+  )
+}
+
 export function MainScreen({
   onPlay,
   profile = 'game',
   profileChanging = false,
+  profileBlocked = false,
   profileError,
   onSelectProfile,
 }: {
   onPlay: () => void
   profile?: 'game' | 'workshop'
   profileChanging?: boolean
+  profileBlocked?: boolean
   profileError?: string | null
   onSelectProfile?: (profile: 'game' | 'workshop') => void
 }) {
@@ -86,7 +116,8 @@ export function MainScreen({
 
   const handleDeploy = useCallback(async () => {
     // Don't allow deploy until version check completes
-    if (!versionInfo || checking || launching || gameBusy || profileChanging) return
+    if (!versionInfo || checking || launching || gameBusy || profileChanging || profileBlocked)
+      return
     // Update needed OR Java not ready OR Fabric not installed → go to update screen
     if (versionInfo.needsUpdate || !versionInfo.javaOk || !versionInfo.loaderOk) {
       onPlay()
@@ -124,7 +155,7 @@ export function MainScreen({
         setLaunching(false)
       }
     }
-  }, [versionInfo, checking, launching, gameBusy, profileChanging, onPlay, t])
+  }, [versionInfo, checking, launching, gameBusy, profileChanging, profileBlocked, onPlay, t])
 
   const handleJoin = useCallback(
     async (id: string) => {
@@ -376,39 +407,39 @@ export function MainScreen({
                 <label htmlFor="client-profile" className="text-[12px] text-[#C7AE86]">
                   Профиль
                 </label>
-                <select
-                  id="client-profile"
+                <ProfileSelect
                   value={profile}
-                  disabled={profileChanging || checking || launching || gameBusy}
-                  onChange={(event) => onSelectProfile(event.target.value as 'game' | 'workshop')}
-                  className="h-9 border border-[#2A2116] bg-[#11100D] px-3 text-[12px] text-[#F3E7D0] [color-scheme:dark] focus-visible:outline-2 focus-visible:outline-[#F5A524] disabled:opacity-50"
-                >
-                  <option value="game" className="bg-[#11100D] text-[#F3E7D0]">
-                    Игра
-                  </option>
-                  <option value="workshop" className="bg-[#11100D] text-[#F3E7D0]">
-                    Мастерская
-                  </option>
-                </select>
+                  disabled={profileChanging || profileBlocked || checking || launching || gameBusy}
+                  onChange={onSelectProfile}
+                />
                 <span role="status" className="text-[12px] text-[#C7AE86]">
                   {profileChanging
                     ? 'Смена профиля…'
-                    : profile === 'workshop'
-                      ? 'Свои игровые настройки и файлы. Аккаунт общий.'
-                      : 'Основная игровая установка.'}
+                    : profileBlocked
+                      ? 'Ожидание смены профиля…'
+                      : profile === 'workshop'
+                        ? 'Свои игровые настройки и файлы. Аккаунт общий.'
+                        : 'Основная игровая установка.'}
                 </span>
-                {profileError && (
-                  <p role="alert" className="w-full text-[12px] text-[#c98b8b]">
-                    {profileError}
-                  </p>
-                )}
+              </div>
+            )}
+            {profileError && (
+              <div role="alert" className="mb-4 text-[12px] text-[#c98b8b]">
+                {profileError}
               </div>
             )}
             <div className="flex flex-wrap items-center justify-between gap-5">
               <div className="flex flex-wrap min-w-0 items-center gap-4">
                 <DeployButton
                   onPlay={handleDeploy}
-                  disabled={!isChecked || checking || launching || gameBusy || profileChanging}
+                  disabled={
+                    !isChecked ||
+                    checking ||
+                    launching ||
+                    gameBusy ||
+                    profileChanging ||
+                    profileBlocked
+                  }
                   label={launchLabel}
                   sub={launchSub}
                   busy={launching}
