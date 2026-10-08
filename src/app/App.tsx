@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { WindowChrome } from './components/WindowChrome'
 import { Shell } from './components/Shell'
 import { MainScreen } from './components/MainScreen'
@@ -45,6 +45,29 @@ export default function App() {
   const [staff, setStaff] = useState<{ uuid: string; role: string | null } | null>(null)
   const [staffLoading, setStaffLoading] = useState(false)
   const uuid = account?.loggedIn ? account.uuid : null
+
+  const refreshRole = useCallback(
+    async (targetUuid?: string | null) => {
+      const id = targetUuid ?? (account?.loggedIn ? account.uuid : null)
+      if (!id) {
+        setStaff(null)
+        setStaffLoading(false)
+        return
+      }
+      try {
+        const result = await loadStats<PlayerStats>({ kind: 'player', uuid: id, query: {} })
+        if (!result.stale) {
+          setStaff({ uuid: id, role: result.data?.profile.role ?? null })
+        }
+      } catch {
+        setStaff((prev) => prev ?? { uuid: id, role: null })
+      } finally {
+        setStaffLoading(false)
+      }
+    },
+    [account?.loggedIn, account?.uuid],
+  )
+
   useEffect(() => {
     if (!uuid) {
       setStaff(null)
@@ -53,27 +76,24 @@ export default function App() {
     }
     setStaff(null)
     setStaffLoading(true)
-    let current = true
-    void loadStats<PlayerStats>({ kind: 'player', uuid, query: {} })
-      .then((result) => {
-        if (current) {
-          setStaff({ uuid, role: result.data?.profile.role ?? null })
-          setStaffLoading(false)
-        }
-      })
-      .catch(() => {
-        if (current) {
-          setStaff({ uuid, role: null })
-          setStaffLoading(false)
-        }
-      })
-    return () => {
-      current = false
-    }
-  }, [uuid])
+    void refreshRole(uuid)
+  }, [uuid, refreshRole])
+
+  const handleAccountChange = useCallback(
+    (acc: AccountStatus) => {
+      setAccount(acc)
+      if (!acc.loggedIn) {
+        setStaff(null)
+        setStaffLoading(false)
+      } else {
+        void refreshRole(acc.uuid)
+      }
+    },
+    [refreshRole],
+  )
 
   const gameState = useGameState()
-  const gameBusy = gameState.status !== 'idle'
+  const gameBusy = gameState.phase !== 'idle'
 
   const [updatesVisited, setUpdatesVisited] = useState(false)
   const [updateRequest, setUpdateRequest] = useState(0)
@@ -106,8 +126,11 @@ export default function App() {
   }, [configLoaded, authResolved, canWorkshop, profile])
 
   // Automatically retry profile switch when game becomes idle
+  const prevGameBusy = useRef(gameBusy)
   useEffect(() => {
-    if (!gameBusy && pendingProfileRetry && !profileChanging) {
+    const wasBusy = prevGameBusy.current
+    prevGameBusy.current = gameBusy
+    if (wasBusy && !gameBusy && pendingProfileRetry && !profileChanging) {
       const target = pendingProfileRetry
       void selectProfile(target)
     }
@@ -210,6 +233,9 @@ export default function App() {
   useEffect(() => {
     if (!isTauri()) return
     const probe = () => {
+      if (uuid) {
+        void refreshRole(uuid)
+      }
       const current = getModpackVersionSnapshot()
       if (!current) return
       void invoke<VersionCheckResult>('check_modpack_version')
@@ -230,7 +256,7 @@ export default function App() {
       window.clearInterval(interval)
       window.removeEventListener('focus', probe)
     }
-  }, [])
+  }, [uuid, refreshRole])
 
   // Check for launcher updates on mount
   useEffect(() => {
@@ -284,7 +310,7 @@ export default function App() {
             key={account?.needsPassword ? 'password' : 'login'}
             username={account?.username}
             setPassword={account?.needsPassword}
-            onDone={setAccount}
+            onDone={handleAccountChange}
           />
         </WindowChrome>
       </I18nContext.Provider>
@@ -364,13 +390,7 @@ export default function App() {
               profileBlocked={profileBlocked}
               profileError={profileError}
               onWorkshopServerSaved={setWorkshopServer}
-              onAccountChange={(next) => {
-                setAccount(next)
-                if (!next.loggedIn) {
-                  setStaff(null)
-                  setStaffLoading(false)
-                }
-              }}
+              onAccountChange={handleAccountChange}
               tab={settingsTab}
               onTabChange={setSettingsTab}
             />

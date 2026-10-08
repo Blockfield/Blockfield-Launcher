@@ -14,7 +14,7 @@ const { invoke, getVersion, relaunch, listen, channels } = vi.hoisted(() => ({
   invoke: vi.fn(),
   getVersion: vi.fn(),
   relaunch: vi.fn(),
-  listen: vi.fn(async () => () => {}),
+  listen: vi.fn(async (_event?: any, _handler?: any) => () => {}),
   channels: [] as Array<{
     onmessage: (event: { phase: string; downloaded: number; total: number | null }) => void
   }>,
@@ -256,14 +256,16 @@ it('navigates custom profile select via keyboard, shows checkmark, and respects 
   expect(listbox).not.toBeNull()
   const options = container.querySelectorAll('[role="option"]')
   expect(options.length).toBe(2)
-  expect(options[0].textContent).toContain('Игра')
-  expect(options[1].textContent).toContain('Мастерская')
+  const opt0 = options[0]!
+  const opt1 = options[1]!
+  expect(opt0.textContent).toContain('Игра')
+  expect(opt1.textContent).toContain('Мастерская')
 
   // First option is selected so it has the check icon
-  expect(options[0].getAttribute('aria-selected')).toBe('true')
-  expect(options[0].querySelector('svg')).not.toBeNull()
-  expect(options[1].getAttribute('aria-selected')).toBe('false')
-  expect(options[1].querySelector('svg')).toBeNull()
+  expect(opt0.getAttribute('aria-selected')).toBe('true')
+  expect(opt0.querySelector('svg')).not.toBeNull()
+  expect(opt1.getAttribute('aria-selected')).toBe('false')
+  expect(opt1.querySelector('svg')).toBeNull()
 
   // Press Enter on active item (which is now options[1] / workshop)
   await act(async () => {
@@ -464,7 +466,7 @@ it('handles select_profile failure when game is busy by showing visible error an
       return { localVersion: '1.0.0', remoteVersion: '1.0.0', needsUpdate: false, javaOk: true, loaderOk: true }
     }
     if (cmd === 'game_status') {
-      return { phase: 'idle', revision: 0 }
+      return { phase: 'running', revision: 1 }
     }
     return null
   })
@@ -516,4 +518,110 @@ it('blocks SettingsScreen from loading or saving while profile switch is blocked
     (b) => b.textContent?.toUpperCase().includes('СОХРАНИТЬ'),
   )
   expect(saveBtn?.disabled).toBe(true)
+})
+
+it('handles live demotion of builder to player: hides custom selector, blocks actions, shows busy alert while game running, and automatically switches to game when game exits', async () => {
+  ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {}
+
+  let gamePhase: 'running' | 'idle' = 'running'
+  let selectProfileCalledWith: string | null = null
+  let role: 'builder' | 'player' = 'builder'
+
+  const listeners: Record<string, Set<(event: { payload: unknown }) => void>> = {}
+  listen.mockImplementation(async (event: string, handler: (event: { payload: unknown }) => void) => {
+    if (!listeners[event]) listeners[event] = new Set()
+    listeners[event]!.add(handler)
+    return () => {
+      listeners[event]?.delete(handler)
+    }
+  })
+
+  invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+    if (cmd === 'load_settings') {
+      return {
+        activeProfile: 'workshop',
+        workshopServer: 'workshop.blockfield.pro:25565',
+        username: 'BuilderUser',
+      }
+    }
+    if (cmd === 'account_status') {
+      return { loggedIn: true, uuid: 'builder-uuid-1', username: 'BuilderUser' }
+    }
+    if (cmd === 'stats_player') {
+      return { profile: { uuid: 'builder-uuid-1', role } }
+    }
+    if (cmd === 'game_status') {
+      return { phase: gamePhase, revision: gamePhase === 'running' ? 1 : 2 }
+    }
+    if (cmd === 'select_profile') {
+      selectProfileCalledWith = (args?.profile as string) ?? null
+      if (gamePhase === 'running') {
+        throw new Error('Закройте игру перед сменой профиля.')
+      }
+      return { activeProfile: args?.profile }
+    }
+    if (cmd === 'check_modpack_version') {
+      return {
+        localVersion: '1.0.0',
+        remoteVersion: '1.0.0',
+        needsUpdate: false,
+        javaOk: true,
+        loaderOk: true,
+      }
+    }
+    return null
+  })
+
+  // 1. Initial boot: builder user with stored workshop profile
+  await act(async () => {
+    root!.render(<App />)
+  })
+
+  // Wait for initial render: role is builder, so custom profile select is visible
+  await vi.waitFor(() => {
+    expect(container.querySelector('#client-profile')).not.toBeNull()
+  })
+  expect(container.querySelector('#client-profile')?.textContent).toContain('Мастерская')
+
+  const deployBtn = container.querySelector<HTMLButtonElement>('button.group')
+  expect(deployBtn).not.toBeNull()
+
+  // 2. Live demotion occurs: server role becomes 'player'
+  role = 'player'
+  // Trigger role refresh via window focus (simulating existing probe / focus polling path)
+  await act(async () => {
+    window.dispatchEvent(new Event('focus'))
+  })
+
+  // 3. Custom selector immediately disappears because player is not authorized for workshop
+  await vi.waitFor(() => {
+    expect(container.querySelector('#client-profile')).toBeNull()
+  })
+
+  // 4. select_profile('game') was attempted but game is running, so error was caught
+  await vi.waitFor(() => {
+    expect(selectProfileCalledWith).toBe('game')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Закройте игру перед сменой профиля',
+    )
+  })
+
+  // App is NOT killed or crashed. Deploy action remains disabled while blocked
+  expect(deployBtn?.disabled).toBe(true)
+
+  // 5. Game exits: transition game phase to 'idle'
+  gamePhase = 'idle'
+  await act(async () => {
+    listeners['game://status']?.forEach((fn) =>
+      fn({ payload: { phase: 'idle', revision: 2 } }),
+    )
+  })
+
+  // 6. Automatic retry triggers select_profile('game') now that game is idle
+  await vi.waitFor(() => {
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  // Profile switch confirmed: selector remains hidden for player, actions unblocked
+  expect(container.querySelector('#client-profile')).toBeNull()
 })

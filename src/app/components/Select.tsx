@@ -115,11 +115,13 @@ export function Select({
                       0,
                       Math.min(options.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)),
                     )
-            setActiveValue((options[next] ?? selected).value)
+            const target = options[next] ?? selected
+            if (target) setActiveValue(target.value)
             setOpen(true)
           } else if ((event.key === 'Enter' || event.key === ' ') && open) {
             event.preventDefault()
-            choose(options[activeIndex] ?? selected)
+            const target = options[activeIndex] ?? selected
+            if (target) choose(target)
           } else if (
             event.key.length === 1 &&
             event.key !== ' ' &&
