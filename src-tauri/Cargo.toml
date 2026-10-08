@@ -1,6 +1,6 @@
 [package]
 name = "blockfield-launcher"
-version = "1.0.13"
+version = "1.0.14"
 description = "Blockfield Launcher"
 authors = ["you"]
 license = "GPL-3.0-only"
