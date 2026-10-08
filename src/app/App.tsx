@@ -18,7 +18,7 @@ import {
   getModpackVersionSnapshot,
 } from '../lib/modpack-check'
 import { checkLauncherUpdate } from '../lib/launcher-update'
-import { watchGameState } from '../lib/game-state'
+import { useGameState, watchGameState } from '../lib/game-state'
 import { listenLauncherStatus } from '../lib/events'
 import { LoaderCircle } from 'lucide-react'
 import { ErrorDetail } from './components/ui-bits'
@@ -41,30 +41,40 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general')
   const [screen, setScreen] = useState<Screen>('main')
   const [account, setAccount] = useState<AccountStatus | null>(null)
+  const [accountLoaded, setAccountLoaded] = useState(!isTauri())
   const [staff, setStaff] = useState<{ uuid: string; role: string | null } | null>(null)
+  const [staffLoading, setStaffLoading] = useState(false)
   const uuid = account?.loggedIn ? account.uuid : null
   useEffect(() => {
     if (!uuid) {
       setStaff(null)
+      setStaffLoading(false)
       return
     }
     setStaff(null)
+    setStaffLoading(true)
     let current = true
     void loadStats<PlayerStats>({ kind: 'player', uuid, query: {} })
       .then((result) => {
         if (current) {
           setStaff({ uuid, role: result.data?.profile.role ?? null })
+          setStaffLoading(false)
         }
       })
       .catch(() => {
         if (current) {
           setStaff({ uuid, role: null })
+          setStaffLoading(false)
         }
       })
     return () => {
       current = false
     }
   }, [uuid])
+
+  const gameState = useGameState()
+  const gameBusy = gameState.status !== 'idle'
+
   const [updatesVisited, setUpdatesVisited] = useState(false)
   const [updateRequest, setUpdateRequest] = useState(0)
   const [commandError, setCommandError] = useState<string | null>(null)
@@ -78,27 +88,34 @@ export default function App() {
   const [workshopServer, setWorkshopServer] = useState('')
   const [profileChanging, setProfileChanging] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
+  const [pendingProfileRetry, setPendingProfileRetry] = useState<'game' | 'workshop' | null>(null)
 
   const currentRole = account?.loggedIn && staff?.uuid === account.uuid ? staff.role : null
   const canWorkshop = hasWorkshopAccess(currentRole)
-  const effectiveProfile = canWorkshop ? profile : 'game'
+
+  // Auth resolution: account status must be resolved, and if logged in, staff lookup settled
+  const authResolved = accountLoaded && (!account?.loggedIn || (!staffLoading && staff !== null))
+  const profileBlocked =
+    profileChanging || (!canWorkshop && profile === 'workshop') || profileError !== null
 
   useEffect(() => {
-    if (!configLoaded) return
-    if (!account?.loggedIn) {
-      if (profile === 'workshop') {
-        void selectProfile('game')
-      }
-      return
-    }
-    if (staff && staff.uuid === account.uuid && !canWorkshop && profile === 'workshop') {
+    if (!configLoaded || !authResolved) return
+    if (!canWorkshop && profile === 'workshop') {
       void selectProfile('game')
     }
-  }, [configLoaded, account?.loggedIn, account?.uuid, staff, canWorkshop, profile])
+  }, [configLoaded, authResolved, canWorkshop, profile])
+
+  // Automatically retry profile switch when game becomes idle
+  useEffect(() => {
+    if (!gameBusy && pendingProfileRetry && !profileChanging) {
+      const target = pendingProfileRetry
+      void selectProfile(target)
+    }
+  }, [gameBusy, pendingProfileRetry, profileChanging])
 
   const selectProfile = async (next: 'game' | 'workshop') => {
     if (next === 'workshop' && !canWorkshop) return
-    if (next === profile || profileChanging) return
+    if (next === profile && !profileError) return
     setProfileChanging(true)
     setProfileError(null)
     try {
@@ -107,8 +124,13 @@ export default function App() {
       setUpdatesVisited(false)
       setProfile(config.activeProfile ?? next)
       setWorkshopServer(config.workshopServer ?? '')
-    } catch (error) {
-      setProfileError(String(error))
+      setPendingProfileRetry(null)
+    } catch (e) {
+      const message = friendlyError(e, 'select-profile').message
+      setProfileError(message)
+      if (next === 'game') {
+        setPendingProfileRetry('game')
+      }
     } finally {
       setProfileChanging(false)
     }
@@ -129,6 +151,7 @@ export default function App() {
     const subscription = listen('account://expired', () => {
       setAccount((current) => current && { ...current, loggedIn: false })
       setStaff(null)
+      setStaffLoading(false)
     })
     return () => {
       void subscription.then((stop) => stop())
@@ -173,6 +196,7 @@ export default function App() {
         setProfile(cfg.activeProfile ?? 'game')
         setWorkshopServer(cfg.workshopServer ?? '')
         setAccount(status)
+        setAccountLoaded(true)
         checkModpack().catch((error) => console.error('Startup check failed:', error))
         if (!cfg.username) setFirstRunConfig(cfg)
       })
@@ -281,9 +305,9 @@ export default function App() {
     <I18nContext.Provider value={i18n}>
       <WindowChrome>
         <Shell
-          serverAddress={effectiveProfile === 'workshop' ? workshopServer : undefined}
+          serverAddress={!profileBlocked && profile === 'workshop' ? workshopServer : undefined}
           user={{
-            username: account.username || '—',
+            username: account?.username || '—',
             role: ROLE_LABELS[currentRole || ''] ?? 'игрок',
           }}
           active={screen}
@@ -311,12 +335,16 @@ export default function App() {
           )}
           {screen === 'main' && (
             <MainScreen
-              key={effectiveProfile}
-              profile={effectiveProfile}
+              key={profile}
+              profile={profile}
               profileChanging={profileChanging}
+              profileBlocked={profileBlocked}
               profileError={profileError}
-              onSelectProfile={canWorkshop ? (next) => void selectProfile(next) : undefined}
+              onSelectProfile={
+                canWorkshop && !profileBlocked ? (next) => void selectProfile(next) : undefined
+              }
               onPlay={() => {
+                if (profileBlocked) return
                 setUpdateRequest((value) => value + 1)
                 navigate('update')
               }}
@@ -330,11 +358,19 @@ export default function App() {
           {screen === 'stats' && <StatsScreen uuid={account.uuid} />}
           {screen === 'settings' && (
             <SettingsScreen
-              username={account.username}
+              username={account?.username ?? ''}
               canWorkshop={canWorkshop}
-              profile={effectiveProfile}
+              profile={profile}
+              profileBlocked={profileBlocked}
+              profileError={profileError}
               onWorkshopServerSaved={setWorkshopServer}
-              onAccountChange={setAccount}
+              onAccountChange={(next) => {
+                setAccount(next)
+                if (!next.loggedIn) {
+                  setStaff(null)
+                  setStaffLoading(false)
+                }
+              }}
               tab={settingsTab}
               onTabChange={setSettingsTab}
             />

@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { Select } from './Select'
 import type { GameRoom } from '../../lib/api'
 
 const phases: Record<string, string> = {
@@ -218,145 +219,14 @@ function RoomSelect({
   selected: GameRoom
   onChange: (id: string) => void
 }) {
-  const id = useId()
-  const root = useRef<HTMLDivElement>(null)
-  const trigger = useRef<HTMLButtonElement>(null)
-  const search = useRef({ text: '', time: 0 })
-  const [open, setOpen] = useState(false)
-  const [activeId, setActiveId] = useState(selected.id)
-  const activeIndex = Math.max(
-    0,
-    rooms.findIndex((room) => room.id === activeId),
-  )
-
-  useEffect(() => {
-    if (!open) return
-    const closeOutside = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false)
-    }
-    document.addEventListener('pointerdown', closeOutside)
-    return () => document.removeEventListener('pointerdown', closeOutside)
-  }, [open])
-
-  useEffect(() => {
-    if (open) document.getElementById(`${id}-${activeIndex}`)?.scrollIntoView({ block: 'nearest' })
-  }, [open, activeIndex, id])
-
-  const choose = (room: GameRoom) => {
-    onChange(room.id)
-    setOpen(false)
-    trigger.current?.focus()
-  }
-
   return (
-    <div
-      ref={root}
-      className="relative min-w-0 flex-1"
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false)
-      }}
-    >
-      <button
-        ref={trigger}
-        type="button"
-        role="combobox"
-        aria-label="Выбрать матч"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={id}
-        aria-activedescendant={open ? `${id}-${activeIndex}` : undefined}
-        onClick={() => {
-          setActiveId(selected.id)
-          setOpen(!open)
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Tab') {
-            setOpen(false)
-            return
-          }
-          if (event.key === 'Escape') {
-            event.preventDefault()
-            setOpen(false)
-            return
-          }
-          if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-            event.preventDefault()
-            const index = open
-              ? activeIndex
-              : Math.max(
-                  0,
-                  rooms.findIndex((room) => room.id === selected.id),
-                )
-            const next =
-              event.key === 'Home'
-                ? 0
-                : event.key === 'End'
-                  ? rooms.length - 1
-                  : Math.max(
-                      0,
-                      Math.min(rooms.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)),
-                    )
-            setActiveId((rooms[next] ?? selected).id)
-            setOpen(true)
-          } else if ((event.key === 'Enter' || event.key === ' ') && open) {
-            event.preventDefault()
-            choose(rooms[activeIndex] ?? selected)
-          } else if (
-            event.key.length === 1 &&
-            event.key !== ' ' &&
-            !event.ctrlKey &&
-            !event.metaKey &&
-            !event.altKey
-          ) {
-            event.preventDefault()
-            const now = Date.now()
-            search.current.text =
-              (now - search.current.time < 700 ? search.current.text : '') +
-              event.key.toLocaleLowerCase()
-            search.current.time = now
-            const match = rooms.find((room) =>
-              room.name.toLocaleLowerCase().startsWith(search.current.text),
-            )
-            if (match) {
-              setActiveId(match.id)
-              setOpen(true)
-            }
-          }
-        }}
-        className={`flex h-8 w-full min-w-0 items-center justify-between gap-3 border bg-[#11100D] px-3 text-left text-[14px] text-[#F3E7D0] transition-colors hover:border-[#8A571C] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F5A524] ${open ? 'border-[#8A571C]' : 'border-[#2A2116]'}`}
-      >
-        <span className="truncate">{selected.name}</span>
-        <ChevronDown
-          aria-hidden="true"
-          size={14}
-          className={`shrink-0 text-[#C7AE86] ${open ? 'rotate-180' : ''}`}
-        />
-      </button>
-      <ul
-        id={id}
-        role="listbox"
-        aria-label="Идущие матчи"
-        hidden={!open}
-        className="absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-y-auto overscroll-contain border border-[#8A571C] bg-[#11100D] p-1 [scrollbar-color:#8A571C_#11100D] [scrollbar-width:thin]"
-      >
-        {rooms.map((room, index) => (
-          <li
-            key={room.id}
-            id={`${id}-${index}`}
-            role="option"
-            aria-selected={room.id === selected.id}
-            onPointerMove={() => setActiveId(room.id)}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => choose(room)}
-            className={`flex min-h-9 cursor-pointer items-center gap-3 px-2 py-2 text-[14px] ${index === activeIndex ? 'bg-[#2A2116] text-[#F3E7D0]' : 'text-[#C7AE86]'} ${room.id === selected.id ? 'text-[#F5A524]' : ''}`}
-          >
-            <span className="min-w-0 flex-1 break-words">{room.name}</span>
-            {room.id === selected.id && (
-              <Check aria-hidden="true" size={14} className="shrink-0 text-[#F5A524]" />
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
+    <Select
+      ariaLabel="Выбрать матч"
+      listboxLabel="Идущие матчи"
+      value={selected.id}
+      options={rooms.map((room) => ({ value: room.id, label: room.name }))}
+      className="min-w-0 flex-1"
+      onChange={onChange}
+    />
   )
 }

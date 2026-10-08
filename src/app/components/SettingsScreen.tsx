@@ -47,6 +47,8 @@ export function SettingsScreen({
   username,
   canWorkshop = false,
   profile: initialProfile = 'game',
+  profileBlocked = false,
+  profileError = null,
   onAccountChange,
   tab,
   onTabChange: setTab,
@@ -55,6 +57,8 @@ export function SettingsScreen({
   username: string
   canWorkshop?: boolean
   profile?: 'game' | 'workshop'
+  profileBlocked?: boolean
+  profileError?: string | null
   onAccountChange: (account: AccountStatus) => void
   tab: SettingsTab
   onTabChange: (tab: SettingsTab) => void
@@ -100,13 +104,18 @@ export function SettingsScreen({
       'settings_preferences',
     ) ?? t('settings.preferences')
 
-  // Load settings on mount
+  // Load settings when not blocked
   useEffect(() => {
+    if (profileBlocked) {
+      setLoading(false)
+      return
+    }
     if (!isTauri()) {
       queueMicrotask(() => setLoading(false))
       return
     }
 
+    setLoading(true)
     invoke<LauncherConfig>('load_settings')
       .then((cfg) => {
         setProfile(canWorkshop ? (cfg.activeProfile ?? 'game') : 'game')
@@ -123,7 +132,7 @@ export function SettingsScreen({
       })
       .catch((e) => console.error('Failed to load settings:', e))
       .finally(() => setLoading(false))
-  }, [canWorkshop])
+  }, [canWorkshop, profileBlocked])
 
   useEffect(() => {
     if (!canWorkshop && profile === 'workshop') {
@@ -136,7 +145,7 @@ export function SettingsScreen({
   const markDirty = useCallback(() => setDirty(true), [])
 
   const handleSave = useCallback(async () => {
-    if (!isTauri()) return
+    if (!isTauri() || profileBlocked) return
     if (maxRam < 2) {
       setSaveMessage('Недостаточно памяти: для игры нужно выделить минимум 2 ГБ.')
       setSaveErrorRaw(null)
@@ -189,6 +198,7 @@ export function SettingsScreen({
     lang,
     t,
     maxRam,
+    profileBlocked,
   ])
 
   const handleReset = useCallback(() => {
@@ -725,6 +735,11 @@ export function SettingsScreen({
                 {t('settings.reset')}
               </button>
               <div className="flex flex-wrap items-center justify-end gap-2">
+                {profileError && (
+                  <div role="alert" className="max-w-[320px] text-[11px] text-[#F5A524]">
+                    {profileError}
+                  </div>
+                )}
                 {saveMessage && saveMessage !== t('settings.saved') && (
                   <div className="max-w-[320px]">
                     <ErrorDetail message={saveMessage} raw={saveErrorRaw} />
@@ -733,7 +748,7 @@ export function SettingsScreen({
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={!dirty || saving}
+                  disabled={!dirty || saving || profileBlocked}
                   className={`h-10 px-6 flex items-center gap-3 border transition-colors ${
                     dirty
                       ? 'border-[#F5A524]/40 bg-gradient-to-b from-[#2A2116] to-[#11100D] hover:border-[#F5A524]'

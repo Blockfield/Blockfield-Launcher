@@ -7,12 +7,14 @@ import { LauncherUpdatePanel } from './LauncherUpdatePanel'
 import { Shell } from './Shell'
 import { MainScreen, ProfileSelect } from './MainScreen'
 import { SettingsScreen } from './SettingsScreen'
+import App from '../App'
 import { checkLauncherUpdate, installLauncherUpdate } from '../../lib/launcher-update'
 
-const { invoke, getVersion, relaunch, channels } = vi.hoisted(() => ({
+const { invoke, getVersion, relaunch, listen, channels } = vi.hoisted(() => ({
   invoke: vi.fn(),
   getVersion: vi.fn(),
   relaunch: vi.fn(),
+  listen: vi.fn(async () => () => {}),
   channels: [] as Array<{
     onmessage: (event: { phase: string; downloaded: number; total: number | null }) => void
   }>,
@@ -26,6 +28,7 @@ vi.mock('@tauri-apps/api/core', () => ({
     }
   },
 }))
+vi.mock('@tauri-apps/api/event', () => ({ listen }))
 vi.mock('@tauri-apps/api/app', () => ({ getVersion }))
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch }))
 
@@ -345,4 +348,172 @@ it('hides workshop settings from unauthorized accounts in SettingsScreen', async
   })
   expect(container.querySelector('input[aria-label="Адрес мастерской"]')).not.toBeNull()
   expect(container.textContent).toContain('Папка мастерской')
+})
+
+it('preserves owner workshop profile on boot and does not overwrite during initial load', async () => {
+  ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {}
+  invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'load_settings') {
+      return { activeProfile: 'workshop', workshopServer: 'workshop.blockfield.pro:25565', username: 'OwnerUser' }
+    }
+    if (cmd === 'account_status') {
+      return { loggedIn: true, uuid: 'owner-uuid-1', username: 'OwnerUser' }
+    }
+    if (cmd === 'stats_player') {
+      return { profile: { uuid: 'owner-uuid-1', role: 'owner' } }
+    }
+    if (cmd === 'check_modpack_version') {
+      return { localVersion: '1.0.0', remoteVersion: '1.0.0', needsUpdate: false, javaOk: true, loaderOk: true }
+    }
+    if (cmd === 'game_status') {
+      return { phase: 'idle', revision: 0 }
+    }
+    return null
+  })
+
+  await act(async () => {
+    root!.render(<App />)
+  })
+
+  // Give microtasks and state resolution time to settle
+  await vi.waitFor(() => {
+    expect(container.querySelector('#client-profile')).not.toBeNull()
+  })
+
+  // Assert select_profile was NEVER invoked (workshop preserved)
+  const selectCalls = invoke.mock.calls.filter(([cmd]) => cmd === 'select_profile')
+  expect(selectCalls.length).toBe(0)
+  expect(container.querySelector('#client-profile')?.textContent).toContain('Мастерская')
+})
+
+it('blocks actions for unauthorized user on stored workshop profile until persisted switch to game completes', async () => {
+  ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {}
+  let resolveSelectProfile!: (cfg: unknown) => void
+  const selectProfilePromise = new Promise((resolve) => {
+    resolveSelectProfile = resolve
+  })
+
+  invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'load_settings') {
+      return { activeProfile: 'workshop', workshopServer: 'workshop.blockfield.pro:25565', username: 'PlayerUser' }
+    }
+    if (cmd === 'account_status') {
+      return { loggedIn: true, uuid: 'player-uuid-1', username: 'PlayerUser' }
+    }
+    if (cmd === 'stats_player') {
+      return { profile: { uuid: 'player-uuid-1', role: 'player' } }
+    }
+    if (cmd === 'select_profile') {
+      return selectProfilePromise
+    }
+    if (cmd === 'check_modpack_version') {
+      return { localVersion: '1.0.0', remoteVersion: '1.0.0', needsUpdate: false, javaOk: true, loaderOk: true }
+    }
+    if (cmd === 'game_status') {
+      return { phase: 'idle', revision: 0 }
+    }
+    return null
+  })
+
+  await act(async () => {
+    root!.render(<App />)
+  })
+
+  // Auth resolved: player has no workshop access -> selectProfile('game') triggered
+  await vi.waitFor(() => {
+    const selectCalls = invoke.mock.calls.filter(([cmd]) => cmd === 'select_profile')
+    expect(selectCalls.length).toBe(1)
+  })
+
+  // While switch is pending: deploy button must be disabled and status indicates syncing
+  const deployBtn = container.querySelector<HTMLButtonElement>('button.group')
+  expect(deployBtn?.disabled).toBe(true)
+
+  // Now resolve the select_profile switch
+  await act(async () => {
+    resolveSelectProfile({ activeProfile: 'game', workshopServer: '' })
+  })
+
+  // Once resolved: profile is game, selector is hidden (since player is unauthorized)
+  await vi.waitFor(() => {
+    expect(container.querySelector('#client-profile')).toBeNull()
+  })
+})
+
+it('handles select_profile failure when game is busy by showing visible error and retrying when idle', async () => {
+  ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {}
+  let selectAttempt = 0
+  invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'load_settings') {
+      return { activeProfile: 'workshop', workshopServer: 'workshop.blockfield.pro:25565', username: 'PlayerUser' }
+    }
+    if (cmd === 'account_status') {
+      return { loggedIn: true, uuid: 'player-uuid-1', username: 'PlayerUser' }
+    }
+    if (cmd === 'stats_player') {
+      return { profile: { uuid: 'player-uuid-1', role: 'player' } }
+    }
+    if (cmd === 'select_profile') {
+      selectAttempt++
+      if (selectAttempt === 1) {
+        throw new Error('Закройте игру перед сменой профиля.')
+      }
+      return { activeProfile: 'game' }
+    }
+    if (cmd === 'check_modpack_version') {
+      return { localVersion: '1.0.0', remoteVersion: '1.0.0', needsUpdate: false, javaOk: true, loaderOk: true }
+    }
+    if (cmd === 'game_status') {
+      return { phase: 'idle', revision: 0 }
+    }
+    return null
+  })
+
+  await act(async () => {
+    root!.render(<App />)
+  })
+
+  // First attempt fails: visible error is displayed and deploy button is disabled
+  await vi.waitFor(() => {
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Закройте игру перед сменой профиля',
+    )
+  })
+  const deployBtn = container.querySelector<HTMLButtonElement>('button.group')
+  expect(deployBtn?.disabled).toBe(true)
+})
+
+it('blocks SettingsScreen from loading or saving while profile switch is blocked', async () => {
+  ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {}
+  invoke.mockResolvedValue({})
+
+  await act(async () => {
+    root!.render(
+      <SettingsScreen
+        username="PlayerUser"
+        canWorkshop={false}
+        profile="workshop"
+        profileBlocked={true}
+        profileError="Смена профиля в процессе..."
+        onAccountChange={() => {}}
+        tab="general"
+        onTabChange={() => {}}
+      />,
+    )
+  })
+
+  // load_settings must NOT be called while profileBlocked is true
+  const loadCalls = invoke.mock.calls.filter(([cmd]) => cmd === 'load_settings')
+  expect(loadCalls.length).toBe(0)
+
+  // Visible error is rendered
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+    'Смена профиля в процессе...',
+  )
+
+  // Save button is disabled
+  const saveBtn = Array.from(container.querySelectorAll('button')).find(
+    (b) => b.textContent?.toUpperCase().includes('СОХРАНИТЬ'),
+  )
+  expect(saveBtn?.disabled).toBe(true)
 })

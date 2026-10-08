@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  DEFAULT_WORKSHOP_SERVER,
-  hasWorkshopAccess,
-  WORKSHOP_ROLES,
-} from './workshop'
+import { hasWorkshopAccess, WORKSHOP_ROLES } from './workshop'
 
 describe('hasWorkshopAccess', () => {
   it('grants access to canonical site roles with map-edit permissions', () => {
@@ -25,9 +21,5 @@ describe('hasWorkshopAccess', () => {
     expect(hasWorkshopAccess('user')).toBe(false)
     expect(hasWorkshopAccess('vip')).toBe(false)
     expect(hasWorkshopAccess('unknown')).toBe(false)
-  })
-
-  it('provides the reliable default first-party workshop server address', () => {
-    expect(DEFAULT_WORKSHOP_SERVER).toBe('workshop.blockfield.pro:25565')
   })
 })
