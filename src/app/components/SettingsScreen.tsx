@@ -1,5 +1,5 @@
 import { ramLimitGb, clampRamGb } from '../../lib/ram'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   Folder,
@@ -78,6 +78,8 @@ export function SettingsScreen({
   const [hideWhilePlaying, setHideWhilePlaying] = useState(false)
   const [autoUpdate, setAutoUpdate] = useState(true)
   const [dirty, setDirty] = useState(false)
+  // First load always runs; later reloads must not clobber unsaved edits.
+  const loadedOnce = useRef(false)
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
@@ -105,6 +107,9 @@ export function SettingsScreen({
 
   useEffect(() => {
     if (profileBlocked) return
+    // A role refresh or profile switch re-runs this effect: never silently
+    // replace unsaved edits (dirty stays the source of truth for the form).
+    if (dirty && loadedOnce.current) return
     let active = true
     queueMicrotask(() => {
       if (!active) return
@@ -116,6 +121,7 @@ export function SettingsScreen({
       invoke<LauncherConfig>('load_settings')
         .then((cfg) => {
           if (!active) return
+          loadedOnce.current = true
           setWorkshopServer(cfg.workshopServer ?? '')
           setDir(cfg.gameDir)
           setJava(cfg.javaPath)
@@ -135,7 +141,7 @@ export function SettingsScreen({
     return () => {
       active = false
     }
-  }, [initialProfile, profileBlocked])
+  }, [initialProfile, profileBlocked, dirty])
 
   const markDirty = useCallback(() => setDirty(true), [])
 

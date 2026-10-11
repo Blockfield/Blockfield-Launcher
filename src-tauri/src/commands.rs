@@ -299,14 +299,18 @@ fn installed_pack(game_dir: &Path) -> (String, String) {
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
 ) -> Result<VersionCheckResult, String> {
-    let _operation = state
-        .operation
-        .try_lock()
-        .map_err(|_| "Дождитесь завершения текущей операции.")?;
     let base = pack_base_url()?;
     let info = pack::fetch_launcher_info(&base).await?;
     let meta = pack::fetch_pack_meta(&info.pack).await?;
 
+    // No operation lock across the network fetches above: holding it there
+    // starves select_profile/save_settings (and the UI retry that waits on a
+    // busy->idle game transition) whenever a probe is in flight. The lock only
+    // guards the pack-state write below.
+    let _operation = state
+        .operation
+        .try_lock()
+        .map_err(|_| "Дождитесь завершения текущей операции.")?;
     let config = state.config.read().await.active();
     let game_dir = PathBuf::from(&config.game_dir);
     let (installed_hash, installed) = installed_pack(&game_dir);

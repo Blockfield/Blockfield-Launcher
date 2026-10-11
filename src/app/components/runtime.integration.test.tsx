@@ -452,9 +452,19 @@ it('blocks actions for unauthorized user on stored workshop profile until persis
   })
 })
 
-it('handles select_profile failure when game is busy by showing visible error and retrying when idle', async () => {
+it('handles select_profile failure on a busy operation lock and retries when idle', async () => {
   ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {}
   let selectAttempt = 0
+  const listeners: Record<string, Set<(event: { payload: unknown }) => void>> = {}
+  listen.mockImplementation(
+    async (event: string, handler: (event: { payload: unknown }) => void) => {
+      if (!listeners[event]) listeners[event] = new Set()
+      listeners[event]!.add(handler)
+      return () => {
+        listeners[event]?.delete(handler)
+      }
+    },
+  )
   invoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'load_settings') {
       return {
@@ -472,7 +482,7 @@ it('handles select_profile failure when game is busy by showing visible error an
     if (cmd === 'select_profile') {
       selectAttempt++
       if (selectAttempt === 1) {
-        throw new Error('Закройте игру перед сменой профиля.')
+        throw new Error('Дождитесь завершения текущей операции.')
       }
       return { activeProfile: 'game' }
     }
@@ -495,14 +505,28 @@ it('handles select_profile failure when game is busy by showing visible error an
     root!.render(<App />)
   })
 
-  // First attempt fails: visible error is displayed and deploy button is disabled
+  // First attempt fails on the operation lock: visible error is displayed and deploy button is disabled
   await vi.waitFor(() => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'Закройте игру перед сменой профиля',
+      'Дождитесь завершения текущей операции',
     )
   })
   const deployBtn = container.querySelector<HTMLButtonElement>('button.group')
   expect(deployBtn?.disabled).toBe(true)
+
+  // Game exits: busy->idle transition retries the pending profile switch
+  await act(async () => {
+    listeners['game://status']?.forEach((fn) =>
+      fn({ payload: { phase: 'idle', revision: 2 } }),
+    )
+  })
+
+  await vi.waitFor(() => {
+    expect(selectAttempt).toBe(2)
+  })
+  await vi.waitFor(() => {
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
 })
 
 it('blocks SettingsScreen from loading or saving while profile switch is blocked', async () => {
@@ -573,7 +597,7 @@ it('handles live demotion of builder to player: hides custom selector, blocks ac
       return { profile: { uuid: 'builder-uuid-1', role } }
     }
     if (cmd === 'game_status') {
-      return { phase: gamePhase, revision: gamePhase === 'running' ? 1 : 2 }
+      return { phase: gamePhase, revision: gamePhase === 'running' ? 3 : 4 }
     }
     if (cmd === 'select_profile') {
       selectProfileCalledWith = (args?.profile as string) ?? null
@@ -634,7 +658,7 @@ it('handles live demotion of builder to player: hides custom selector, blocks ac
   // 5. Game exits: transition game phase to 'idle'
   gamePhase = 'idle'
   await act(async () => {
-    listeners['game://status']?.forEach((fn) => fn({ payload: { phase: 'idle', revision: 2 } }))
+    listeners['game://status']?.forEach((fn) => fn({ payload: { phase: 'idle', revision: 4 } }))
   })
 
   // 6. Automatic retry triggers select_profile('game') now that game is idle
@@ -644,4 +668,111 @@ it('handles live demotion of builder to player: hides custom selector, blocks ac
 
   // Profile switch confirmed: selector remains hidden for player, actions unblocked
   expect(container.querySelector('#client-profile')).toBeNull()
+})
+
+it('keeps the stored workshop profile when the role lookup fails instead of downgrading', async () => {
+  ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {}
+  localStorage.clear()
+  invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'load_settings') {
+      return {
+        activeProfile: 'workshop',
+        workshopServer: 'workshop.blockfield.pro:25565',
+        username: 'BuilderUser',
+      }
+    }
+    if (cmd === 'account_status') {
+      return { loggedIn: true, uuid: 'builder-uuid-9', username: 'BuilderUser' }
+    }
+    if (cmd === 'stats_player') {
+      throw new Error('Network unreachable')
+    }
+    if (cmd === 'check_modpack_version') {
+      return {
+        localVersion: '1.0.0',
+        remoteVersion: '1.0.0',
+        needsUpdate: false,
+        javaOk: true,
+        loaderOk: true,
+      }
+    }
+    if (cmd === 'game_status') {
+      return { phase: 'idle', revision: 5 }
+    }
+    return null
+  })
+
+  await act(async () => {
+    root!.render(<App />)
+  })
+
+  // Let the failed lookup and any auto-downgrade settle
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  })
+
+  // A transient lookup failure must not persist a downgrade to 'game'
+  const selectCalls = invoke.mock.calls.filter(([cmd]) => cmd === 'select_profile')
+  expect(selectCalls.length).toBe(0)
+})
+
+it('keeps unsaved settings edits when the profile prop changes instead of reloading', async () => {
+  ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {}
+  invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'load_settings') {
+      return {
+        activeProfile: 'workshop',
+        workshopServer: 'first.example:25565',
+        gameDir: '/tmp/bf-game',
+        javaPath: '',
+        ramMb: 4096,
+        autoUpdate: true,
+      }
+    }
+    return null
+  })
+  const props = {
+    username: 'BuilderUser',
+    canWorkshop: true,
+    onAccountChange: () => {},
+    tab: 'general' as const,
+    onTabChange: () => {},
+  }
+
+  await act(async () => {
+    root!.render(<SettingsScreen {...props} profile="workshop" profileBlocked={false} />)
+  })
+  await vi.waitFor(() => {
+    expect(
+      container.querySelector('input[aria-label="Адрес мастерской"]'),
+    ).not.toBeNull()
+  })
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'load_settings').length).toBe(1)
+
+  // User types an unsaved edit
+  const input = container.querySelector<HTMLInputElement>(
+    'input[aria-label="Адрес мастерской"]',
+  )!
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value',
+    )!.set!
+    setter.call(input, 'typed.example:25565')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(input.value).toBe('typed.example:25565')
+
+  // A role refresh flips profileBlocked true->false: the form must not reload over the edit
+  await act(async () => {
+    root!.render(<SettingsScreen {...props} profile="workshop" profileBlocked={true} />)
+  })
+  await act(async () => {
+    root!.render(<SettingsScreen {...props} profile="workshop" profileBlocked={false} />)
+  })
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'load_settings').length).toBe(1)
+  expect(
+    container.querySelector<HTMLInputElement>('input[aria-label="Адрес мастерской"]')
+      ?.value,
+  ).toBe('typed.example:25565')
 })

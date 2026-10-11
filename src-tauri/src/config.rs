@@ -158,9 +158,22 @@ impl LauncherConfig {
 }
 
 fn default_workshop_server() -> String {
-    std::env::var("BLOCKFIELD_WORKSHOP_SERVER")
-        .ok()
-        .or_else(|| option_env!("BLOCKFIELD_WORKSHOP_SERVER").map(str::to_owned))
+    default_workshop_server_from(
+        std::env::var("BLOCKFIELD_WORKSHOP_SERVER").ok(),
+        option_env!("BLOCKFIELD_WORKSHOP_SERVER"),
+    )
+}
+
+/// Env/compile-time override for the default Workshop address. Empty values
+/// behave as unset so `BLOCKFIELD_WORKSHOP_SERVER=""` cannot blank the default
+/// or the load_config migration that fills it in.
+fn default_workshop_server_from(env: Option<String>, compiled: Option<&str>) -> String {
+    env.filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            compiled
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned)
+        })
         .unwrap_or_else(|| "workshop.blockfield.pro:25565".to_string())
 }
 
@@ -426,6 +439,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn empty_workshop_server_override_falls_back_to_default() {
+        assert_eq!(
+            default_workshop_server_from(Some(String::new()), None),
+            "workshop.blockfield.pro:25565"
+        );
+        assert_eq!(
+            default_workshop_server_from(Some("   ".to_string()), None),
+            "workshop.blockfield.pro:25565"
+        );
+        assert_eq!(
+            default_workshop_server_from(Some(String::new()), Some("")),
+            "workshop.blockfield.pro:25565"
+        );
+        assert_eq!(
+            default_workshop_server_from(Some("custom.example:25566".to_string()), None),
+            "custom.example:25566"
+        );
+        assert_eq!(
+            default_workshop_server_from(None, Some("compiled.example:25565")),
+            "compiled.example:25565"
+        );
+        assert_eq!(
+            default_workshop_server_from(None, None),
+            "workshop.blockfield.pro:25565"
+        );
+    }
+
+    #[test]
     fn older_settings_load_with_empty_commands() {
         let mut value = serde_json::to_value(LauncherConfig::default()).unwrap();
         value.as_object_mut().unwrap().remove("preLaunchCommand");
@@ -484,7 +525,7 @@ mod tests {
             config.workshop_game_dir,
             workshop_directory(&config.game_dir)
         );
-        assert_eq!(config.workshop_server, "workshop.blockfield.pro:25565");
+        assert_eq!(config.workshop_server, default_workshop_server());
         config.active_profile = ClientProfile::Workshop;
         let active = config.active();
         assert_eq!(active.game_dir, config.workshop_game_dir);
@@ -574,7 +615,7 @@ mod tests {
         empty_config["workshopServer"] = "".into();
         std::fs::write(config_path(scratch.path()), empty_config.to_string()).unwrap();
         let loaded = load_config(scratch.path());
-        assert_eq!(loaded.workshop_server, "workshop.blockfield.pro:25565");
+        assert_eq!(loaded.workshop_server, default_workshop_server());
 
         let mut custom_config = serde_json::to_value(LauncherConfig::default()).unwrap();
         custom_config["workshopServer"] = "custom.example:25565".into();

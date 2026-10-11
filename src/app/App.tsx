@@ -48,7 +48,11 @@ export default function App() {
   const refreshRole = useCallback(async (id: string) => {
     try {
       const result = await loadStats<PlayerStats>({ kind: 'player', uuid: id, query: {} })
-      if (!result.stale) setStaff({ uuid: id, role: result.data?.profile.role ?? null })
+      // A failed lookup (no data and not stale) must not look like "player":
+      // keep the previous role so a transient error never triggers the
+      // workshop->game auto-downgrade (which persists activeProfile to disk).
+      if (result.stale || !result.error)
+        setStaff({ uuid: id, role: result.data?.profile.role ?? null })
     } catch {
       setStaff((previous) => (previous?.uuid === id ? previous : { uuid: id, role: null }))
     }
@@ -369,7 +373,7 @@ export default function App() {
               profileBlocked={profileBlocked}
               profileError={profileError}
               onSelectProfile={
-                canWorkshop && !profileBlocked ? (next) => void selectProfile(next) : undefined
+                canWorkshop ? (next) => void selectProfile(next) : undefined
               }
               onPlay={() => {
                 if (profileBlocked) return
