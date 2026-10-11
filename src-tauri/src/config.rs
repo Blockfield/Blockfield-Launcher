@@ -114,9 +114,22 @@ impl LauncherConfig {
         config
     }
 
+    /// Operations fall back to the bundled runtime, so a Java path whose runtime was
+    /// deleted must not block them, least of all the update that reinstalls Java.
     pub fn validated_active(&self) -> Result<Self, String> {
-        validate_config(self)?;
-        Ok(self.active())
+        let mut config = self.clone();
+        config.drop_missing_java();
+        validate_config(&config)?;
+        Ok(config.active())
+    }
+
+    fn drop_missing_java(&mut self) {
+        for path in [&mut self.java_path, &mut self.workshop_java_path] {
+            if !path.trim().is_empty() && !Path::new(path.trim()).is_file() {
+                log::warn!("Ignoring missing Java executable: {path}");
+                path.clear();
+            }
+        }
     }
 
     pub fn set_active_paths(&mut self, directory: String, java: String) {
@@ -271,6 +284,8 @@ pub fn load_config(app_data_dir: &Path) -> LauncherConfig {
     if config.workshop_server.trim().is_empty() {
         config.workshop_server = default_workshop_server();
     }
+    // Otherwise every later save (account, profile switch) fails validation.
+    config.drop_missing_java();
     config
 }
 
@@ -582,6 +597,24 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn deleted_java_runtime_does_not_block_operations() {
+        let scratch = tempfile::tempdir().unwrap();
+        let missing = scratch.path().join("java").join("bin").join("java");
+        let config = LauncherConfig {
+            game_dir: scratch.path().join("game").to_string_lossy().into_owned(),
+            workshop_game_dir: scratch
+                .path()
+                .join("workshop")
+                .to_string_lossy()
+                .into_owned(),
+            java_path: missing.to_string_lossy().into_owned(),
+            ..LauncherConfig::default()
+        };
+        assert!(validate_config(&config).is_err());
+        assert!(config.validated_active().unwrap().java_path.is_empty());
     }
 
     #[test]
