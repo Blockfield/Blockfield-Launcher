@@ -80,6 +80,8 @@ export function SettingsScreen({
   const [dirty, setDirty] = useState(false)
   // First load always runs; later reloads must not clobber unsaved edits.
   const loadedOnce = useRef(false)
+  // Edits belong to the profile they were loaded for; another profile's form must not be saved over it.
+  const loadedProfile = useRef<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
@@ -109,7 +111,7 @@ export function SettingsScreen({
     if (profileBlocked) return
     // A role refresh or profile switch re-runs this effect: never silently
     // replace unsaved edits (dirty stays the source of truth for the form).
-    if (dirty && loadedOnce.current) return
+    if (dirty && loadedOnce.current && loadedProfile.current === initialProfile) return
     let active = true
     queueMicrotask(() => {
       if (!active) return
@@ -122,6 +124,8 @@ export function SettingsScreen({
         .then((cfg) => {
           if (!active) return
           loadedOnce.current = true
+          loadedProfile.current = initialProfile
+          setDirty(false)
           setWorkshopServer(cfg.workshopServer ?? '')
           setDir(cfg.gameDir)
           setJava(cfg.javaPath)
