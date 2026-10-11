@@ -612,7 +612,8 @@ fn collect_asset_artifacts(index_json: &Value) -> Vec<Artifact> {
         return Vec::new();
     };
 
-    objects
+    // Assets with identical content share one object; parallel downloads would race on its `.part`.
+    let artifacts = objects
         .iter()
         .filter(|(name, _)| asset_wanted(name))
         .filter_map(|(_, object)| {
@@ -624,7 +625,8 @@ fn collect_asset_artifacts(index_json: &Value) -> Vec<Artifact> {
                 size: object["size"].as_u64().unwrap_or(0),
             })
         })
-        .collect()
+        .collect();
+    dedupe_artifacts(artifacts)
 }
 
 /// The index lists ~120 translations (~90 MB); the game only ever loads the selected one.
@@ -1020,6 +1022,7 @@ mod tests {
             serde_json::to_vec(&serde_json::json!({
                 "objects": {
                     "test": { "hash": "aabb", "size": 30 },
+                    "test-copy": { "hash": "aabb", "size": 30 },
                     "minecraft/lang/ru_ru.json": { "hash": "ccdd", "size": 5 },
                     "minecraft/lang/de_de.json": { "hash": "eeff", "size": 500 }
                 }
