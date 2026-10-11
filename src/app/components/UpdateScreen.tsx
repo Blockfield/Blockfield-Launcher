@@ -18,8 +18,17 @@ import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { ErrorDetail, GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
 import { useI18n, type TKey, type TFunction } from '../i18n'
 import { OPERATION_NAME } from '../constants'
-import { listenDownloadProgress, listenLauncherStatus } from '../../lib/events'
-import type { DownloadProgress, LauncherStatus, VersionCheckResult } from '../../lib/api'
+import {
+  listenDownloadMirror,
+  listenDownloadProgress,
+  listenLauncherStatus,
+} from '../../lib/events'
+import type {
+  DownloadMirror,
+  DownloadProgress,
+  LauncherStatus,
+  VersionCheckResult,
+} from '../../lib/api'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
 import { friendlyError, type ErrorContext } from '../../lib/errors'
 
@@ -93,6 +102,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
   const [totalBytes, setTotalBytes] = useState(0)
   const [speed, setSpeed] = useState('—')
   const [mirror, setMirror] = useState('—')
+  const [installerMirror, setInstallerMirror] = useState<DownloadMirror | null>(null)
   const [mirrorOnline, setMirrorOnline] = useState<boolean | null>(null)
   const [logLines, setLogLines] = useState<LogEntry[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -105,6 +115,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
   const [runToken, setRunToken] = useState(0)
 
   const unlistenRef = useRef<UnlistenFn | null>(null)
+  const unlistenMirrorRef = useRef<UnlistenFn | null>(null)
   const unlistenStatusRef = useRef<UnlistenFn | null>(null)
   const speedSampleRef = useRef<SpeedSample | null>(null)
   const cancelledRef = useRef(false)
@@ -125,6 +136,14 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     speedSampleRef.current = null
     setSpeed('—')
   }, [])
+
+  const applyMirror = useCallback(
+    (mirror: DownloadMirror) => {
+      setInstallerMirror(mirror)
+      resetSpeed()
+    },
+    [resetSpeed],
+  )
 
   const applyProgress = useCallback(
     (p: DownloadProgress) => {
@@ -172,6 +191,8 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
       setStatusMessage(status.message)
       setCanCancel(status.cancelable)
       addLog(status.message, status.phase === 'ready' ? 'ok' : 'info')
+      // The panel names the pack's download source only while packwiz-installer runs.
+      if (status.phase !== 'modpack') setInstallerMirror(null)
 
       if (
         status.phase === 'setup' ||
@@ -230,6 +251,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
       cancelledRef.current = false
       setPhase('checking')
       setCanCancel(false)
+      setInstallerMirror(null)
       resetSpeed()
       addLog('Establishing connection to deployment server...', 'info')
 
@@ -297,6 +319,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
       unlistenRef.current = unlisten
 
       try {
+        unlistenMirrorRef.current = await listenDownloadMirror(applyMirror)
         await invoke('download_modpack')
         addLog('Install tasks complete.', 'ok')
         setProgress(100)
@@ -318,6 +341,8 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
       } finally {
         unlistenRef.current?.()
         unlistenRef.current = null
+        unlistenMirrorRef.current?.()
+        unlistenMirrorRef.current = null
       }
 
       invalidateModpackCheck()
@@ -353,9 +378,10 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
 
     return () => {
       unlistenRef.current?.()
+      unlistenMirrorRef.current?.()
       unlistenStatusRef.current?.()
     }
-  }, [addLog, applyBackendStatus, applyProgress, resetSpeed, runToken, setStep])
+  }, [addLog, applyBackendStatus, applyMirror, applyProgress, resetSpeed, runToken, setStep])
 
   const handleRetry = useCallback(() => {
     cancelledRef.current = false
@@ -373,6 +399,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     setDownloadedBytes(0)
     setTotalBytes(0)
     setMirror('—')
+    setInstallerMirror(null)
     setMirrorOnline(null)
     setPhase('checking')
     resetSpeed()
@@ -421,12 +448,14 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     setPhase('launching')
     setStatusMessage(t('main.launching'))
     setCanCancel(false)
+    setInstallerMirror(null)
     resetSpeed()
     addLog('Launching game...', 'info')
     setStep(3, 'active')
     try {
       unlistenStatusRef.current = await listenLauncherStatus(applyBackendStatus)
       unlistenRef.current = await listenDownloadProgress(applyProgress)
+      unlistenMirrorRef.current = await listenDownloadMirror(applyMirror)
       await launchGame()
       addLog('Game process started.', 'ok')
       setStatusMessage('')
@@ -440,11 +469,23 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     } finally {
       unlistenRef.current?.()
       unlistenRef.current = null
+      unlistenMirrorRef.current?.()
+      unlistenMirrorRef.current = null
       unlistenStatusRef.current?.()
       unlistenStatusRef.current = null
       setLaunching(false)
     }
-  }, [addLog, applyBackendStatus, applyProgress, launching, gameBusy, resetSpeed, setStep, t])
+  }, [
+    addLog,
+    applyBackendStatus,
+    applyMirror,
+    applyProgress,
+    launching,
+    gameBusy,
+    resetSpeed,
+    setStep,
+    t,
+  ])
 
   const statusText = () => {
     if (gameBusy) return gameStateLabel(game.phase)
@@ -468,8 +509,10 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     }
   }
   const transferring = phase === 'downloading' || phase === 'launching'
+  const downloadSpeed =
+    speed !== '—' ? speed : installerMirror?.speed ? `${installerMirror.speed} MB/s` : '—'
   const mirrorStatus = transferring
-    ? speed
+    ? downloadSpeed
     : mirrorOnline === null
       ? t('main.checking')
       : mirrorOnline
@@ -527,7 +570,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
           <div className="update-mirror shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-[240px]">
             <div className="text-[10px] tracking-[0.16em] text-[#8E7A5E]">{t('update.mirror')}</div>
             <div className="mt-2 tracking-[0.18em] text-[13px] text-neutral-100 truncate">
-              {mirror}
+              {installerMirror?.name ?? mirror}
             </div>
             <div className={`mt-2 text-[11px] tracking-[0.22em] ${mirrorStatusClass}`}>
               ▸ {mirrorStatus}

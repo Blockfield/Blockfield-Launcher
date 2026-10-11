@@ -22,6 +22,11 @@ export interface VersionCheckResult {
 
 // ── Download progress ────────────────────────────────────────────────────────
 
+export interface DownloadMirror {
+  name: string
+  speed: string | null
+}
+
 /** Progress payload emitted by the backend during download. */
 export interface DownloadProgress {
   unit?: 'bytes' | 'files'
