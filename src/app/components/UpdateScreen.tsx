@@ -191,6 +191,8 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
       setStatusMessage(status.message)
       setCanCancel(status.cancelable)
       addLog(status.message, status.phase === 'ready' ? 'ok' : 'info')
+      // The panel names the pack's download source only while packwiz-installer runs.
+      if (status.phase !== 'modpack') setInstallerMirror(null)
 
       if (
         status.phase === 'setup' ||
