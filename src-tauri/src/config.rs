@@ -114,9 +114,23 @@ impl LauncherConfig {
         config
     }
 
+    /// Operations fall back to the bundled runtime, so a Java path whose runtime was
+    /// deleted must not block them, least of all the update that reinstalls Java.
     pub fn validated_active(&self) -> Result<Self, String> {
-        validate_config(self)?;
-        Ok(self.active())
+        let mut config = self.clone();
+        config.drop_missing_java();
+        validate_config(&config)?;
+        Ok(config.active())
+    }
+
+    /// The stored path stays untouched: Java on an unmounted drive must come back with it.
+    fn drop_missing_java(&mut self) {
+        for path in [&mut self.java_path, &mut self.workshop_java_path] {
+            if !path.trim().is_empty() && !Path::new(path.trim()).is_file() {
+                log::warn!("Ignoring missing Java executable: {path}");
+                path.clear();
+            }
+        }
     }
 
     pub fn set_active_paths(&mut self, directory: String, java: String) {
@@ -275,8 +289,9 @@ pub fn load_config(app_data_dir: &Path) -> LauncherConfig {
 }
 
 /// Save the launcher config to disk.
+/// A stored Java path that is missing right now is kept; `save_settings` rejects new ones.
 pub fn save_config(app_data_dir: &PathBuf, config: &LauncherConfig) -> Result<(), String> {
-    validate_config(config)?;
+    config.validated_active()?;
     std::fs::create_dir_all(app_data_dir)
         .map_err(|e| format!("Failed to create app data dir: {e}"))?;
     let path = config_path(app_data_dir);
@@ -582,6 +597,28 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn deleted_java_runtime_does_not_block_operations() {
+        let scratch = tempfile::tempdir().unwrap();
+        let missing = scratch.path().join("java").join("bin").join("java");
+        let config = LauncherConfig {
+            game_dir: scratch.path().join("game").to_string_lossy().into_owned(),
+            workshop_game_dir: scratch
+                .path()
+                .join("workshop")
+                .to_string_lossy()
+                .into_owned(),
+            java_path: missing.to_string_lossy().into_owned(),
+            ..LauncherConfig::default()
+        };
+        assert!(validate_config(&config).is_err());
+        assert!(config.validated_active().unwrap().java_path.is_empty());
+        // Saving and reloading keeps the path for when the runtime comes back.
+        let app_data = scratch.path().join("app");
+        save_config(&app_data, &config).unwrap();
+        assert_eq!(load_config(&app_data).java_path, config.java_path);
     }
 
     #[test]
