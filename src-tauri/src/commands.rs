@@ -265,6 +265,12 @@ pub fn save_settings(
     }
     let directory = config.game_dir.clone();
     let java = config.java_path.clone();
+    if java.trim() != current.active().java_path.trim()
+        && !java.trim().is_empty()
+        && !Path::new(java.trim()).is_file()
+    {
+        return Err("Selected Java executable does not exist".to_string());
+    }
     // The settings form does not own the account.
     let mut config = LauncherConfig {
         workshop_server: config.workshop_server,
