@@ -516,9 +516,7 @@ it('handles select_profile failure on a busy operation lock and retries when idl
 
   // Game exits: busy->idle transition retries the pending profile switch
   await act(async () => {
-    listeners['game://status']?.forEach((fn) =>
-      fn({ payload: { phase: 'idle', revision: 2 } }),
-    )
+    listeners['game://status']?.forEach((fn) => fn({ payload: { phase: 'idle', revision: 2 } }))
   })
 
   await vi.waitFor(() => {
@@ -743,21 +741,14 @@ it('keeps unsaved settings edits when the profile prop changes instead of reload
     root!.render(<SettingsScreen {...props} profile="workshop" profileBlocked={false} />)
   })
   await vi.waitFor(() => {
-    expect(
-      container.querySelector('input[aria-label="Адрес мастерской"]'),
-    ).not.toBeNull()
+    expect(container.querySelector('input[aria-label="Адрес мастерской"]')).not.toBeNull()
   })
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'load_settings').length).toBe(1)
 
   // User types an unsaved edit
-  const input = container.querySelector<HTMLInputElement>(
-    'input[aria-label="Адрес мастерской"]',
-  )!
+  const input = container.querySelector<HTMLInputElement>('input[aria-label="Адрес мастерской"]')!
   await act(async () => {
-    const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value',
-    )!.set!
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
     setter.call(input, 'typed.example:25565')
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
@@ -772,7 +763,6 @@ it('keeps unsaved settings edits when the profile prop changes instead of reload
   })
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'load_settings').length).toBe(1)
   expect(
-    container.querySelector<HTMLInputElement>('input[aria-label="Адрес мастерской"]')
-      ?.value,
+    container.querySelector<HTMLInputElement>('input[aria-label="Адрес мастерской"]')?.value,
   ).toBe('typed.example:25565')
 })

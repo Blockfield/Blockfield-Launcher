@@ -372,9 +372,7 @@ export default function App() {
               profileChanging={profileChanging}
               profileBlocked={profileBlocked}
               profileError={profileError}
-              onSelectProfile={
-                canWorkshop ? (next) => void selectProfile(next) : undefined
-              }
+              onSelectProfile={canWorkshop ? (next) => void selectProfile(next) : undefined}
               onPlay={() => {
                 if (profileBlocked) return
                 setUpdateRequest((value) => value + 1)
