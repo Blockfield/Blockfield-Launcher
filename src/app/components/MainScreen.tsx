@@ -409,7 +409,7 @@ export function MainScreen({
                 </label>
                 <ProfileSelect
                   value={profile}
-                  disabled={profileChanging || profileBlocked || checking || launching || gameBusy}
+                  disabled={profileChanging || checking || launching || gameBusy}
                   onChange={onSelectProfile}
                 />
                 <span role="status" className="text-[12px] text-[#C7AE86]">
