@@ -576,6 +576,26 @@ fn installer_progress(line: &str) -> Option<(usize, usize)> {
     Some((done.parse().ok()?, total.parse().ok()?))
 }
 
+fn installer_mirror(line: &str) -> Option<(String, Option<String>)> {
+    let name = line.strip_prefix("[blockfield-mirror] ")?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    if let Some((name, speed)) = name
+        .strip_suffix(" MB/s")
+        .and_then(|value| value.rsplit_once(' '))
+        .filter(|(name, speed)| {
+            !name.is_empty()
+                && speed
+                    .parse::<f64>()
+                    .is_ok_and(|speed| speed.is_finite() && speed >= 0.0)
+        })
+    {
+        return Some((name.to_string(), Some(speed.to_string())));
+    }
+    Some((name.to_string(), None))
+}
+
 /// Runs packwiz-installer (client side, via its bootstrap) in the game dir; it downloads, verifies and prunes the
 /// pack contents itself. Output lines are forwarded to the UI as status/progress events.
 fn run_packwiz_installer(
@@ -652,7 +672,12 @@ fn run_packwiz_installer(
     let mut tail = std::collections::VecDeque::with_capacity(20);
     let mut handle_line = |line: String| {
         log::info!("[packwiz-installer] {line}");
-        if let Some((done, total)) = installer_progress(&line) {
+        if let Some((name, speed)) = installer_mirror(&line) {
+            let _ = app_handle.emit(
+                "download://mirror",
+                serde_json::json!({ "name": name, "speed": speed }),
+            );
+        } else if let Some((done, total)) = installer_progress(&line) {
             let _ = app_handle.emit(
                 "download://progress",
                 crate::download::DownloadProgressPayload::files(line.clone(), done, total),
@@ -1553,5 +1578,39 @@ mod tests {
             Some((12, 137))
         );
         assert_eq!(installer_progress("Finished successfully!"), None);
+        assert_eq!(
+            installer_progress("[blockfield-mirror] Gcore CDN 12.3 MB/s"),
+            None
+        );
+    }
+
+    #[test]
+    fn installer_mirror_lines_are_parsed() {
+        for (line, name, speed) in [
+            (
+                "[blockfield-mirror] Gcore CDN 12.3 MB/s",
+                "Gcore CDN",
+                Some("12.3"),
+            ),
+            ("[blockfield-mirror] Cloudflare R2", "Cloudflare R2", None),
+            ("[blockfield-mirror] GitHub 0.0 MB/s", "GitHub", Some("0.0")),
+            ("[blockfield-mirror] blockfield.pro", "blockfield.pro", None),
+        ] {
+            assert_eq!(
+                installer_mirror(line),
+                Some((name.to_string(), speed.map(str::to_string))),
+                "{line}"
+            );
+        }
+        for line in [
+            "[blockfield-mirror] ",
+            "Finished successfully!",
+            "(12/137) Downloaded Create",
+            "Mirror probe: Gcore CDN 12.3 MB/s",
+            "mod.jar from Gcore CDN failed (timeout); trying the next source",
+            "Mirror GitHub failed; the rest of this run skips it",
+        ] {
+            assert_eq!(installer_mirror(line), None, "{line}");
+        }
     }
 }

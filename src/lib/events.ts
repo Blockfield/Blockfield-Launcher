@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { DownloadProgress, LauncherStatus } from './api'
+import type { DownloadMirror, DownloadProgress, LauncherStatus } from './api'
 
 async function listenUntilUnsubscribed<T>(
   event: string,
@@ -21,6 +21,12 @@ export function listenDownloadProgress(
   callback: (progress: DownloadProgress) => void,
 ): Promise<UnlistenFn> {
   return listenUntilUnsubscribed('download://progress', callback)
+}
+
+export function listenDownloadMirror(
+  callback: (mirror: DownloadMirror) => void,
+): Promise<UnlistenFn> {
+  return listenUntilUnsubscribed('download://mirror', callback)
 }
 
 /** Subscribe to backend operation status events. */
