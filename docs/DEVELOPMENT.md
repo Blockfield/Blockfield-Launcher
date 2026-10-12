@@ -84,6 +84,8 @@ API supplies the displayed version in both builds.
 Pushing to `dev`, or running **Launcher DEV** with branch `dev`, builds Linux and Windows
 in parallel without waiting for the release quality gates. The build
 reuses release dependency caches and uploads installers to the `launcher-dev` prerelease.
+Installer names end with the short source commit; runs queue instead of cancelling, so
+each platform's older installers are replaced only after its new ones are uploaded.
 It reads repository variables only and never uses the signing environment `dev`.
 The production release workflow remains gated by all checks.
 
