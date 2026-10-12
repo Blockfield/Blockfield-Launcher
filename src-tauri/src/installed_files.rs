@@ -519,6 +519,7 @@ mod tests {
         let root = temp.path().join("Blockfield");
         fs::create_dir_all(root.join("mods")).unwrap();
         fs::create_dir_all(root.join("saves/world")).unwrap();
+        let root = root.canonicalize().unwrap();
         let downloaded = root.join("mods/downloaded.jar");
         let modified = root.join("mods/modified.jar");
         let manual = root.join("mods/manual.jar");
@@ -588,6 +589,7 @@ mod tests {
         let outside = temp.path().join("personal");
         fs::create_dir(&root).unwrap();
         fs::create_dir(&outside).unwrap();
+        let root = root.canonicalize().unwrap();
         let file = outside.join("keep.txt");
         fs::write(&file, b"keep").unwrap();
         symlink(&outside, root.join("mods")).unwrap();

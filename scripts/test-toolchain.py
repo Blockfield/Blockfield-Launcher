@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -88,6 +89,83 @@ class ToolCacheTests(unittest.TestCase):
                     hashlib.sha256(b"ok").hexdigest(),
                 )
             request.assert_not_called()
+
+    def test_host_recognizes_darwin_architectures(self):
+        for machine, arch in (
+            ("arm64", "arm64"),
+            ("aarch64", "arm64"),
+            ("x86_64", "amd64"),
+            ("amd64", "amd64"),
+        ):
+            with self.subTest(machine=machine):
+                with (
+                    patch.object(toolchain.platform, "system", return_value="Darwin"),
+                    patch.object(toolchain.platform, "machine", return_value=machine),
+                ):
+                    self.assertEqual(toolchain.host(), ("darwin", arch))
+
+    def test_darwin_pins_cover_both_architectures(self):
+        for key, fragment in (
+            ("darwin-arm64", "aarch64-apple-darwin-install_only.tar.gz"),
+            ("darwin-amd64", "x86_64-apple-darwin-install_only.tar.gz"),
+        ):
+            with self.subTest(key=key):
+                url, checksum = toolchain.PYTHON_ASSETS[key]
+                self.assertIn(fragment, url)
+                self.assertRegex(checksum, r"^[0-9a-f]{64}$")
+        for name, suffix in (
+            ("actionlint", ".tar.gz"),
+            ("shfmt", ""),
+            ("shellcheck", ".tar.gz"),
+            ("just", ".tar.gz"),
+        ):
+            for arch in ("arm64", "amd64"):
+                with self.subTest(tool=name, arch=arch):
+                    url, checksum = toolchain.BINARY_ASSETS[f"{name}-darwin-{arch}"]
+                    self.assertRegex(checksum, r"^[0-9a-f]{64}$")
+                    self.assertFalse(url.endswith(".exe"))
+                    if suffix:
+                        self.assertTrue(url.endswith(suffix))
+                    else:
+                        self.assertFalse(url.endswith((".tar.gz", ".zip")))
+
+    def test_darwin_tool_extraction_uses_tar_member_and_raw_bytes(self):
+        def make_tar(path, member, payload):
+            with tarfile.open(path, "w:gz") as archive:
+                info = tarfile.TarInfo(member)
+                info.size = len(payload)
+                info.mode = 0o755
+                archive.addfile(info, io.BytesIO(payload))
+
+        flat = self.cache / "flat.tar.gz"
+        make_tar(flat, "actionlint", b"fake-darwin-actionlint")
+        nested = self.cache / "nested.tar.gz"
+        make_tar(nested, "shellcheck-v0.11.0/shellcheck", b"fake-darwin-shellcheck")
+        raw = self.cache / "shfmt-raw"
+        raw.write_bytes(b"fake-darwin-shfmt")
+
+        def fake_download(name, url, checksum):
+            if name.startswith("actionlint-"):
+                return flat
+            if name.startswith("shellcheck-"):
+                return nested
+            return raw
+
+        with (
+            patch.object(toolchain, "host", return_value=("darwin", "arm64")),
+            patch.object(toolchain, "download", side_effect=fake_download),
+        ):
+            for name, payload in (
+                ("actionlint", b"fake-darwin-actionlint"),
+                ("shellcheck", b"fake-darwin-shellcheck"),
+                ("shfmt", b"fake-darwin-shfmt"),
+            ):
+                with self.subTest(tool=name):
+                    binary = toolchain.tool(name)
+                    self.assertEqual(binary, self.cache / "bin" / name)
+                    self.assertEqual(binary.read_bytes(), payload)
+                    if os.name == "posix":
+                        self.assertTrue(binary.stat().st_mode & 0o111)
 
 
 @unittest.skipUnless(os.name == "posix", "Linux shell wrapper")

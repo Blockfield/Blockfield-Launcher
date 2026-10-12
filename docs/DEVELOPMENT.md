@@ -144,7 +144,7 @@ Unit tests are not evidence of live RakNet handshakes, DNS or production deploym
 Install Node.js 24.21.0 LTS (see `.nvmrc`), Python 3.12.15+, Just 1.58.0, Rust 1.99.0, and the platform dependencies required by Tauri.
 
 `just setup` installs the pinned pnpm, formatters, and linters into `.cache/quality`.
-Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux and Windows so archive
+Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux, Windows, and macOS so archive
 compression stays reproducible; stale cached tool versions are replaced automatically.
 
 ```sh
@@ -204,7 +204,7 @@ The [archived API/CMS reports](legacy/README.md) are historical only.
 2. Build and sign Linux, Windows, and macOS (Intel and Apple Silicon) bundles under the versioned `launcher-v<version>` tag.
 3. Validate all signed updater assets, then publish the completed draft in [this repository](https://github.com/Blockfield/Blockfield-Launcher/releases).
 
-Quality checks and secret scanning gate the platform builds. Standard GitHub-hosted runners build Linux on `ubuntu-22.04` (preserving the glibc baseline), Windows on `windows-2025`, Apple Silicon on `macos-15`, and Intel Macs on `macos-15-intel`. Platform builds run in parallel, with a 60-minute limit, and upload to a draft release. Publication waits for all four builds and updater validation. No self-hosted runner is required.
+Quality checks cover Linux, Windows, Apple Silicon, and Intel Macs. Checks, secret scanning, and platform builds run in parallel. Standard GitHub-hosted runners build Linux on `ubuntu-22.04` (preserving the glibc baseline), Windows on `windows-2025`, Apple Silicon on `macos-15`, and Intel Macs on `macos-15-intel`. Platform builds have a 60-minute limit and upload to a draft release. Publication waits for every check, all four builds, and updater validation. No self-hosted runner is required.
 
 CI generates `release-notes.md` and, when available, `announcement.json` from the last published launcher release and merged PRs. The public repository uses its pinned local copy of the shared `release-text` action; without an AI key, it produces validated notes from facts. New release notes are not committed in the release PR.
 
