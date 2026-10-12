@@ -104,6 +104,30 @@ class ToolCacheTests(unittest.TestCase):
                 ):
                     self.assertEqual(toolchain.host(), ("darwin", arch))
 
+    def test_canonical_python_pins_each_platform_compressor(self):
+        for system, compressor in (
+            ("darwin", "1.2.12"),
+            ("linux", "1.3.2"),
+            ("windows", "1.3.2"),
+        ):
+            with self.subTest(system=system):
+                python = self.cache / f"python-3.12.15-{system}-arm64" / "python"
+                python /= "python.exe" if os.name == "nt" else "bin/python3"
+                python.parent.mkdir(parents=True)
+                python.touch()
+                with (
+                    patch.object(toolchain, "host", return_value=(system, "arm64")),
+                    patch.object(toolchain.sys, "version_info", (3, 14, 8)),
+                    patch.object(toolchain, "python_version") as version,
+                    patch.object(toolchain, "download") as download,
+                ):
+                    version.return_value = f"(3, 12, 15) {compressor} {compressor}"
+                    self.assertEqual(toolchain.canonical_python(), python)
+                    version.return_value = "(3, 12, 15) 0.0.0 0.0.0"
+                    with self.assertRaisesRegex(RuntimeError, "compressor mismatch"):
+                        toolchain.canonical_python()
+                    download.assert_not_called()
+
     def test_darwin_pins_cover_both_architectures(self):
         for key, fragment in (
             ("darwin-arm64", "aarch64-apple-darwin-install_only.tar.gz"),

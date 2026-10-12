@@ -233,12 +233,16 @@ def python_version(python):
 def canonical_python():
     if sys.version_info < (3, 12):
         raise RuntimeError("Install native Python 3.12 or later to run project tools")
+    system, arch = host()
+    # Darwin builds use Apple's system zlib; pin its fingerprint independently.
+    compressor = "1.2.12" if system == "darwin" else "1.3.2"
+    fingerprint = f"(3, 12, 15) {compressor} {compressor}"
     if sys.version_info[:3] == (3, 12, 15) and (
         zlib.ZLIB_VERSION,
         zlib.ZLIB_RUNTIME_VERSION,
-    ) == ("1.3.2", "1.3.2"):
+    ) == (compressor, compressor):
         return Path(sys.executable)
-    key = "-".join(host())
+    key = f"{system}-{arch}"
     directory = CACHE / ("python-3.12.15-" + key)
     relative = Path("python") / ("python.exe" if os.name == "nt" else "bin/python3")
     python = directory / relative
@@ -250,11 +254,11 @@ def canonical_python():
             with tarfile.open(archive) as source:
                 source.extractall(staging, filter="data")
             version = python_version(staging / relative)
-            if version != "(3, 12, 15) 1.3.2 1.3.2":
+            if version != fingerprint:
                 raise RuntimeError(f"Canonical Python compressor mismatch: {version}")
             staging.rename(directory)
     version = python_version(python)
-    if version != "(3, 12, 15) 1.3.2 1.3.2":
+    if version != fingerprint:
         raise RuntimeError(f"Canonical Python compressor mismatch: {version}")
     return python
 

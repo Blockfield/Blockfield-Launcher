@@ -144,8 +144,9 @@ Unit tests are not evidence of live RakNet handshakes, DNS or production deploym
 Install Node.js 24.21.0 LTS (see `.nvmrc`), Python 3.12.15+, Just 1.58.0, Rust 1.99.0, and the platform dependencies required by Tauri.
 
 `just setup` installs the pinned pnpm, formatters, and linters into `.cache/quality`.
-Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux, Windows, and macOS so archive
-compression stays reproducible; stale cached tool versions are replaced automatically.
+Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux/Windows and Apple's zlib 1.2.12
+on macOS. Each platform's interpreter and compressor are verified; stale cached tool
+versions are replaced automatically.
 
 ```sh
 just setup
