@@ -84,14 +84,18 @@ jobs:
         run: |
           set -euo pipefail
           export SHORT_SHA=${GITHUB_SHA::7}
-          files=()
-          while IFS= read -r file; do
-            name=$(basename "$file")
-            dest="$RUNNER_TEMP/${name%.*}-$SHORT_SHA.${name##*.}"
-            cp "$file" "$dest"
-            files+=("$dest")
-          done < <(node -e \
-            'const re = new RegExp("\\.(" + process.env.INSTALLERS + ")$"); for (const path of JSON.parse(process.env.ARTIFACT_PATHS)) if (re.test(path)) console.log(path)')
+          # Node handles both path separators; Windows artifact paths use backslashes.
+          out=$(node -e '
+            const fs = require("fs"), path = require("path")
+            const re = new RegExp("\\.(" + process.env.INSTALLERS + ")$")
+            for (const file of JSON.parse(process.env.ARTIFACT_PATHS)) {
+              if (!re.test(file)) continue
+              const ext = path.extname(file)
+              const dest = path.join(process.env.RUNNER_TEMP, path.basename(file, ext) + "-" + process.env.SHORT_SHA + ext)
+              fs.copyFileSync(file, dest)
+              console.log(dest)
+            }')
+          mapfile -t files <<<"$out"
           [ -n "${files[0]-}" ] || { echo 'No DEV installers built'; exit 1; }
           # Another platform may create the rolling prerelease first.
           gh release view launcher-dev >/dev/null 2>&1 || gh release create launcher-dev \
