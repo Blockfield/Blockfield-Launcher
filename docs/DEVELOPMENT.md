@@ -74,6 +74,23 @@ scripts/rust-env.sh cargo test -p blockfield-launcher --lib \
   native_update::tests::published_deb_has_a_valid_signature_and_native_payload -- --ignored
 ```
 
+## DEV launcher builds
+
+`dev` starts at the same commit as `main`: both branches use the same source and version
+from `package.json`, `tauri.conf.json`, and `Cargo.toml`. DEV is a build variant selected by
+`BLOCKFIELD_DEV_BUILD=1`, not a separate version mechanism. The existing `getVersion()`
+API supplies the displayed version in both builds.
+
+Pushing to `dev`, or running **Launcher DEV** with branch `dev`, builds Linux, Windows,
+macOS ARM and Intel in parallel without waiting for the release quality gates. The build
+reuses release dependency caches and uploads installers to the `launcher-dev` prerelease.
+The production release workflow remains gated by all checks.
+
+The title bar displays **DEV · ТЕСТОВАЯ СБОРКА**, and the footer marks the shared version
+as **DEV**. The DEV bundle has its own application identifier, executable, config and
+default game directory, and does not self-update to a stable release. It does not register
+production deep-link protocols, so installing it does not replace the stable link handler.
+
 ## Game and Workshop profiles
 
 The main screen selects two fixed client profiles: **Игра** (`game`) and **Мастерская**

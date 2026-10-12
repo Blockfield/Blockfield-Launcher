@@ -8,6 +8,18 @@ const nsis = config.bundle.windows.nsis
 const template = readFileSync(new URL(nsis.template, tauri), 'utf8')
 const hooks = readFileSync(new URL(nsis.installerHooks, tauri), 'utf8')
 
+test('DEV installs beside stable without changing the shared launcher version', () => {
+  const dev = JSON.parse(readFileSync(new URL('tauri.dev.conf.json', tauri), 'utf8'))
+  assert.notEqual(dev.identifier, config.identifier)
+  assert.notEqual(dev.mainBinaryName, config.mainBinaryName ?? config.productName)
+  assert.match(dev.productName, /-dev$/)
+  assert.equal(dev.version ?? config.version, config.version)
+  assert.equal(dev.bundle.createUpdaterArtifacts, false)
+  assert.deepEqual(dev.plugins['deep-link'].desktop.schemes, [])
+  assert.match(dev.app.windows[0].title, /DEV/)
+  assert.equal(dev.build?.beforeBuildCommand ?? config.build.beforeBuildCommand, 'pnpm build')
+})
+
 test('installer branding uses native icons and 24-bit NSIS bitmaps', () => {
   for (const [name, width, height] of [
     ['headerImage', 150, 57],

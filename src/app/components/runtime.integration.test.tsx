@@ -173,6 +173,28 @@ it('shows the selected Workshop target or its unset state and restores the Game 
   expect(container.querySelector('footer')?.textContent).toContain('game.example:25565')
 })
 
+it('marks the common native launcher version as DEV without changing it', async () => {
+  vi.stubGlobal('__TAURI_INTERNALS__', {})
+  getVersion.mockResolvedValue('1.0.17')
+  invoke.mockResolvedValueOnce({ skin: null })
+  await act(async () =>
+    root!.render(
+      <Shell
+        active="main"
+        user={{ username: 'DevTest', role: 'игрок' }}
+        onNavigate={() => {}}
+        onLauncherUpdate={() => {}}
+      >
+        <div />
+      </Shell>,
+    ),
+  )
+  const version = container.querySelector('[aria-label="Открыть обновление лаунчера"]')!
+  expect(getVersion).toHaveBeenCalledOnce()
+  expect(version.textContent).toContain('1.0.17')
+  expect(version.textContent?.includes('DEV')).toBe(__BLOCKFIELD_DEV_BUILD__)
+})
+
 it('renders update channel progress, rejects a failed signature, and waits for an explicit restart', async () => {
   getVersion.mockResolvedValue('1.0.6')
   invoke.mockResolvedValue({ currentVersion: '1.0.6', version: '1.0.7', body: 'Fixes' })

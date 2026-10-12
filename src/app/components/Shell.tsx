@@ -118,6 +118,9 @@ export function Shell({
             aria-label="Открыть обновление лаунчера"
             className="flex min-w-0 items-center gap-2 hover:text-[#F3E7D0] focus-visible:outline-2 focus-visible:outline-[#F5A524]"
           >
+            {__BLOCKFIELD_DEV_BUILD__ && (
+              <span className="font-semibold tracking-normal text-primary">DEV</span>
+            )}
             <span>{t('shell.launcherVersion', { v: launcherVersion })}</span>
             {updateLabel && <span className="text-[#F5A524] tracking-normal">· {updateLabel}</span>}
           </button>
