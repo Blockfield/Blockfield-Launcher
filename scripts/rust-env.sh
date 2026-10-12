@@ -19,9 +19,10 @@ if ! podman image exists "$IMAGE"; then
     podman build -q -t "$IMAGE" -f "$ROOT/scripts/tauri-builder.Containerfile" "$ROOT/scripts"
 fi
 mkdir -p "$HOME/.cargo/registry" "${BLOCKFIELD_CARGO_TARGET:=$HOME/.cache/bf-cargo-target}"
-TTY=()
-[ -t 0 ] && TTY=(-it)
-exec podman run --rm "${TTY[@]}" --tmpfs /tmp:rw,size=4g \
+# Bash 3.2 treats empty arrays as unset under nounset.
+TTY=""
+[ -t 0 ] && TTY="-it"
+exec podman run --rm ${TTY:+"$TTY"} --tmpfs /tmp:rw,size=4g \
     -v "$ROOT:/work:z" \
     -v "$HOME/.cargo/registry:/usr/local/cargo/registry:z" \
     -v "$BLOCKFIELD_CARGO_TARGET:/work/target:z" \
