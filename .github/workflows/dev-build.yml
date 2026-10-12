@@ -29,18 +29,8 @@ jobs:
         include:
           - name: linux-x86_64
             os: ubuntu-22.04
-            args: ''
           - name: windows-x86_64
             os: windows-2025
-            args: ''
-          - name: macos-aarch64
-            os: macos-15
-            args: --target aarch64-apple-darwin
-            target: aarch64-apple-darwin
-          - name: macos-x86_64
-            os: macos-15-intel
-            args: --target x86_64-apple-darwin
-            target: x86_64-apple-darwin
     steps:
       - if: runner.os == 'Windows'
         run: git config --global core.longpaths true
@@ -57,7 +47,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: 1.99.0
-          targets: ${{ matrix.target || '' }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # Reuse the release dependency cache; Cargo rebuilds the DEV launcher itself.
@@ -79,7 +68,7 @@ jobs:
         id: bundle
         with:
           tauriScript: pnpm tauri
-          args: --config src-tauri/tauri.prod.conf.json --config src-tauri/tauri.dev.conf.json ${{ matrix.args }}
+          args: --config src-tauri/tauri.prod.conf.json --config src-tauri/tauri.dev.conf.json
       # Release assets are direct downloads and do not consume Actions artifact storage.
       - name: Upload DEV installers
         shell: bash
@@ -90,7 +79,7 @@ jobs:
           set -euo pipefail
           files=()
           while IFS= read -r file; do files+=("$file"); done < <(node -e \
-            'for (const path of JSON.parse(process.env.ARTIFACT_PATHS)) if (/\.(deb|rpm|AppImage|msi|exe|dmg)$/.test(path)) console.log(path)')
+            'for (const path of JSON.parse(process.env.ARTIFACT_PATHS)) if (/\.(deb|rpm|AppImage|msi|exe)$/.test(path)) console.log(path)')
           [ -n "${files[0]-}" ] || { echo 'No DEV installers built'; exit 1; }
           # Another platform may create the rolling prerelease first.
           gh release view launcher-dev >/dev/null 2>&1 || gh release create launcher-dev \

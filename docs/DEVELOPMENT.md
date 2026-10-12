@@ -81,8 +81,8 @@ from `package.json`, `tauri.conf.json`, and `Cargo.toml`. DEV is a build variant
 `BLOCKFIELD_DEV_BUILD=1`, not a separate version mechanism. The existing `getVersion()`
 API supplies the displayed version in both builds.
 
-Pushing to `dev`, or running **Launcher DEV** with branch `dev`, builds Linux, Windows,
-macOS ARM and Intel in parallel without waiting for the release quality gates. The build
+Pushing to `dev`, or running **Launcher DEV** with branch `dev`, builds Linux and Windows
+in parallel without waiting for the release quality gates. The build
 reuses release dependency caches and uploads installers to the `launcher-dev` prerelease.
 The production release workflow remains gated by all checks.
 
