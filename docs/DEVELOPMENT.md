@@ -84,6 +84,7 @@ API supplies the displayed version in both builds.
 Pushing to `dev`, or running **Launcher DEV** with branch `dev`, builds Linux and Windows
 in parallel without waiting for the release quality gates. The build
 reuses release dependency caches and uploads installers to the `launcher-dev` prerelease.
+It reads repository variables only and never uses the signing environment `dev`.
 The production release workflow remains gated by all checks.
 
 The title bar displays **DEV · ТЕСТОВАЯ СБОРКА**, and the footer marks the shared version
@@ -177,8 +178,8 @@ a Drasl account; the frontend mocks do not.
 On Linux, `scripts/install-tauri-deps.sh` installs the build dependencies;
 `scripts/rust-env.sh` can use the existing local container-builder fallback.
 For game or mod development, use [blockfield-workspace](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/DEVELOPING.md).
-It owns the isolated server, direct Minecraft launch and testbot on Linux and Windows. Separate
-dev-launcher releases are retired. The older integration-profile code in `src-tauri/src/dev.rs`
+It owns the isolated server, direct Minecraft launch and testbot on Linux and Windows. The old
+integration-profile dev-launcher releases are retired. The older integration-profile code in `src-tauri/src/dev.rs`
 remains in the source tree while that cleanup is completed.
 
 ## Content, accounts and integrations

@@ -17,7 +17,8 @@ jobs:
     if: github.ref == 'refs/heads/dev'
     name: DEV launcher (${{ matrix.name }})
     timeout-minutes: 60
-    environment: dev
+    # No `environment: dev`: its signing secrets stay limited to main and release tags,
+    # and DEV bundles create no updater artifacts.
     runs-on: ${{ matrix.os }}
     env:
       BLOCKFIELD_DEV_BUILD: '1'
