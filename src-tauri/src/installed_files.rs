@@ -6,8 +6,6 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 const RECORD: &str = "installed-files.json";
-#[cfg(windows)]
-const BUNDLE_ID: &str = "com.blockfield.launcher";
 
 #[derive(Default, Serialize, Deserialize)]
 struct Record {
@@ -393,7 +391,16 @@ fn clean_downloads(record: &Record) -> Result<(), String> {
 #[cfg(windows)]
 pub fn uninstall() -> Result<(), String> {
     let base = directories::BaseDirs::new().ok_or("Cannot resolve app data")?;
-    let app_data = base.data_dir().join(BUNDLE_ID);
+    uninstall_from(base.data_dir())
+}
+
+#[cfg(any(windows, test))]
+fn uninstall_from(data_dir: &Path) -> Result<(), String> {
+    let app_data = data_dir.join(if crate::dev::is_dev_build() {
+        "com.blockfield.launcher.dev"
+    } else {
+        "com.blockfield.launcher"
+    });
     if app_data
         .ancestors()
         .any(|path| fs::symlink_metadata(path).is_ok_and(|meta| is_link(&meta)))
@@ -401,9 +408,11 @@ pub fn uninstall() -> Result<(), String> {
         return Err("App data contains a filesystem link; cleanup refused".into());
     }
     let record_path = app_data.join(RECORD);
-    clean_downloads(&load(&record_path)?)?;
-    for name in ["launcher-config.json", RECORD] {
-        let path = app_data.join(name);
+    // DEV builds never track download ownership, so their records cannot authorize deletion.
+    if !crate::dev::is_dev_build() {
+        clean_downloads(&load(&record_path)?)?;
+    }
+    for path in [crate::config::config_path(&app_data), record_path] {
         if path.is_file() {
             fs::remove_file(path).map_err(|e| e.to_string())?;
         }
@@ -415,6 +424,62 @@ pub fn uninstall() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uninstall_isolates_build_identity_and_only_production_owns_downloads() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let production = root.join("com.blockfield.launcher");
+        let dev = root.join("com.blockfield.launcher.dev");
+        let game = root.join("game");
+        fs::create_dir(&game).unwrap();
+        let game = game.canonicalize().unwrap();
+        let downloaded = game.join("owned.jar");
+        fs::write(&downloaded, b"production download").unwrap();
+        let record = Record {
+            directories: BTreeMap::from([(
+                game,
+                BTreeMap::from([(
+                    "owned.jar".into(),
+                    Downloader::sha256_file(&downloaded).unwrap(),
+                )]),
+            )]),
+        };
+        for data in [&production, &dev] {
+            fs::create_dir(data).unwrap();
+            fs::write(data.join("launcher-config.json"), b"production config").unwrap();
+            fs::write(data.join(crate::dev::CONFIG_FILE), b"dev config").unwrap();
+            save(&data.join(RECORD), &record).unwrap();
+        }
+        uninstall_from(&root).unwrap();
+        if crate::dev::is_dev_build() {
+            assert!(!dev.join(crate::dev::CONFIG_FILE).exists());
+            assert!(!dev.join(RECORD).exists());
+            assert!(dev.join("launcher-config.json").is_file());
+            assert_eq!(fs::read(&downloaded).unwrap(), b"production download");
+            assert_eq!(
+                fs::read(production.join(RECORD)).unwrap(),
+                serde_json::to_vec(&record).unwrap()
+            );
+            assert_eq!(
+                fs::read(production.join("launcher-config.json")).unwrap(),
+                b"production config"
+            );
+        } else {
+            assert!(!production.join("launcher-config.json").exists());
+            assert!(!production.join(RECORD).exists());
+            assert!(production.join(crate::dev::CONFIG_FILE).is_file());
+            assert!(!downloaded.exists());
+            assert_eq!(
+                fs::read(dev.join(RECORD)).unwrap(),
+                serde_json::to_vec(&record).unwrap()
+            );
+            assert_eq!(
+                fs::read(dev.join(crate::dev::CONFIG_FILE)).unwrap(),
+                b"dev config"
+            );
+        }
+    }
 
     #[test]
     fn pack_hashes_match_published_digest_vectors() {

@@ -56,7 +56,12 @@ export function WindowChrome({ children }: { children: ReactNode }) {
             className="flex items-center gap-2 text-[10px] tracking-[0.3em] text-[#8E7A5E]"
           >
             <span className="size-1.5 rounded-full bg-[#F5A524]" />
-            {title}
+            <span>{baseTitle}</span>
+            {__BLOCKFIELD_DEV_BUILD__ && (
+              <span className="shrink-0 bg-primary px-2 py-0.5 text-[11px] font-semibold tracking-normal text-primary-foreground">
+                DEV · ТЕСТОВАЯ СБОРКА
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1 text-[#8E7A5E] z-50">
             <button
@@ -95,7 +100,12 @@ export function WindowChrome({ children }: { children: ReactNode }) {
         <div className="h-9 shrink-0 flex items-center justify-between border-b border-[#18130D] bg-[#0B0906] px-3 select-none">
           <div className="flex items-center gap-2 text-[10px] tracking-[0.3em] text-[#8E7A5E]">
             <span className="size-1.5 rounded-full bg-[#F5A524]" />
-            {title}
+            <span>{baseTitle}</span>
+            {__BLOCKFIELD_DEV_BUILD__ && (
+              <span className="shrink-0 bg-primary px-2 py-0.5 text-[11px] font-semibold tracking-normal text-primary-foreground">
+                DEV · ТЕСТОВАЯ СБОРКА
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1 text-[#8E7A5E]">
             <button className="h-6 w-8 grid place-items-center hover:bg-[#18130D] rounded-sm transition-colors">

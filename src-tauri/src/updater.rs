@@ -1,7 +1,6 @@
 use crate::commands::LauncherAppState;
 use serde::Serialize;
 use std::time::Duration;
-#[cfg(target_os = "linux")]
 use tauri::Manager;
 use tauri::{ipc::Channel, AppHandle, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
@@ -27,10 +26,13 @@ pub struct UpdateProgress {
 }
 
 #[tauri::command]
-pub async fn check_launcher_update(
-    app: AppHandle,
+pub async fn check_launcher_update<R: tauri::Runtime>(
+    app: AppHandle<R>,
     state: State<'_, LauncherUpdater>,
 ) -> Result<Option<UpdateInfo>, String> {
+    if crate::dev::is_dev_build() {
+        return Ok(None);
+    }
     if cfg!(debug_assertions) {
         return Err("Обновления доступны в установленной release-версии лаунчера".into());
     }
@@ -64,12 +66,15 @@ pub async fn check_launcher_update(
 }
 
 #[tauri::command]
-pub async fn install_launcher_update(
-    app: AppHandle,
+pub async fn install_launcher_update<R: tauri::Runtime>(
+    app: AppHandle<R>,
     state: State<'_, LauncherUpdater>,
-    launcher: State<'_, LauncherAppState>,
     on_progress: Channel<UpdateProgress>,
 ) -> Result<(), String> {
+    if crate::dev::is_dev_build() {
+        return Err("Автоматические обновления недоступны в DEV-версии лаунчера".into());
+    }
+    let launcher = app.state::<LauncherAppState>();
     let _operation = launcher
         .operation
         .try_lock()
@@ -134,4 +139,44 @@ pub async fn install_launcher_update(
         .map_err(|e| e.to_string())?;
     *pending = None;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn dev_build_refuses_stable_updates_before_accessing_updater_or_launcher() {
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().plugins.0.insert(
+            "updater".into(),
+            serde_json::json!({ "pubkey": "", "endpoints": [] }),
+        );
+        let app = tauri::test::mock_builder()
+            .manage(LauncherUpdater::default())
+            .build(context)
+            .unwrap();
+        if crate::dev::is_dev_build() {
+            assert!(check_launcher_update(app.handle().clone(), app.state())
+                .await
+                .unwrap()
+                .is_none());
+            let error = install_launcher_update(
+                app.handle().clone(),
+                app.state(),
+                Channel::new(|_| panic!("DEV updater must not report progress")),
+            )
+            .await
+            .unwrap_err();
+            assert!(error.contains("DEV"));
+        } else {
+            // No endpoints or native-install marker: production still attempts its normal check.
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())
+                .unwrap();
+            assert!(check_launcher_update(app.handle().clone(), app.state())
+                .await
+                .is_err());
+        }
+    }
 }

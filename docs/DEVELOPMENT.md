@@ -74,6 +74,26 @@ scripts/rust-env.sh cargo test -p blockfield-launcher --lib \
   native_update::tests::published_deb_has_a_valid_signature_and_native_payload -- --ignored
 ```
 
+## DEV launcher builds
+
+`dev` starts at the same commit as `main`: both branches use the same source and version
+from `package.json`, `tauri.conf.json`, and `Cargo.toml`. DEV is a build variant selected by
+`BLOCKFIELD_DEV_BUILD=1`, not a separate version mechanism. The existing `getVersion()`
+API supplies the displayed version in both builds.
+
+Pushing to `dev`, or running **Launcher DEV** with branch `dev`, builds Linux and Windows
+in parallel without waiting for the release quality gates. The build
+reuses release dependency caches and uploads installers to the `launcher-dev` prerelease.
+Installer names end with the short source commit; runs queue instead of cancelling, so
+each platform's older installers are replaced only after its new ones are uploaded.
+It reads repository variables only and never uses the signing environment `dev`.
+The production release workflow remains gated by all checks.
+
+The title bar displays **DEV · ТЕСТОВАЯ СБОРКА**, and the footer marks the shared version
+as **DEV**. The DEV bundle has its own application identifier, executable, config and
+default game directory, and does not self-update to a stable release. It does not register
+production deep-link protocols, so installing it does not replace the stable link handler.
+
 ## Game and Workshop profiles
 
 The main screen selects two fixed client profiles: **Игра** (`game`) and **Мастерская**
@@ -160,8 +180,8 @@ a Drasl account; the frontend mocks do not.
 On Linux, `scripts/install-tauri-deps.sh` installs the build dependencies;
 `scripts/rust-env.sh` can use the existing local container-builder fallback.
 For game or mod development, use [blockfield-workspace](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/DEVELOPING.md).
-It owns the isolated server, direct Minecraft launch and testbot on Linux and Windows. Separate
-dev-launcher releases are retired. The older integration-profile code in `src-tauri/src/dev.rs`
+It owns the isolated server, direct Minecraft launch and testbot on Linux and Windows. The old
+integration-profile dev-launcher releases are retired. The older integration-profile code in `src-tauri/src/dev.rs`
 remains in the source tree while that cleanup is completed.
 
 ## Content, accounts and integrations
