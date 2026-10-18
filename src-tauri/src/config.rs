@@ -188,8 +188,12 @@ fn default_workshop_server_from(env: Option<String>, compiled: Option<&str>) -> 
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned)
         })
-        .unwrap_or_else(|| "workshop.blockfield.pro:25565".to_string())
+        .unwrap_or_else(|| DEFAULT_WORKSHOP_SERVER.to_string())
 }
+
+const DEFAULT_WORKSHOP_SERVER: &str = "raknet;workshop.blockfield.pro:25566";
+/// Shipped default up to launcher 1.0.17; the proxy now refuses TCP logins.
+const LEGACY_WORKSHOP_SERVER: &str = "workshop.blockfield.pro:25565";
 
 fn workshop_directory(game_dir: &str) -> String {
     let path = Path::new(game_dir);
@@ -282,7 +286,12 @@ pub fn load_config(app_data_dir: &Path) -> LauncherConfig {
     if config.workshop_game_dir.is_empty() {
         config.workshop_game_dir = workshop_directory(&config.game_dir);
     }
-    if config.workshop_server.trim().is_empty() {
+    if config.workshop_server.trim().is_empty()
+        || config
+            .workshop_server
+            .trim()
+            .eq_ignore_ascii_case(LEGACY_WORKSHOP_SERVER)
+    {
         config.workshop_server = default_workshop_server();
     }
     config
@@ -457,15 +466,15 @@ mod tests {
     fn empty_workshop_server_override_falls_back_to_default() {
         assert_eq!(
             default_workshop_server_from(Some(String::new()), None),
-            "workshop.blockfield.pro:25565"
+            DEFAULT_WORKSHOP_SERVER
         );
         assert_eq!(
             default_workshop_server_from(Some("   ".to_string()), None),
-            "workshop.blockfield.pro:25565"
+            DEFAULT_WORKSHOP_SERVER
         );
         assert_eq!(
             default_workshop_server_from(Some(String::new()), Some("")),
-            "workshop.blockfield.pro:25565"
+            DEFAULT_WORKSHOP_SERVER
         );
         assert_eq!(
             default_workshop_server_from(Some("custom.example:25566".to_string()), None),
@@ -477,7 +486,7 @@ mod tests {
         );
         assert_eq!(
             default_workshop_server_from(None, None),
-            "workshop.blockfield.pro:25565"
+            "raknet;workshop.blockfield.pro:25566"
         );
     }
 
@@ -659,6 +668,31 @@ mod tests {
         std::fs::write(config_path(scratch.path()), custom_config.to_string()).unwrap();
         let loaded_custom = load_config(scratch.path());
         assert_eq!(loaded_custom.workshop_server, "custom.example:25565");
+    }
+
+    #[test]
+    fn legacy_tcp_workshop_default_migrates_to_raknet_and_preserves_custom() {
+        let scratch = tempfile::tempdir().unwrap();
+        let load = |value: &str| {
+            let mut config = serde_json::to_value(LauncherConfig::default()).unwrap();
+            config["workshopServer"] = value.into();
+            std::fs::write(config_path(scratch.path()), config.to_string()).unwrap();
+            load_config(scratch.path()).workshop_server
+        };
+        for legacy in [
+            "workshop.blockfield.pro:25565",
+            "  WORKSHOP.Blockfield.PRO:25565 ",
+        ] {
+            assert_eq!(load(legacy), default_workshop_server());
+        }
+        for custom in [
+            "workshop.blockfield.pro:25570",
+            "workshop.blockfield.pro",
+            "raknet;workshop.blockfield.pro:25566",
+            "other.example:25565",
+        ] {
+            assert_eq!(load(custom), custom);
+        }
     }
 
     #[test]

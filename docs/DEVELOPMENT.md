@@ -15,9 +15,12 @@ On **Play**, the launcher validates or refreshes the Drasl session, prepares Jav
 runs the pinned packwiz installer, prepares the vanilla runtime and launches Minecraft with the
 account's player name, UUID and access token. The pack's `server` field, including
 `raknet;host:port`, passes unchanged as one `--quickPlayMultiplayer` argument and
-as `BLOCKFIELD_SERVER`. The status/region path strips `raknet;` and uses TCP 25565
-for SLP: Blockfield's proxy listens for RakNet on UDP 25566. Automatic pre-login
-TCP retry belongs to the client mod; the launcher does not select a transport. The client mod completes authentication through
+as `BLOCKFIELD_SERVER`. RakNet (`raknet;host:25566`, UDP) is the only login transport:
+the proxy refuses every login that did not arrive over RakNet and keeps TCP 25565 open
+only for status pings. The status/region path therefore strips `raknet;` and uses TCP 25565
+of the same host for SLP. The launcher does not select a transport; every connect address it
+ships or migrates uses the `raknet;` form. `VITE_SERVER_IP` is display-only text and may be a
+plain host. The client mod completes authentication through
 Drasl; the Velocity plugin verifies the session before routing the player.
 
 `src-tauri/src/commands.rs` combines a direct Server List Ping to the public server with room data
@@ -114,10 +117,12 @@ Drasl credentials stay in the shared private launcher config and remain redacted
 settings responses. RAM, language, account, startup verification, window/Discord preferences
 and hook commands remain shared; hooks execute in the selected game directory.
 
-Game keeps the published `launcher.json.server` Quick Play target. Set Workshop's
-**Настройки → Адрес мастерской** (`workshopServer`) explicitly; its optional initial
-runtime/build default is `BLOCKFIELD_WORKSHOP_SERVER`. An empty value refuses launch
-with instructions to configure it. The target accepts a host with an optional port and
+Game keeps the published `launcher.json.server` Quick Play target. Workshop uses
+**Настройки → Адрес мастерской** (`workshopServer`), default
+`raknet;workshop.blockfield.pro:25566`; a runtime or build-time `BLOCKFIELD_WORKSHOP_SERVER`
+overrides it. On load, an empty saved value or the old TCP default
+`workshop.blockfield.pro:25565` (trimmed, case-insensitive) is replaced by the current default;
+any other saved value is kept. An empty value refuses launch with instructions to configure it. The target accepts a host with an optional port and
 `raknet;` transport prefix, including bracketed IPv6. It must have a **different host**
 from Game after transport/port, DNS case/trailing dot and numeric IPv6 normalization.
 A different port on the Game host does not create a Workshop profile.
@@ -125,9 +130,7 @@ A different port on the Game host does not create a Workshop profile.
 The companion [proxy routing](https://github.com/Blockfield/blockfield-proxy/pull/24)
 requires `BLOCKFIELD_WORKSHOP_HOST` set to that distinct plain host, without `raknet;`
 or port. Both addresses resolve to the proxy; do not bypass it with a direct backend
-address. No production Workshop hostname or DNS record is assumed here. Empty proxy
-configuration disables Workshop routing, so leave `workshopServer` empty until the
-matching proxy setting and address are configured. The handshake host expresses intent;
+address. Empty proxy configuration disables Workshop routing. The handshake host expresses intent;
 Drasl authentication, controller readiness and Workshop ACL still determine admission.
 An opposite active backend keeps the player in Limbo instead of connecting the wrong
 profile. Controller contract: [Workshop OPERATIONS](https://github.com/Blockfield/blockfield-workshop/blob/main/docs/OPERATIONS.md).
