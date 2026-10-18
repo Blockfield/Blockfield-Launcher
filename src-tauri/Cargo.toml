@@ -24,7 +24,10 @@ log = "0.4"
 tauri = { version = "2.12.1", features = [] }
 tauri-plugin-log = "2.10.0"
 tauri-plugin-dialog = "2.8.1"
-tauri-plugin-updater = "2.13.1"
+# Our updater artifacts are v2 (raw .exe/.msi/.AppImage, macOS .app.tar.gz uses tar
+# unconditionally), so the `zip` feature for legacy v1 .zip/.AppImage.tar.gz payloads only
+# pulled in zip 4.x (RUSTSEC-2026-0367/0368/0369).
+tauri-plugin-updater = { version = "2.13.1", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-process = "2.4.0"
 tauri-plugin-single-instance = { version = "2.5.2", features = ["deep-link"] }
 tauri-plugin-deep-link = "2.6.1"
@@ -33,7 +36,7 @@ base64 = "0.23"
 sha2 = "0.11"
 sha1 = "0.11"
 md-5 = "0.11"
-zip = "8"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 directories = "6"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "time", "macros", "net", "io-util"] }

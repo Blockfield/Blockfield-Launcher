@@ -740,12 +740,21 @@ fn extract_native_libraries(
             let mut entry = archive
                 .by_index(i)
                 .map_err(|e| format!("Native library entry {i} error: {e}"))?;
-            if entry.is_dir() {
+            // Entries are always written as fresh regular files without their stored mode, so
+            // links are never created and SUID/SGID bits are never applied.
+            if entry.is_dir() || entry.is_symlink() {
                 continue;
             }
 
-            let name = entry.name().replace('\\', "/");
-            if name.starts_with("META-INF/") || name.starts_with('/') || name.contains("..") {
+            let name = entry
+                .name()
+                .map_err(|e| format!("Native library entry {i} name error: {e}"))?
+                .replace('\\', "/");
+            if name.starts_with("META-INF/")
+                || name.starts_with('/')
+                || name.contains("..")
+                || name.contains(':')
+            {
                 continue;
             }
 
@@ -1185,5 +1194,57 @@ mod tests {
 
         assert!(has_launch_dependencies(&root, version, None));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_extraction_writes_only_plain_files_inside_the_natives_dir() {
+        use std::io::Write;
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().join("game");
+        let jar = root.join("libraries/natives.jar");
+        std::fs::create_dir_all(jar.parent().unwrap()).unwrap();
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&jar).unwrap());
+        let options = zip::write::SimpleFileOptions::default();
+        writer
+            .add_symlink("link", "../../../evil", options)
+            .unwrap();
+        for name in ["../evil", "C:/evil", "META-INF/evil"] {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(b"bad").unwrap();
+        }
+        writer
+            .start_file("lib.so", options.unix_permissions(0o6755))
+            .unwrap();
+        writer.write_all(b"native").unwrap();
+        // A later entry through the skipped link name must not escape either.
+        writer.start_file("link/escaped", options).unwrap();
+        writer.write_all(b"bad").unwrap();
+        writer.finish().unwrap();
+
+        let artifact = Artifact {
+            path: "natives.jar".into(),
+            url: String::new(),
+            size: 0,
+        };
+        extract_native_libraries(&root, "1.21.1", &[artifact]).unwrap();
+
+        let natives = natives_dir(&root, "1.21.1");
+        let lib = natives.join("lib.so");
+        assert_eq!(std::fs::read(&lib).unwrap(), b"native");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&lib).unwrap().permissions().mode() & 0o6000,
+                0
+            );
+        }
+        assert!(std::fs::symlink_metadata(natives.join("link"))
+            .map(|meta| meta.is_dir())
+            .unwrap_or(true));
+        assert!(!natives.join("META-INF").exists());
+        assert!(!scratch.path().join("evil").exists());
+        assert!(!root.join("evil").exists());
+        assert!(!root.join("natives/evil").exists());
     }
 }

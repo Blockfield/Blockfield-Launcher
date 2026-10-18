@@ -1226,19 +1226,22 @@ fn extract_archive_with_limits(
         let entry = archive
             .by_index(index)
             .map_err(|e| format!("Archive entry {index} error: {e}"))?;
+        let name = entry
+            .name()
+            .map_err(|e| format!("Archive entry {index} name error: {e}"))?;
         if entry.encrypted()
             || !matches!(
                 entry.compression(),
                 zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated
             )
         {
-            return Err(format!("Unsupported archive entry: {}", entry.name()));
+            return Err(format!("Unsupported archive entry: {name}"));
         }
-        if entry.name().split('/').count() > limits.max_path_depth {
-            return Err(format!("Archive path is too deep: {}", entry.name()));
+        if name.split('/').count() > limits.max_path_depth {
+            return Err(format!("Archive path is too deep: {name}"));
         }
         if entry.size() > limits.max_entry_bytes {
-            return Err(format!("Archive entry is too large: {}", entry.name()));
+            return Err(format!("Archive entry is too large: {name}"));
         }
         if entry.size() > 0
             && (entry.compressed_size() == 0
@@ -1247,7 +1250,7 @@ fn extract_archive_with_limits(
                         .compressed_size()
                         .saturating_mul(limits.max_compression_ratio))
         {
-            return Err(format!("Suspicious compression ratio: {}", entry.name()));
+            return Err(format!("Suspicious compression ratio: {name}"));
         }
         declared_total = declared_total
             .checked_add(entry.size())
@@ -1267,7 +1270,10 @@ fn extract_archive_with_limits(
             .by_index(i)
             .map_err(|e| format!("Archive entry {i} error: {e}"))?;
 
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|e| format!("Archive entry {i} name error: {e}"))?
+            .into_owned();
         if entry
             .unix_mode()
             .is_some_and(|mode| mode & 0o170000 == 0o120000)
@@ -1491,9 +1497,23 @@ mod tests {
 
         let valid = root.join("valid.zip");
         let java_entry = format!("jdk/bin/{}", java_exe_name());
-        write_zip(&valid, &[(java_entry.as_str(), b"new")]);
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&valid).unwrap());
+        writer
+            .start_file(
+                java_entry.as_str(),
+                zip::write::SimpleFileOptions::default().unix_permissions(0o6755),
+            )
+            .unwrap();
+        writer.write_all(b"new").unwrap();
+        writer.finish().unwrap();
         let installed = install_java_archive(&valid, &root, "2").unwrap();
-        assert_eq!(std::fs::read(installed).unwrap(), b"new");
+        assert_eq!(std::fs::read(&installed).unwrap(), b"new");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&installed).unwrap().permissions().mode();
+            assert_eq!(mode & 0o6000, 0, "SUID/SGID must not be applied");
+        }
         assert_eq!(
             std::fs::read_to_string(root.join("java/.version")).unwrap(),
             "2"
