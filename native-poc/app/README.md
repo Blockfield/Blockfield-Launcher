@@ -111,6 +111,7 @@ The container image adds Fedora's `ffmpeg-free` only inside its isolated filesys
 
 ### MainScreen parity gaps / boundaries
 
+- Xvfb capture requests 60fps, but source grabs can drop under CPU/software-GPU load. Output is exactly 3s/180 frames at 60fps, preserving source timestamps and holding frames where needed; source timing CSVs are retained. This does not prove sustained 60fps native rendering.
 - Paired pixel/frame diffs are the next unit; this port does not assert pixel-perfect parity. Slint and Chromium text shaping, baseline metrics, shadow/gradient interpolation and antialiasing need that comparison. The inherited negative-spread/inset glow limitations still apply to deploy.
 - Fixture rooms have no battle points; battle-score/point-pagination UI is not included. Only two fixture rooms/options are used; long arbitrary lists and custom scrollbars are not covered.
 - Native title tooltips, browser-default disclosure marker pixels, screen-reader behavior and long CMS strings remain unverified. Error details and select keyboard focus are explicit native controls.

@@ -71,7 +71,7 @@ wait "$run_pid"
 
 if test "$mode" = record; then
     ffprobe -v error -select_streams v:0 -show_entries frame=best_effort_timestamp_time -of csv=p=0 "$report_dir/motion.mkv" | awk 'NF {print n++ "," $1}' > "$report_dir/frame-times.csv"
-    ffmpeg -nostdin -hide_banner -loglevel warning -y -i "$report_dir/motion.mkv" -t 3 -vf fps=60 -c:v libx264 -threads 2 -preset fast -crf 18 -pix_fmt yuv420p "$report_dir/motion.mp4"
+    ffmpeg -nostdin -hide_banner -loglevel warning -y -i "$report_dir/motion.mkv" -t 3 -vf tpad=stop_mode=clone:stop_duration=1,fps=60 -frames:v 180 -c:v libx264 -threads 2 -preset fast -crf 18 -pix_fmt yuv420p "$report_dir/motion.mp4"
     rm "$report_dir/motion.mkv"
     printf '%s\n' 'PASS: private Xvfb recording encoded at 60fps for 3 seconds'
 fi
