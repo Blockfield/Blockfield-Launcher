@@ -303,6 +303,20 @@ impl Renderer {
     /// No clock accumulation: the same time, offsets and drag history give the
     /// same frame on the same adapter. `yaw_drag_offset` is camera azimuth, radians.
     pub fn render_frame(&mut self, t_seconds: f64, yaw_drag_offset: f32) -> Result<Frame> {
+        self.render_frame_with_pose_time(t_seconds, t_seconds, yaw_drag_offset)
+    }
+
+    pub(crate) fn render_frame_with_pose_time(
+        &mut self,
+        t_seconds: f64,
+        pose_seconds: f64,
+        yaw_drag_offset: f32,
+    ) -> Result<Frame> {
+        if !pose_seconds.is_finite() || pose_seconds < 0.0 || pose_seconds > t_seconds {
+            return Err(invalid(
+                "pose time must be finite and between zero and frame time",
+            ));
+        }
         let rotation_time = self.controls.rotation_time(t_seconds)?;
         if !yaw_drag_offset.is_finite() {
             return Err(invalid("yaw offset must be finite"));
@@ -333,7 +347,7 @@ impl Renderer {
         let mut parts = player_parts(
             self.model,
             self.cape.is_some(),
-            walking_pose(t_seconds),
+            walking_pose(pose_seconds),
             auto_rotate_yaw(rotation_time),
         );
         // Three sorts transparent meshes back-to-front by projected object center.
@@ -604,6 +618,38 @@ mod tests {
                 }
                 .physical_size()
                 .is_err()
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod phase_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a headless wgpu software adapter"]
+    fn walking_lags_rotation_by_the_previous_delivered_frame() {
+        let skin =
+            Skin::from_png(include_bytes!("../fixtures/uv-skin.png"), Model::Classic).unwrap();
+        let mut renderer =
+            pollster::block_on(Renderer::new(RenderSize::default(), &skin, None, true)).unwrap();
+        let current = renderer.render_frame(1.0, 0.0).unwrap();
+        let lagged = renderer.render_frame_with_pose_time(1.0, 0.9, 0.0).unwrap();
+        assert_ne!(current, lagged);
+        assert_eq!(
+            lagged,
+            renderer.render_frame_with_pose_time(1.0, 0.9, 0.0).unwrap()
+        );
+        assert_eq!(
+            current,
+            renderer.render_frame_with_pose_time(1.0, 1.0, 0.0).unwrap()
+        );
+        for invalid in [f64::NAN, -0.1, 1.1] {
+            assert!(
+                renderer
+                    .render_frame_with_pose_time(1.0, invalid, 0.0)
+                    .is_err()
             );
         }
     }
