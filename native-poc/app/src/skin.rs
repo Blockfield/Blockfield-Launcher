@@ -1,4 +1,4 @@
-use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
+use std::{rc::Rc, sync::Arc, time::Duration};
 
 use skin3d::slint::{ClockMode, FrameSink, HostOptions, PreviewHost};
 use slint::{
@@ -7,7 +7,7 @@ use slint::{
     winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent as WinitEvent},
 };
 
-use crate::AppWindow;
+use crate::{AppWindow, window_activity::Activity};
 
 /// The preview is live only on the Skin tab of the settings screen.
 pub fn skin_visible(app: &AppWindow) -> bool {
@@ -19,9 +19,7 @@ pub fn sync_visibility(app: &AppWindow, host: &Rc<PreviewHost>) {
     host.refresh();
 }
 
-pub fn attach(app: &AppWindow) -> std::io::Result<Rc<PreviewHost>> {
-    let occluded = Rc::new(Cell::new(false));
-    let nonzero = Rc::new(Cell::new(true));
+pub fn attach(app: &AppWindow, activity: &Rc<Activity>) -> std::io::Result<Rc<PreviewHost>> {
     let weak = app.as_weak();
     let notify = Arc::new(move || {
         if let Some(app) = weak.upgrade() {
@@ -29,8 +27,7 @@ pub fn attach(app: &AppWindow) -> std::io::Result<Rc<PreviewHost>> {
         }
     });
     let weak = app.as_weak();
-    let poll_occluded = occluded.clone();
-    let poll_nonzero = nonzero.clone();
+    let poll_activity = activity.clone();
     let host = PreviewHost::spawn(HostOptions {
         clock: ClockMode::Live(0.0),
         frame_hook: None,
@@ -56,29 +53,18 @@ pub fn attach(app: &AppWindow) -> std::io::Result<Rc<PreviewHost>> {
                 let Some(app) = weak.upgrade() else {
                     return (false, 1.0);
                 };
-                let minimized = app
-                    .window()
-                    .with_winit_window(|window| window.is_minimized())
-                    .flatten()
-                    .unwrap_or(false);
-                let live = app.window().is_visible()
-                    && !minimized
-                    && !poll_occluded.get()
-                    && poll_nonzero.get()
-                    && skin_visible(&app);
+                let live = poll_activity.live(&app) && skin_visible(&app);
                 (live, app.window().scale_factor())
             }),
         },
     })?;
     let this = host.clone();
+    let activity = activity.clone();
     app.window().on_winit_window_event(move |_, event| {
-        match event {
-            WinitEvent::Occluded(occluded_event) => occluded.set(*occluded_event),
-            WinitEvent::Resized(size) => nonzero.set(size.width > 0 && size.height > 0),
-            WinitEvent::Focused(false) => this.on_drag_state(false),
-            _ => {}
+        activity.event(event);
+        if matches!(event, WinitEvent::Focused(false)) {
+            this.on_drag_state(false);
         }
-        // Re-poll minimized state here: X11 does not always emit occlusion.
         this.refresh();
         EventResult::Propagate
     });

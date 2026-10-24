@@ -1,6 +1,8 @@
 mod capture;
 mod fixtures;
+mod idle_self_check;
 mod skin;
+mod window_activity;
 
 use slint::ComponentHandle;
 
@@ -30,7 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let weak = app.as_weak();
-    let skin_host = skin::attach(&app)?;
+    let activity = std::rc::Rc::new(window_activity::Activity::default());
+    let skin_host = skin::attach(&app, &activity)?;
     let navigate_host = skin_host.clone();
     app.on_navigate(move |index| {
         if let Some(app) = weak.upgrade() {
@@ -130,6 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut capture_dir = None;
     let mut idle_seconds = None;
     let mut self_check = false;
+    let mut idle_self_check = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -145,6 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--scenario" => scenario = args.next().ok_or("--scenario needs a name")?,
             "--freeze-motion" => app.global::<MainMotion>().set_enabled(false),
             "--self-check" => self_check = true,
+            "--idle-self-check" => idle_self_check = true,
             "--dev" => app.set_dev_build(true),
             _ => return Err(format!("Unknown argument: {arg}").into()),
         }
@@ -156,6 +161,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if self_check {
         skin::arm_self_check(&app, &skin_host);
+    }
+    if idle_self_check {
+        idle_self_check::arm(&app, &activity);
     }
     let _capture_timer = capture_dir
         .map(|path| capture::start(&app, &skin_host, path.into()))

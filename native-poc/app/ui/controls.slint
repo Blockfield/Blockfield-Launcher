@@ -103,26 +103,29 @@ export component NavItem inherits ActionArea {
     }
 }
 
+export global WindowActivity { in-out property <bool> live: true; }
+
 export component StatusDot inherits Rectangle {
     in property <color> tint: Tokens.success;
     in property <bool> pulse: false;
     private property <bool> dim: false;
+    private property <bool> running: root.pulse && WindowActivity.live;
     width: 6px;
     height: 6px;
     border-radius: 3px;
     background: root.tint;
     drop-shadow-blur: 6px;
     drop-shadow-color: root.tint.with-alpha(0.702);
-    opacity: root.pulse && root.dim ? 0.5 : 1;
-    animate opacity { duration: root.pulse ? Tokens.pulse-half : 0ms; easing: Tokens.pulse-easing; }
+    opacity: root.running && root.dim ? 0.5 : 1;
+    animate opacity { duration: root.running ? Tokens.pulse-half : 0ms; easing: Tokens.pulse-easing; }
     init => {
         // Evaluate the lazy opacity binding before starting its first animation.
-        if root.opacity == 1 { root.dim = root.pulse; }
+        if root.opacity == 1 { root.dim = root.running; }
     }
-    changed pulse => { root.dim = root.pulse; }
+    changed running => { root.dim = root.running; }
     Timer {
         interval: Tokens.pulse-half;
-        running: root.pulse;
+        running: root.running;
         triggered => { root.dim = !root.dim; }
     }
 }

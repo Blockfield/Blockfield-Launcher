@@ -1,5 +1,5 @@
 import { Tokens } from "tokens.slint";
-import { ActionArea } from "controls.slint";
+import { ActionArea, WindowActivity } from "controls.slint";
 
 export global MainMotion { in-out property <bool> enabled: true; }
 
@@ -35,9 +35,11 @@ export component MainButton inherits ActionArea {
 
 export component Spinner inherits Rectangle {
     private property <angle> turn: 0deg;
+    private property <bool> running: MainMotion.enabled && WindowActivity.live;
     Image { x: 0px; y: 0px; width: parent.width; height: parent.height; source: @image-url("../assets/icons/loader-circle.svg"); colorize: Tokens.foreground; transform-rotation: root.turn; }
-    init => { if MainMotion.enabled && root.turn == 0deg { root.turn = 360deg; } }
-    animate turn { duration: 1000ms; easing: linear; iteration-count: -1; }
+    init => { if root.running && root.turn == 0deg { root.turn = 360deg; } }
+    changed running => { root.turn = root.running ? 360deg : 0deg; }
+    animate turn { duration: root.running ? 1000ms : 0ms; easing: linear; iteration-count: -1; }
 }
 
 export global SelectSearch {callback find([string], string) -> int; }

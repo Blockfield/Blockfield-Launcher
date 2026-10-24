@@ -91,3 +91,25 @@ processes are skipped via their unreadable `/proc` entries.
    sustained `cpu_pct`; attach both `summary.md` files to the GO/NO-GO report.
 4. Do not run other GPU apps concurrently; `fdinfo` accounting is per-process
    but driver-global pressure still skews results.
+
+## Main-screen minimize/restore self-check
+
+After building `native-poc/app`, use the existing shared image and an owned
+process (no host display is mounted):
+
+```sh
+agent-process start --name main-idle-check --cwd "$PWD" -- timeout 180 \
+  python3 scripts/bench/final_ab.py --out /absolute/report/self-check \
+  --tauri /path/to/capture/blockfield-launcher \
+  --slint native-poc/app/target/release/blockfield-native-poc \
+  --scenario main --variant slint-gl --variant slint-sw --self-check
+```
+
+`--idle-self-check` checks the default online pulse, then the busy spinner.
+Each cycle counts redraw events delivered to Slint, minimizes through winit,
+allows 1 s to settle, asserts no redraws or active animations for a 5 s interval,
+and restores redraw delivery. The spinner cycle disables the online pulse so
+each animation is tested independently, on both renderers.
+The app exits on success; the container requires its success marker and zero exit
+status within 30 s. `--variant` can also select just the Slint variants for a
+`--scenario skin-minimized --smoke --duration 30` regression run.

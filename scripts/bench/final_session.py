@@ -138,6 +138,8 @@ def main():
                 argv = ["/opt/tauri"]
             else:
                 argv = ["/opt/slint", "--state", request["state"]]
+                if request.get("self_check"):
+                    argv.append("--idle-self-check")
             with (WORK / "app.log").open("w") as app_log:
                 started = time.monotonic()
                 app = subprocess.Popen(
@@ -198,6 +200,14 @@ def main():
                 )
                 if "WIDTH=1280\n" not in geometry or "HEIGHT=720\n" not in geometry:
                     raise RuntimeError(f"Invalid dimensions: {geometry}")
+                if request.get("self_check"):
+                    if (
+                        app.wait(timeout=30) != 0
+                        or "IDLE_SELF_CHECK passed:"
+                        not in (WORK / "app.log").read_text()
+                    ):
+                        raise RuntimeError("Main minimize/restore self-check failed")
+                    return {"request": request, "startup_s": startup, "samples": []}
                 if request["minimized"]:
                     command("xdotool", "windowminimize", window, env=env)
                     wait(

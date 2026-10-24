@@ -42,7 +42,7 @@ def quiet_gate(out, limit=1200):
 
 def run_one(args, variant, scenario, repeat):
     state, minimized = SCENARIOS[scenario]
-    gate = quiet_gate(args.out)
+    gate = quiet_gate(args.out, limit=0 if args.self_check else 1200)
     request = {
         "app": "tauri" if variant == "tauri" else "slint",
         "backend": VARIANTS[variant],
@@ -51,6 +51,7 @@ def run_one(args, variant, scenario, repeat):
         "duration": 0 if scenario == "startup" else args.duration,
         "warmup": 0 if scenario == "startup" else args.warmup,
         "screenshot": args.smoke and not minimized,
+        "self_check": args.self_check,
     }
     name = f"{scenario}-{variant}-{repeat}"
     with tempfile.TemporaryDirectory(prefix="session-", dir=args.out) as directory:
@@ -139,7 +140,15 @@ def main():
     parser.add_argument("--warmup", type=float, default=5)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--scenario", choices=SCENARIOS, action="append")
+    parser.add_argument("--variant", choices=VARIANTS, action="append")
+    parser.add_argument("--self-check", action="store_true")
     args = parser.parse_args()
+    if args.self_check and (
+        not args.variant or "tauri" in args.variant or args.scenario != ["main"]
+    ):
+        parser.error(
+            "--self-check needs --scenario main and Slint-only --variant values"
+        )
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=True)
     metadata = {
@@ -163,16 +172,18 @@ def main():
     }
     (args.out / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     for scenario in args.scenario or SCENARIOS:
-        repeats = 1 if args.smoke else 5 if scenario == "startup" else 3
+        repeats = (
+            1 if args.smoke or args.self_check else 5 if scenario == "startup" else 3
+        )
         for repeat in range(repeats):
             # Interleave apps to avoid putting one renderer entirely at the end of a drift.
-            for variant in VARIANTS:
+            for variant in args.variant or VARIANTS:
                 run_one(args, variant, scenario, repeat)
         with (args.out.parent / "progress.md").open("a") as progress:
             progress.write(
                 f"- {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}: "
-                f"{'smoke' if args.smoke else 'measurement'} {scenario} complete; "
-                f"{repeats} repeats × {len(VARIANTS)} variants; evidence {args.out}.\n"
+                f"{'self-check' if args.self_check else 'smoke' if args.smoke else 'measurement'} {scenario} complete; "
+                f"{repeats} repeats × {len(args.variant or VARIANTS)} variants; evidence {args.out}.\n"
             )
 
 
