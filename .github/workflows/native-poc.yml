@@ -1,0 +1,159 @@
+name: Native POC xplat
+
+# u17: build, test and capture the Slint POC on Windows/macOS (ubuntu as
+# control). No secrets, no signing, no releases — artifacts only.
+on:
+  push:
+    branches: [native/xplat]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  poc:
+    name: POC (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x86_64
+            os: windows-latest
+          - name: macos-arm64
+            os: macos-latest
+          - name: ubuntu-x86_64
+            os: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+        working-directory: native-poc/app
+    steps:
+      - if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: 1.99.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: native-poc-${{ matrix.os }}
+          workspaces: |
+            native-poc/app -> native-poc/app/target
+      # Ubuntu runners have no display server and no Vulkan ICD: Xvfb for the
+      # winit window, lavapipe so the skin3d wgpu preview gets an adapter.
+      - name: Linux display and software GL/Vulkan
+        if: runner.os == 'Linux'
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb mesa-vulkan-drivers libgl1
+      - name: Format check
+        timeout-minutes: 3
+        run: cargo fmt --all -- --check
+      # Release profile throughout so clippy/test/build share one codegen round.
+      - name: Clippy
+        timeout-minutes: 25
+        run: cargo clippy --locked --release --all-targets -- -D warnings
+      - name: Tests
+        timeout-minutes: 20
+        run: cargo test --locked --release
+      - name: Release build
+        timeout-minutes: 30
+        run: cargo build --locked --release
+      - name: Capture main and settings-skin
+        timeout-minutes: 15
+        env:
+          CARGO_BUILD_JOBS: 4
+        run: |
+          set -euo pipefail
+          exe=target/release/blockfield-native-poc
+          if [ "$RUNNER_OS" = Windows ]; then exe=$exe.exe; fi
+          ls -l "$exe"
+          out=xplat-captures
+          rm -rf "$out"
+          mkdir -p "$out"
+          {
+            echo "os=$RUNNER_OS arch=$RUNNER_ARCH"
+            uname -a
+            rustc -vV | tr '\n' ' '; echo
+            grep -A2 'name = "slint"' Cargo.lock | head -3
+            grep -A2 'name = "wgpu"' Cargo.lock | head -3
+            wc -c "$exe"
+          } > "$out/env.txt" 2>&1
+          cat "$out/env.txt"
+          # Portable 150 s watchdog (macOS has no coreutils `timeout`); the
+          # capture quits its own event loop, this only guards hangs.
+          cat > "$RUNNER_TEMP/runguarded.py" <<'PYEOF'
+          import subprocess, sys
+          log, *cmd = sys.argv[1:]
+          with open(log, "wb") as f:
+              try:
+                  p = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, timeout=150)
+                  sys.exit(p.returncode)
+              except subprocess.TimeoutExpired:
+                  f.write(b"\nTIMEOUT after 150s\n")
+                  sys.exit(124)
+          PYEOF
+          wrap=()
+          if [ "$RUNNER_OS" = Linux ]; then wrap=(xvfb-run -a -s "-screen 0 1920x1080x24"); fi
+          fail=0
+          for renderer in default software; do
+            if [ "$renderer" = software ]; then export SLINT_BACKEND=winit-software; else unset SLINT_BACKEND; fi
+            for scale in 1 1.5; do
+              export SLINT_SCALE_FACTOR=$scale
+              for state in main settings-skin; do
+                dir="$out/$renderer/scale-$scale/$state"
+                mkdir -p "$dir"
+                echo "=== $renderer scale=$scale state=$state ==="
+                status=0
+                SLINT_BACKEND=${SLINT_BACKEND-} SLINT_SCALE_FACTOR=$scale \
+                  "${wrap[@]}" python3 "$RUNNER_TEMP/runguarded.py" "$dir/app.log" \
+                  "./$exe" --state "$state" --freeze-motion --capture-dir "$dir" || status=$?
+                echo "exit=$status (capture asserts panic nonzero on failure)"
+                if [ "$status" != 0 ]; then fail=1; fi
+              done
+            done
+          done
+          unset SLINT_BACKEND SLINT_SCALE_FACTOR
+          # PPM (P6) -> PNG with stdlib only; no ffmpeg/magick on runners.
+          python3 - "$out" <<'PYEOF'
+          import struct, sys, zlib
+          from pathlib import Path
+          def chunk(typ, data):
+              return (struct.pack(">I", len(data)) + typ + data
+                      + struct.pack(">I", zlib.crc32(typ + data) & 0xffffffff))
+          def convert(path):
+              data = path.read_bytes()
+              assert data.startswith(b"P6\n"), path
+              header_end = data.index(b"255\n") + 4
+              w, h, maxval = (int(x) for x in data[:header_end].split()[1:4])
+              assert maxval == 255, path
+              raw = data[header_end:]
+              assert len(raw) == w * h * 3, (path, len(raw), w, h)
+              rows = b"".join(b"\x00" + raw[y * w * 3:(y + 1) * w * 3] for y in range(h))
+              png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+              out = path.with_suffix(".png")
+              out.write_bytes(png)
+              print(f"{out} {w}x{h}")
+              path.unlink()
+          for ppm in sorted(Path(sys.argv[1]).rglob("*.ppm")):
+              convert(ppm)
+          PYEOF
+          find "$out" -type f | sort
+          [ "$fail" = 0 ]
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: poc-${{ runner.os }}-${{ runner.arch }}
+          path: native-poc/app/xplat-captures
+          retention-days: 7
