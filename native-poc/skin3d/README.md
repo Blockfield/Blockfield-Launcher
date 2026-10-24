@@ -1,9 +1,10 @@
 # skin3d offscreen feasibility renderer
 
 Standalone Cargo workspace for native migration unit u07. It does not change the
-launcher or integrate Slint. Rust + wgpu only; no window, surface, WebView or JS
-runtime is needed to render. [PORTING.md](PORTING.md) maps the port to the installed
-skinview3d sources. All bundled textures are synthetic, with no account/user data.
+launcher. The library is Rust + wgpu only; no window, surface, WebView or JS
+runtime is needed to render. The optional [Slint preview example](SLINT.md)
+integrates the same renderer into a native window without changing the library API.
+[PORTING.md](PORTING.md) maps the port to the installed skinview3d sources. All bundled textures are synthetic, with no account/user data.
 
 ## API
 
