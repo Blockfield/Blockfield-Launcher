@@ -53,13 +53,14 @@ export component GlowPanel inherits Rectangle {
         y: -1px;
         width: parent.width + 2px;
         height: parent.height + 2px;
-        border-width: 1px;
+        border-width: 1phx;
         border-color: root.glow ? Tokens.primary.with-alpha(0.2) : Tokens.border.with-alpha(0.6);
     }
     Rectangle {
-        border-width: 1px;
+        border-width: 1phx;
         border-color: Tokens.border;
-        background: Tokens.panel-gradient;
+        // CSS corner gradients use the perpendicular diagonal (magic corners).
+        background: @linear-gradient(180deg - Math.atan2(root.height / 1px, root.width / 1px), Tokens.card 0%, Tokens.card 50%, Tokens.chrome 100%);
         @children
     }
 }

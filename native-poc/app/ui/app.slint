@@ -114,6 +114,10 @@ export component AppWindow inherits Window {
                 join(id) => { root.join(id); }
             }
             if root.active == 3: SettingsScreen {
+                // shortcut: preserve u16's logical-pixel layout until settings adopts CSS zoom metrics.
+                private property <length> legacy-inset: 1px - 1phx;
+                x: self.legacy-inset; y: self.legacy-inset;
+                width: parent.width - 2 * self.legacy-inset; height: parent.height - Tokens.header-height - Tokens.footer-height - 2 * self.legacy-inset;
                 tabs: root.settings-tabs;
                 tab <=> root.settings-tab;
                 title: root.settings-title;

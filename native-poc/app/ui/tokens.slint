@@ -1,4 +1,6 @@
 export global Tokens {
+    // WebKit zoom snaps borders and line boxes to whole physical pixels.
+    public pure function line-height(height: length, pixel: length) -> length { return Math.floor(height / pixel) * pixel; }
     out property <color> background: #070604;
     out property <color> foreground: #f3e7d0;
     out property <color> chrome: #0b0906;
@@ -15,7 +17,6 @@ export global Tokens {
     out property <color> close-hover: #5a1714;
     out property <color> neutral-100: #f5f5f5;
     out property <color> neutral-200: #e5e5e5;
-    out property <brush> panel-gradient: @linear-gradient(135deg, #11100d 0%, #11100d 50%, #0b0906 100%);
     out property <length> base-size: 16px;
     out property <length> radius-sm: 4px;
     out property <length> radius-md: 6px;

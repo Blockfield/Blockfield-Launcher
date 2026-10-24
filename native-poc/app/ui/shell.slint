@@ -8,21 +8,21 @@ export component WindowChrome inherits Rectangle {
     callback maximize();
     callback request-close();
     border-radius: Tokens.radius-md;
-    border-width: 1px;
+    border-width: 1phx;
     border-color: Tokens.border;
     background: Tokens.background;
     clip: true;
     titlebar := Rectangle {
-        x: 1px;
-        y: 1px;
-        width: parent.width - 2px;
+        x: 1phx;
+        y: 1phx;
+        width: parent.width - 2phx;
         height: Tokens.chrome-height;
         background: Tokens.chrome;
-        Rectangle { y: parent.height - 1px; height: 1px; background: Tokens.secondary; }
+        Rectangle { y: parent.height - 1phx; height: 1phx; background: Tokens.secondary; }
         WindowMoveArea { width: parent.width - 128px; }
         Rectangle {
             x: 12px;
-            y: 14.5px;
+            y: (parent.height - 1phx - self.height) / 2;
             width: 6px;
             height: 6px;
             border-radius: 3px;
@@ -30,7 +30,7 @@ export component WindowChrome inherits Rectangle {
         }
         title-label := Text {
             x: 26px;
-            height: 35px;
+            height: Tokens.chrome-height - 1phx;
             text: root.title;
             color: Tokens.muted-foreground;
             font-size: Tokens.text-label;
@@ -55,7 +55,7 @@ export component WindowChrome inherits Rectangle {
         }
         HorizontalLayout {
             x: parent.width - 116px;
-            y: 5.5px;
+            y: (parent.height - 1phx - self.height) / 2;
             width: 104px;
             height: 24px;
             spacing: 4px;
@@ -65,10 +65,10 @@ export component WindowChrome inherits Rectangle {
         }
     }
     Rectangle {
-        x: 1px;
-        y: 1px + Tokens.chrome-height;
-        width: parent.width - 2px;
-        height: parent.height - Tokens.chrome-height - 2px;
+        x: 1phx;
+        y: 1phx + Tokens.chrome-height;
+        width: parent.width - 2phx;
+        height: parent.height - Tokens.chrome-height - 2phx;
         clip: true;
         @children
     }
@@ -96,10 +96,10 @@ export component Shell inherits Rectangle {
         y: 0px;
         height: Tokens.header-height;
         background: Tokens.chrome;
-        Rectangle { y: parent.height - 1px; height: 1px; background: Tokens.secondary; }
+        Rectangle { y: parent.height - 1phx; height: 1phx; background: Tokens.secondary; }
         brand-button := ActionArea {
             x: 20px;
-            y: 13.5px;
+            y: (parent.height - 1phx - self.height) / 2;
             width: 36px + Math.max(brand-text.preferred-width, subtitle-text.preferred-width);
             height: 26px;
             label: root.brand + " — " + root.nav-labels[0];
@@ -131,7 +131,7 @@ export component Shell inherits Rectangle {
         }
         HorizontalLayout {
             x: brand-button.x + brand-button.width + 24px;
-            y: 9.5px;
+            y: (parent.height - 1phx - self.height) / 2;
             height: 36px;
             spacing: 4px;
             alignment: start;
@@ -144,14 +144,14 @@ export component Shell inherits Rectangle {
         }
         Rectangle {
             x: parent.width - self.width - 20px;
-            y: 9.5px;
-            width: 62px + Math.max(user-text.preferred-width, role-text.preferred-width);
+            y: (parent.height - 1phx - self.height) / 2;
+            width: 60px + 2phx + Math.max(user-text.preferred-width, role-text.preferred-width);
             height: 36px;
             background: Tokens.card;
-            border-width: 1px;
+            border-width: 1phx;
             border-color: Tokens.border;
             Image {
-                x: 13px;
+                x: 12px + 1phx;
                 y: 6px;
                 width: 24px;
                 height: 24px;
@@ -160,7 +160,7 @@ export component Shell inherits Rectangle {
                 accessible-role: none;
             }
             if root.fixture-face: Rectangle {
-                x: 13px; y: 6px; width: 24px; height: 24px;
+                x: 12px + 1phx; y: 6px; width: 24px; height: 24px;
                 for offset in [8, 40]: Image {
                     x: 0px; y: 0px; width: 24px; height: 24px;
                     source: @image-url("../assets/fixtures/skin.png");
@@ -169,7 +169,7 @@ export component Shell inherits Rectangle {
                 }
             }
             user-text := Text {
-                x: 49px;
+                x: 48px + 1phx;
                 y: 7px;
                 height: 11px;
                 vertical-alignment: center;
@@ -179,7 +179,7 @@ export component Shell inherits Rectangle {
                 letter-spacing: Tokens.tracking-user;
             }
             role-text := Text {
-                x: 49px;
+                x: 48px + 1phx;
                 y: 20px;
                 height: 9px;
                 vertical-alignment: center;
@@ -201,11 +201,11 @@ export component Shell inherits Rectangle {
         y: parent.height - Tokens.footer-height;
         height: Tokens.footer-height;
         background: Tokens.chrome;
-        Rectangle { height: 1px; background: Tokens.secondary; }
+        Rectangle { x: 0px; y: 0px; height: 1phx; background: Tokens.secondary; }
         HorizontalLayout {
             x: 20px;
-            y: 1px;
-            height: 31px;
+            y: (parent.height + 1phx - self.height) / 2;
+            height: 24px;
             spacing: 12px;
             alignment: start;
             version-button := ActionArea {
@@ -214,6 +214,7 @@ export component Shell inherits Rectangle {
                 height: 24px;
                 clicked => { root.launcher-update(); }
                 version-row := HorizontalLayout {
+                    x: 0px; y: 0px; height: 24px;
                     spacing: 8px;
                     alignment: start;
                     if root.dev-build: Text {
@@ -221,11 +222,13 @@ export component Shell inherits Rectangle {
                         color: Tokens.primary;
                         font-weight: Tokens.weight-medium;
                         font-size: Tokens.base-size;
+                        vertical-alignment: center;
                     }
                     Text {
                         text: root.launcher-label;
                         color: version-button.hovered ? Tokens.foreground : Tokens.faint;
                         font-size: Tokens.base-size;
+                        vertical-alignment: center;
                         font-weight: Tokens.weight-medium;
                         letter-spacing: Tokens.tracking-footer;
                     }
@@ -233,13 +236,16 @@ export component Shell inherits Rectangle {
                         text: "· " + root.update-label;
                         color: Tokens.primary;
                         font-size: Tokens.base-size;
+                        vertical-alignment: center;
                         font-weight: Tokens.weight-medium;
                     }
                 }
             }
-            Rectangle { width: 1px; height: 12px; background: Tokens.secondary; }
+            Rectangle { width: 1px; height: 24px; Rectangle { x: 0px; y: 6px; height: 12px; background: Tokens.secondary; } }
             Text {
                 text: root.server-label;
+                height: 24px;
+                vertical-alignment: center;
                 color: Tokens.faint;
                 font-size: Tokens.text-label;
                 letter-spacing: Tokens.tracking-footer;
@@ -247,8 +253,8 @@ export component Shell inherits Rectangle {
         }
         HorizontalLayout {
             x: parent.width - self.preferred-width - 20px;
-            y: 1px;
-            height: 31px;
+            y: (parent.height + 1phx - self.height) / 2;
+            height: 15px;
             spacing: 12px;
             alignment: start;
             support-button := ActionArea {
@@ -277,12 +283,14 @@ export component Shell inherits Rectangle {
                     vertical-alignment: center;
                 }
             }
-            Rectangle { width: 1px; height: 12px; background: Tokens.secondary; }
+            Rectangle { width: 1px; height: 15px; Rectangle { x: 0px; y: 1.5px; height: 12px; background: Tokens.secondary; } }
             HorizontalLayout {
                 spacing: 6px;
-                StatusDot {}
+                Rectangle { width: 6px; height: 15px; StatusDot { x: 0px; y: 4.5px; } }
                 Text {
                     text: root.network-label;
+                    height: 15px;
+                    vertical-alignment: center;
                     color: Tokens.faint;
                     font-size: Tokens.text-label;
                     letter-spacing: Tokens.tracking-footer;
