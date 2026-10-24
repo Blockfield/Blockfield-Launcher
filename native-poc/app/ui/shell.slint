@@ -75,6 +75,7 @@ export component WindowChrome inherits Rectangle {
 }
 
 export component Shell inherits Rectangle {
+    in property <bool> fixture-face: false;
     in-out property <int> active: 0;
     in property <string> brand;
     in property <string> subtitle;
@@ -157,6 +158,15 @@ export component Shell inherits Rectangle {
                 source: @image-url("../assets/default-player-head.svg");
                 image-rendering: pixelated;
                 accessible-role: none;
+            }
+            if root.fixture-face: Rectangle {
+                x: 13px; y: 6px; width: 24px; height: 24px;
+                for offset in [8, 40]: Image {
+                    x: 0px; y: 0px; width: 24px; height: 24px;
+                    source: @image-url("../assets/fixtures/skin.png");
+                    source-clip-x: offset; source-clip-y: 8; source-clip-width: 8; source-clip-height: 8;
+                    image-rendering: pixelated;
+                }
             }
             user-text := Text {
                 x: 49px;

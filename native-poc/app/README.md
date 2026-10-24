@@ -29,7 +29,7 @@ No packages were installed into the base OS. Do not run a GUI on the owner's dis
 From the repository root, first inspect existing processes according to AGENTS.md. Build the isolated capture image:
 
 ```sh
-podman build -f native-poc/app/Headless.Containerfile -t localhost/blockfield-native-headless native-poc/app
+podman build -f native-poc/app/Headless.Containerfile -t localhost/blockfield-main-headless native-poc/app
 ```
 
 Then start the bounded harness through the ownership helper (use an absolute output directory):
@@ -79,3 +79,40 @@ Renderer: Slint 1.18.1 winit + Skia/OpenGL, Mesa llvmpipe in private Fedora 44 P
 All 24 release captures and mouse/keyboard/close/pulse/font checks passed. The pulse test checks phase ordering (early bright frame > return-half dim frame), including a false→true→false toggle on the same StatusDot. Lazy binding initialization is forced before its first animation; stopping pulse restores full opacity immediately.
 
 Evidence: `.dev/coord-20261024/plans/native-migration/reports/poc-shell/` in the coordinator checkout (`progress.md`, `review.md`, `1x/`, `1.25x/`, `1.5x/`, `idle/idle.json`). Required Rust formatting, Clippy and release build passed with four build jobs; shell syntax/Python compile and whitespace checks also passed. The repository pre-commit hook additionally passed root Tauri/shared formatting, Clippy and workspace tests (the existing public-release-download test is ignored). No task-owned app/container/watcher remains running.
+
+## MainScreen fixture port (u06b)
+
+`ui/main.slint` adds the MainScreen within Shell's content slot. Run `--state main` (the executable default), `main-launching`, `offline`, or `error`; these names and values match `origin/native/capture` commit `cb05a069cb2b41979e0d4dbad8a061e85ec8900c`. `BLOCKFIELD_CAPTURE_STATE` is the environment equivalent. `--state shell` retains u06a's empty-shell harness and assertions. Unknown state/scenario names fail closed.
+
+The exact source fixture is retained at `assets/fixtures/tauri-data.ts`, with its `skin.png` used for the same base-face/hat texture crop as `player-face.ts`. Canonical values: CaptureOperator, role player, game profile; pack 2.75 installed/latest, 1.0 GB, Java/loader ready; online 24/100, 32 ms, EU/Frankfurt, play.blockfield.pro:25565; ALPHA (12 players, 8/12 ready, Casual/room/Citadel/waiting) and BRAVO (12 players, Ranked/campaign/Crossroads/running, queue admission). Content is the React fallback because capture returns `{}` for content.json. Launcher update: 1.0.20. Offline keeps EU and max 100 but clears rooms, players and ping; error leaves the pack unchecked with `Capture fixture: manifest unavailable`.
+
+The fixture player's role hides profile selection in React, so canonical Slint captures hide it too. Explicit `--scenario builder` or `workshop` demonstrates the permitted profile selector without altering the canonical data. Further diagnostics: `checking`, `busy` (local launching with 42% text), `running`, `finishing`, `profile-changing`, `profile-blocked`, `profile-error`, `empty`, `unavailable`, `maintenance`, `updating`, `update`, `setup`, `retry`, `closed`. These diagnostic variations are POC-only and are not Tauri capture states.
+
+MainScreen's launch percentage is text in the button subtitle; the gradient progress-width animation belongs to UpdateScreen, which is outside this unit. Likewise, `main-launching` sets **game phase** launching but leaves MainScreen's **local** launching flag false, exactly as the capture fixture does: its deploy is disabled, with no LoaderCircle. `busy` exercises the local-launch spinner. Status pulses reuse the existing 2s ease-in-out implementation; LoaderCircle rotates continuously over 1s with linear timing; colors, deploy opacity/border and select chevrons use 150ms cubic-bezier(.4,0,.2,1). The original React Lucide paths are bundled; Play's fill is enabled as in React.
+
+Fixture actions stay inside this executable: deploy changes the fixture launch state; verify shows a 1s check; joining shows the source invitation message then starts the fixture launch. They never touch game files, accounts, a network or a browser. Update/setup actions show an explicit POC message because UpdateScreen is not part of this port.
+
+### Reproduce MainScreen evidence
+
+After checking existing processes/ownership, use the same isolated harness:
+
+```sh
+agent-process start --name native-main-capture --cwd "$PWD" -- native-poc/app/scripts/headless.sh /absolute/report/main/1x 1 capture main
+python3 native-poc/app/scripts/verify_main.py /absolute/report/main/1x 1
+agent-process start --name native-main-motion --cwd "$PWD" -- native-poc/app/scripts/headless.sh /absolute/report/main/motion 1 record main
+agent-process start --name native-main-idle --cwd "$PWD" -- native-poc/app/scripts/headless.sh /absolute/report/main/idle 1 idle main
+```
+
+Repeat capture for each canonical state and scale 1, 1.25 and 1.5. A sixth argument is not required: the optional fifth argument is the diagnostic scenario. MainScreen still capture mode adds `--freeze-motion`, matching Tauri’s paused CSS animations and disabled transitions; interactive runs, shell regression tests, recordings and idle runs animate normally. Capture scripts assert room paging, tabs, keyboard select, verify and deploy/disabled behavior through actual dispatched input. Screenshots after `main.png` intentionally show interaction states, not independent canonical fixtures.
+
+After a 2s renderer warmup, container ffmpeg records the private Xvfb display at 60fps for 3s into lossless FFV1; the host ffmpeg encodes H.264 while preserving input time. `frame-times.csv` retains the actual source frame timestamps. This avoids `take_snapshot`/PPM readback in the app UI thread, which reached only 11–15 snapshots/s during an initial diagnostic and cannot validate 60fps motion. Mouse capture is disabled. No host display socket, browser or audio source is used. The temporary lossless recording is deleted after encoding.
+
+The container image adds Fedora's `ffmpeg-free` only inside its isolated filesystem. The renderer remains Skia/OpenGL on private Xvfb/Mesa llvmpipe. The unchanged existing `scripts/bench/bench.py` measures the idle app PID/tree. The harness has a private container cidfile and exact-container cleanup on normal exit, failure, deadline or task cancellation.
+
+### MainScreen parity gaps / boundaries
+
+- Paired pixel/frame diffs are the next unit; this port does not assert pixel-perfect parity. Slint and Chromium text shaping, baseline metrics, shadow/gradient interpolation and antialiasing need that comparison. The inherited negative-spread/inset glow limitations still apply to deploy.
+- Fixture rooms have no battle points; battle-score/point-pagination UI is not included. Only two fixture rooms/options are used; long arbitrary lists and custom scrollbars are not covered.
+- Native title tooltips, browser-default disclosure marker pixels, screen-reader behavior and long CMS strings remain unverified. Error details and select keyboard focus are explicit native controls.
+- Diagnostic states demonstrate Workshop and maintenance with explicitly labeled synthetic values. They are not additional baseline fixtures. There is no backend persistence, real game launch/profile authorization, or UpdateScreen implementation in this isolated POC.
+- Window-manager behavior, Wayland, Windows and macOS remain outside the Linux headless check. No user's display/browser is used.

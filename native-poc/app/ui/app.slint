@@ -7,12 +7,25 @@ import "../assets/fonts/Inter-500.ttf";
 import "../assets/fonts/Inter-600.ttf";
 import "../assets/fonts/Inter-700.ttf";
 import "../assets/fonts/Inter-800.ttf";
+export { SelectSearch, MainMotion } from "main-controls.slint";
+import { MainScreen, MainData, Room } from "main.slint";
 import { Tokens } from "tokens.slint";
 import { WindowChrome, Shell } from "shell.slint";
 import { GridBackdrop, TopoBackdrop, CornerTicks, GlowPanel } from "backdrop.slint";
 import { StatusDot } from "controls.slint";
 
 export component AppWindow inherits Window {
+    in property <bool> show-main: false;
+    in property <MainData> main-data;
+    in property <[Room]> rooms;
+    in property <[string]> room-names;
+    in-out property <bool> workshop: false;
+    in-out property <int> room-index: 0;
+    in-out property <int> details-view: 0;
+    in-out property <string> room-message;
+    callback deploy();
+    callback verify();
+    callback join(string);
     in property <string> chrome-title;
     in property <string> brand;
     in property <string> subtitle;
@@ -50,6 +63,7 @@ export component AppWindow inherits Window {
         maximize => { root.maximize(); }
         request-close => { root.request-close(); }
         Shell {
+            fixture-face: root.show-main;
             active <=> root.active;
             brand: root.brand;
             subtitle: root.subtitle;
@@ -65,6 +79,18 @@ export component AppWindow inherits Window {
             navigate(index) => { root.navigate(index); }
             launcher-update => { root.launcher-update(); }
             support => { root.support(); }
+            if root.show-main && root.active == 0: MainScreen {
+                data: root.main-data;
+                rooms: root.rooms;
+                room-names: root.room-names;
+                workshop <=> root.workshop;
+                room-index <=> root.room-index;
+                details-view <=> root.details-view;
+                room-message <=> root.room-message;
+                deploy => { root.deploy(); }
+                verify => { root.verify(); }
+                join(id) => { root.join(id); }
+            }
             if root.show-backdrop: Rectangle {
                 GridBackdrop { intensity: 0.9; }
                 TopoBackdrop {}

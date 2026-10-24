@@ -1,0 +1,133 @@
+import { Tokens } from "tokens.slint";
+import { ActionArea } from "controls.slint";
+
+export global MainMotion { in-out property <bool> enabled: true; }
+
+export component MainButton inherits ActionArea {
+    in property <string> text: root.label;
+    in property <image> icon;
+    in property <length> icon-size: 14px;
+    in property <length> text-size: 12px;
+    in property <length> tracking: 0px;
+    in property <bool> selected: false;
+    width: caption.preferred-width + (root.icon.width > 0 ? root.icon-size + (root.text != "" ? 8px : 0px) : 0px) + 26px;
+    height: 32px;
+    opacity: root.enabled ? 1 : 0.5;
+    private property <bool> visually-hovered: root.hovered || disabled-touch.has-hover;
+    disabled-touch := TouchArea { x: 0px; y: 0px; enabled: !root.enabled; mouse-cursor: not-allowed; }
+    border-width: 1px;
+    border-color: root.visually-hovered ? Tokens.ring : (root.selected ? Tokens.primary.with-alpha(0.5) : Tokens.border);
+    animate border-color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+    HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: parent.height;
+        padding-left: 12px; padding-right: 12px; spacing: root.text != "" ? 8px : 0px; alignment: center;
+        if root.icon.width > 0: Rectangle {
+            width: root.icon-size; height: 32px;
+            Image { x: 0px; y: (parent.height - self.height) / 2; width: root.icon-size; height: root.icon-size; source: root.icon; colorize: Tokens.secondary-foreground; }
+        }
+        caption := Text {
+            text: root.text; font-weight: Tokens.weight-medium; color: root.visually-hovered || root.selected ? Tokens.foreground : Tokens.secondary-foreground;
+            font-size: root.text-size; letter-spacing: root.tracking;
+            vertical-alignment: center;
+            animate color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+        }
+    }
+}
+
+export component Spinner inherits Rectangle {
+    private property <angle> turn: 0deg;
+    Image { x: 0px; y: 0px; width: parent.width; height: parent.height; source: @image-url("../assets/icons/loader-circle.svg"); colorize: Tokens.foreground; transform-rotation: root.turn; }
+    init => { if MainMotion.enabled && root.turn == 0deg { root.turn = 360deg; } }
+    animate turn { duration: 1000ms; easing: linear; iteration-count: -1; }
+}
+
+export global SelectSearch {callback find([string], string) -> int; }
+
+export component MainSelect inherits Rectangle {
+    in property <string> label;
+    in property <[string]> options;
+    in-out property <int> selected: 0;
+    in property <bool> enabled: true;
+    out property <bool> open: popup.is-open;
+    private property <int> active: 0;
+    private property <string> search: "";
+    private property <bool> keyboard-focus: false;
+    callback chosen(int);
+    height: 32px;
+    opacity: root.enabled ? 1 : 0.5;
+    background: Tokens.card;
+    border-width: 1px;
+    border-color: root.open || trigger-touch.has-hover || disabled-touch.has-hover ? Tokens.ring : Tokens.border;
+    animate border-color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+    accessible-role: combobox;
+    accessible-label: root.label;
+    accessible-value: root.options[root.selected];
+    accessible-enabled: root.enabled;
+    forward-focus: keys;
+    disabled-touch := TouchArea { x: 0px; y: 0px; enabled: !root.enabled; mouse-cursor: not-allowed; }
+    function choose() {
+        root.selected = root.active;
+        root.chosen(root.selected);
+        popup.close();
+        keys.focus();
+    }
+    function handle(event: KeyEvent) -> EventResult {
+        root.keyboard-focus = true;
+        if event.text == Key.Escape || event.text == Key.Tab {popup.close(); return reject; }
+        if event.text == Key.DownArrow || event.text == Key.UpArrow || event.text == Key.Home || event.text == Key.End {
+            if !popup.is-open { root.active = root.selected; }
+            root.active = event.text == Key.Home ? 0 : event.text == Key.End ? root.options.length - 1 : Math.max(0, Math.min(root.options.length - 1, root.active + (event.text == Key.DownArrow ? 1 : -1)));
+            popup.show(); return accept;
+        }
+        if event.text == Key.Return || event.text == Key.Space {
+            if popup.is-open { root.choose(); } else { root.active = root.selected; popup.show(); }
+            return accept;
+        }
+        if event.text != "" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta {
+            root.search += event.text;
+            search-reset.start();
+            search-reset.restart();
+            let match = SelectSearch.find(root.options, root.search);
+            if match >= 0 { root.active = match; }
+            popup.show(); return accept;
+        }
+        return reject;
+    }
+    search-reset := Timer {interval: 700ms; running: false; triggered => { root.search = ""; search-reset.stop(); } }
+    keys := FocusScope { x: 0px; y: 0px;
+        enabled: root.enabled;
+        focus-gained(reason) => { root.keyboard-focus = reason == FocusReason.tab-navigation; }
+        key-pressed(event) => { return root.handle(event); }
+        trigger-touch := TouchArea { x: 0px; y: 0px;
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => { keys.focus(); root.keyboard-focus = false; root.active = root.selected; if popup.is-open { popup.close(); } else { popup.show(); } }
+        }
+    }
+    if root.keyboard-focus && (keys.has-focus || popup.is-open): Rectangle { x: -4px; y: -4px; width: root.width + 8px; height: root.height + 8px; border-width: 2px; border-color: Tokens.primary; }
+    Text { y: 0px;
+        x: 12px; width: parent.width - 50px; height: parent.height; text: root.options[root.selected];
+        color: Tokens.foreground; font-size: 14px; font-weight: Tokens.weight-medium; vertical-alignment: center; overflow: elide;
+    }
+    Image {
+        x: parent.width - 26px; y: 9px; width: 14px; height: 14px;
+        source: @image-url("../assets/icons/chevron-down.svg"); colorize: Tokens.secondary-foreground;
+        transform-rotation: root.open ? 180deg : 0deg;
+        animate transform-rotation { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+    }
+    popup := PopupWindow {
+        x: 0px; y: root.height + 4px; width: root.width; height: root.options.length * 36px + 10px;
+        close-policy: close-on-click-outside;
+        forward-focus: popup-keys;
+        Rectangle { x: 0px; y: 0px;background: Tokens.card; border-width: 1px; border-color: Tokens.ring; }
+        popup-keys := FocusScope { x: 0px; y: 0px;
+            key-pressed(event) => { return root.handle(event); }
+            for option[index] in root.options: Rectangle {
+                x: 5px; y: 5px + index * 36px; width: parent.width - 10px; height: 36px;
+                background: root.active == index ? Tokens.border : transparent;
+                Text { y: 0px;x: 8px; width: parent.width - 34px; height: parent.height; text: option; color: root.selected == index ? Tokens.primary : Tokens.secondary-foreground; font-size: 14px; vertical-alignment: center; overflow: elide; }
+                if root.selected == index: Image { x: parent.width - 22px; y: 11px; width: 14px; height: 14px; source: @image-url("../assets/icons/check.svg"); colorize: Tokens.primary; }
+                TouchArea { x: 0px; y: 0px;mouse-cursor: pointer; moved => { root.active = index; } clicked => { root.active = index; root.choose(); } }
+            }
+        }
+    }
+}
