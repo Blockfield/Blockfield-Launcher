@@ -1,0 +1,25 @@
+export component SkinPreview inherits Rectangle {
+    width: 220px;
+    height: 300px;
+    in property <image> frame;
+    callback drag-state(bool);
+    callback drag-by(float, float);
+    private property <length> last-x;
+    private property <length> last-y;
+    Image { source: root.frame; width: 100%; height: 100%; }
+    touch := TouchArea {
+        mouse-cursor: self.pressed ? grabbing : grab;
+        changed pressed => {
+            root.last-x = self.mouse-x;
+            root.last-y = self.mouse-y;
+            root.drag-state(self.pressed);
+        }
+        moved => {
+            if self.pressed {
+                root.drag-by((self.mouse-x - root.last-x) / 1px, (self.mouse-y - root.last-y) / 1px);
+                root.last-x = self.mouse-x;
+                root.last-y = self.mouse-y;
+            }
+        }
+    }
+}

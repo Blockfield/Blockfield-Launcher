@@ -9,6 +9,7 @@ import "../assets/fonts/Inter-700.ttf";
 import "../assets/fonts/Inter-800.ttf";
 export { SelectSearch, MainMotion } from "main-controls.slint";
 import { MainScreen, MainData, Room } from "main.slint";
+import { SettingsScreen } from "settings.slint";
 import { Tokens } from "tokens.slint";
 import { WindowChrome, Shell } from "shell.slint";
 import { GridBackdrop, TopoBackdrop, CornerTicks, GlowPanel } from "backdrop.slint";
@@ -23,6 +24,26 @@ export component AppWindow inherits Window {
     in-out property <int> room-index: 0;
     in-out property <int> details-view: 0;
     in-out property <string> room-message;
+    in-out property <int> settings-tab: 3;
+    in property <[string]> settings-tabs;
+    in property <string> settings-title;
+    in property <string> settings-subtitle;
+    in property <string> skin-path;
+    in property <string> cape-path;
+    in-out property <bool> slim: false;
+    in property <image> skin-frame;
+    in property <string> skin-error;
+    in property <string> skin-caption;
+    callback browse-skin();
+    callback browse-cape();
+    callback upload-skin();
+    callback toggle-slim(bool);
+    callback settings-reset();
+    callback settings-save();
+    callback settings-tab-changed(int);
+    callback skin-drag-state(bool);
+    callback skin-drag-by(float, float);
+    callback skin-frame-ready();
     callback deploy();
     callback verify();
     callback join(string);
@@ -63,7 +84,7 @@ export component AppWindow inherits Window {
         maximize => { root.maximize(); }
         request-close => { root.request-close(); }
         Shell {
-            fixture-face: root.show-main;
+            fixture-face: root.show-main || root.active == 3;
             active <=> root.active;
             brand: root.brand;
             subtitle: root.subtitle;
@@ -90,6 +111,27 @@ export component AppWindow inherits Window {
                 deploy => { root.deploy(); }
                 verify => { root.verify(); }
                 join(id) => { root.join(id); }
+            }
+            if root.active == 3: SettingsScreen {
+                tabs: root.settings-tabs;
+                tab <=> root.settings-tab;
+                title: root.settings-title;
+                subtitle: root.settings-subtitle;
+                skin-path: root.skin-path;
+                cape-path: root.cape-path;
+                slim <=> root.slim;
+                skin-frame: root.skin-frame;
+                skin-error: root.skin-error;
+                caption: root.skin-caption;
+                browse-skin => { root.browse-skin(); }
+                browse-cape => { root.browse-cape(); }
+                upload => { root.upload-skin(); }
+                toggle-slim(value) => { root.toggle-slim(value); }
+                reset => { root.settings-reset(); }
+                save => { root.settings-save(); }
+                tab-changed(index) => { root.settings-tab-changed(index); }
+                drag-state(active) => { root.skin-drag-state(active); }
+                drag-by(dx, dy) => { root.skin-drag-by(dx, dy); }
             }
             if root.show-backdrop: Rectangle {
                 GridBackdrop { intensity: 0.9; }

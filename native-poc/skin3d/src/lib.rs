@@ -4,6 +4,10 @@
 mod animation;
 mod model;
 mod renderer;
+#[cfg(feature = "slint")]
+pub mod slint;
+#[cfg(feature = "slint")]
+mod slint_pacing;
 mod texture;
 
 pub use animation::{OrbitControls, WalkingPose, auto_rotate_yaw, walking_pose};
