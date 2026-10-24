@@ -16,6 +16,7 @@ component SettingsTabButton inherits Rectangle {
         height: parent.height - 2px;
         text: root.label;
         font-size: 11px;
+        font-weight: 600;
         letter-spacing: 0.88px;
         color: root.current ? Tokens.foreground : (press-touch.has-hover ? Tokens.foreground : Tokens.secondary-foreground);
         horizontal-alignment: center;
@@ -52,17 +53,20 @@ component SettingsTabButton inherits Rectangle {
 component SettingRow inherits Rectangle {
     in property <image> icon;
     in property <string> label;
-    in property <string> hint;
-    // Fixed heights keep the dashed separators aligned without text measurement loops.
+    in property <[string]> hint;
+    // CSS rows use 12px vertical padding and a 260px label column.
     in property <length> row-height;
+    private property <length> edge: Math.floor(1px / 1phx) * 1phx;
+    private property <length> label-leading: Math.floor(16.5px / 1phx) * 1phx;
+    private property <length> hint-leading: Math.floor(15.125px / 1phx) * 1phx;
     height: root.row-height;
     Rectangle {
         x: 0px;
-        y: 8px;
+        y: 14px;
         width: 28px;
         height: 28px;
         background: Tokens.chrome;
-        border-width: 1px;
+        border-width: Math.floor(1px / 1phx) * 1phx;
         border-color: Tokens.border;
         Image {
             x: 7px;
@@ -75,7 +79,7 @@ component SettingRow inherits Rectangle {
     }
     Text {
         x: 40px;
-        y: 8px;
+        y: 12px;
         width: 220px;
         height: 15px;
         text: root.label;
@@ -84,24 +88,26 @@ component SettingRow inherits Rectangle {
         color: Tokens.neutral-100;
         vertical-alignment: center;
     }
-    Text {
+    // CSS leading-snug is 1.375; Slint's multiline leading is font-dependent.
+    for line[index] in root.hint: Text {
         x: 40px;
-        y: 25px;
+        y: 16px + root.label-leading + index * root.hint-leading;
         width: 220px;
-        height: parent.height - 33px;
-        text: root.hint;
+        height: root.hint-leading;
+        text: line;
         font-size: 11px;
         color: Tokens.muted-foreground;
-        wrap: word-wrap;
     }
     Rectangle {
         x: 284px;
-        y: 0px;
-        width: 654px;
-        height: parent.height;
+        y: 12px;
+        width: root.width - 284px;
+        height: root.height - 24px - root.edge;
         @children
     }
-    Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Tokens.secondary; }
+    for dash in Math.ceil(root.width / 6px): Rectangle {
+        x: dash * 6px; y: root.height - root.edge; width: Math.min(3px, root.width - self.x); height: root.edge; background: Tokens.secondary;
+    }
 }
 
 component PathField inherits Rectangle {
@@ -111,12 +117,12 @@ component PathField inherits Rectangle {
     height: 40px;
     clip: true;
     background: Tokens.chrome;
-    border-width: 1px;
+    border-width: Math.floor(1px / 1phx) * 1phx;
     border-color: Tokens.border;
     field-text := Text {
         x: 12px;
         y: 0px;
-        width: parent.width - 86px;
+        width: parent.width - 79px;
         height: parent.height;
         text: root.value;
         font-family: Tokens.mono;
@@ -126,9 +132,9 @@ component PathField inherits Rectangle {
         overflow: elide;
     }
     browse-button := ActionArea {
-        x: 580px;
+        x: root.width - self.width;
         y: 0px;
-        width: 74px;
+        width: 67px;
         height: parent.height;
         label: "ОБЗОР";
         background: Tokens.card;
@@ -140,6 +146,7 @@ component PathField inherits Rectangle {
             height: parent.height;
             text: "ОБЗОР";
             font-size: 10px;
+            font-weight: 600;
             letter-spacing: 1.4px;
             color: parent.hovered ? Tokens.foreground : Tokens.secondary-foreground;
             horizontal-alignment: center;
@@ -150,7 +157,7 @@ component PathField inherits Rectangle {
     TouchArea {
         x: 0px;
         y: 0px;
-        width: parent.width - 74px;
+        width: parent.width - 67px;
         mouse-cursor: text;
         clicked => { root.browse(); }
     }
@@ -163,7 +170,7 @@ component SettingsToggle inherits Rectangle {
     in property <string> off-label;
     callback toggled(bool);
     width: 64px;
-    height: 52px;
+    height: 28px;
     track := TouchArea {
         x: 0px;
         y: 0px;
@@ -178,20 +185,20 @@ component SettingsToggle inherits Rectangle {
         width: 56px;
         height: 28px;
         background: root.on ? Tokens.border : Tokens.chrome;
-        border-width: 1px;
+        border-width: Math.floor(1px / 1phx) * 1phx;
         border-color: root.on ? Tokens.primary.with-alpha(0.6) : Tokens.border;
         Rectangle {
-            x: root.on ? 32px : 2px;
-            y: 3px;
-            width: 22px;
-            height: 22px;
+            x: root.on ? 31px : 3px;
+            y: 4px;
+            width: 20px;
+            height: 20px;
             background: root.on ? Tokens.primary : #3a2c1d;
             animate x { duration: 150ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }
         }
     }
     Text {
         x: 0px;
-        y: 32px;
+        y: 35px;
         width: 56px;
         height: 12px;
         text: root.on ? root.on-label : root.off-label;
@@ -207,18 +214,20 @@ component SettingsButton inherits Rectangle {
     in property <image> icon;
     in property <bool> primary: false;
     in property <bool> enabled: true;
+    in property <length> horizontal-padding: 24px;
     callback clicked();
     height: 40px;
-    width: measure.preferred-width + (root.icon.width > 0 ? 34px : 0px) + 48px;
+    width: measure.preferred-width + (root.icon.width > 0 ? 25px : 0px) + root.horizontal-padding * 2;
     opacity: root.enabled ? 1 : 0.5;
     measure := Text {
         text: root.text;
         font-size: 11px;
+        font-weight: 600;
         letter-spacing: 1.98px;
         opacity: 0;
     }
-    background: root.primary ? @linear-gradient(180deg, #2a2116, #11100d) : Tokens.card;
-    border-width: 1px;
+    background: root.primary ? @linear-gradient(180deg, #2a2116, #11100d) : Tokens.chrome;
+    border-width: Math.floor(1px / 1phx) * 1phx;
     border-color: root.primary ? (touch.has-hover ? Tokens.primary : Tokens.primary.with-alpha(0.4)) : (touch.has-hover ? Tokens.ring : Tokens.border);
     touch := TouchArea {
         x: 0px;
@@ -228,7 +237,7 @@ component SettingsButton inherits Rectangle {
         clicked => { root.clicked(); }
     }
     if root.icon.width > 0: Image {
-        x: 24px;
+        x: root.horizontal-padding + 1px;
         y: 13.5px;
         width: 13px;
         height: 13px;
@@ -236,14 +245,15 @@ component SettingsButton inherits Rectangle {
         colorize: Tokens.foreground;
     }
     caption := Text {
-        x: root.icon.width > 0 ? 45px : 0px;
+        x: root.icon.width > 0 ? root.horizontal-padding + 26px : root.horizontal-padding + 1px;
         y: 0px;
-        width: parent.width - (root.icon.width > 0 ? 45px : 0px) - 24px;
+        width: measure.preferred-width;
         height: parent.height;
         text: root.text;
         font-size: 11px;
+        font-weight: 600;
         letter-spacing: 1.98px;
-        color: root.enabled && touch.has-hover ? Tokens.foreground : Tokens.secondary-foreground;
+        color: root.icon.width > 0 || (root.enabled && touch.has-hover) ? Tokens.foreground : Tokens.secondary-foreground;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -270,6 +280,13 @@ export component SettingsScreen inherits Rectangle {
     callback tab-changed(int);
     callback drag-state(bool);
     callback drag-by(float, float);
+    // WebKit floors CSS borders after zoom; phx preserves that at fractional DPI.
+    private property <length> edge: Math.floor(1px / 1phx) * 1phx;
+    private property <length> label-leading: Math.floor(16.5px / 1phx) * 1phx;
+    private property <length> hint-leading: Math.floor(15.125px / 1phx) * 1phx;
+    private property <length> skin-row-height: root.label-leading + 3 * root.hint-leading + 28px + root.edge;
+    private property <length> cape-row-height: 64px + root.edge;
+    private property <length> model-row-height: root.label-leading + root.hint-leading + 28px + root.edge;
     background: Tokens.background;
     TopoBackdrop { x: 0px; y: 0px; }
     GridBackdrop { x: 0px; y: 0px; intensity: 0.4; }
@@ -278,14 +295,15 @@ export component SettingsScreen inherits Rectangle {
         y: 20px;
         width: Math.min(1600px, parent.width) - 40px;
         height: parent.height - 40px;
-        Text {
+        title-text := Text {
             x: 0px;
             y: 0px;
             height: 26px;
             text: root.title;
             font-size: 26px;
+            font-weight: 600;
             letter-spacing: 1.56px;
-            color: Tokens.neutral-100;
+            color: #fafafa;
             vertical-alignment: center;
         }
         Text {
@@ -298,27 +316,19 @@ export component SettingsScreen inherits Rectangle {
             color: Tokens.muted-foreground;
             vertical-alignment: bottom;
         }
-        title-text := Text {
-            x: 0px;
-            y: 0px;
-            height: 26px;
-            text: root.title;
-            font-size: 26px;
-            color: transparent;
-        }
         panel := Rectangle {
             x: 0px;
-            y: 42px;
+            y: Math.floor(26px / 1phx) * 1phx + 16px;
             width: parent.width;
             height: parent.height - self.y;
             background: Tokens.card;
-            border-width: 1px;
+            border-width: Math.floor(1px / 1phx) * 1phx;
             border-color: Tokens.border;
             tabbar := Rectangle {
-                x: 0px;
-                y: 0px;
-                width: parent.width;
-                height: 44px;
+                x: root.edge;
+                y: root.edge;
+                width: parent.width - 2 * root.edge;
+                height: 44px + root.edge;
                 background: Tokens.chrome;
                 Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Tokens.border; }
                 HorizontalLayout {
@@ -340,63 +350,63 @@ export component SettingsScreen inherits Rectangle {
                 }
             }
             body := Rectangle {
-                x: 0px;
-                y: 44px;
-                width: parent.width;
-                height: parent.height - 44px - 64px;
+                x: root.edge;
+                y: 44px + 2 * root.edge;
+                width: parent.width - 2 * root.edge;
+                height: actions.y - self.y;
                 clip: true;
-                if root.tab == 3: skin-content := HorizontalLayout {
+                if root.tab == 3: skin-content := Rectangle {
                     x: 20px;
                     y: 8px;
                     width: parent.width - 40px;
                     height: parent.height - 16px;
-                    spacing: 24px;
-                    alignment: start;
                     form := Rectangle {
-                        width: parent.width - 262px; // 238px panel + 24px spacing
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width - 260px - 2 * root.edge;
                         height: parent.height;
                         SettingRow {
                             y: 0px;
-                            width: 938px;
+                            width: parent.width;
                             icon: @image-url("../assets/icons/shirt.svg");
                             label: "СКИН";
-                            hint: "PNG 64×64. Без загрузки на сервере остаётся скин лицензионного аккаунта с таким ником.";
-                            row-height: 100px;
+                            hint: ["PNG 64×64. Без загрузки на сервере", "остаётся скин лицензионного аккаунта с", "таким ником."];
+                            row-height: root.skin-row-height;
                             PathField {
                                 x: 0px;
-                                y: 8px;
-                                width: parent.width;
+                                y: (parent.height - 24px - root.edge - self.height) / 2;
+                                width: parent.width - 284px;
                                 label: "СКИН";
                                 value: root.skin-path;
                                 browse => { root.browse-skin(); }
                             }
                         }
                         SettingRow {
-                            y: 100px;
-                            width: 938px;
+                            y: root.skin-row-height;
+                            width: parent.width;
                             icon: @image-url("../assets/icons/shirt.svg");
                             label: "ПЛАЩ";
-                            hint: "PNG 64×32. Необязательно.";
-                            row-height: 76px;
+                            hint: ["PNG 64×32. Необязательно."];
+                            row-height: root.cape-row-height;
                             PathField {
                                 x: 0px;
-                                y: 8px;
-                                width: parent.width;
+                                y: (parent.height - 24px - root.edge - self.height) / 2;
+                                width: parent.width - 284px;
                                 label: "ПЛАЩ";
                                 value: root.cape-path;
                                 browse => { root.browse-cape(); }
                             }
                         }
                         SettingRow {
-                            y: 176px;
-                            width: 938px;
+                            y: root.skin-row-height + root.cape-row-height;
+                            width: parent.width;
                             icon: @image-url("../assets/icons/user-round.svg");
                             label: "ТОНКИЕ РУКИ";
-                            hint: "Модель Alex (3px) вместо Steve (4px).";
-                            row-height: 68px;
+                            hint: ["Модель Alex (3px) вместо Steve (4px)."];
+                            row-height: root.model-row-height;
                             SettingsToggle {
                                 x: 0px;
-                                y: 8px;
+                                y: (parent.height - 24px - root.edge - self.height) / 2;
                                 label: "ТОНКИЕ РУКИ";
                                 on: root.slim;
                                 on-label: "ВКЛ";
@@ -405,12 +415,12 @@ export component SettingsScreen inherits Rectangle {
                             }
                         }
                         upload-row := Rectangle {
-                            y: 244px;
-                            width: 938px;
+                            y: root.skin-row-height + root.cape-row-height + root.model-row-height;
+                            width: parent.width;
                             height: 56px;
                             SettingsButton {
                                 x: parent.width - self.width;
-                                y: 8px;
+                                y: 12px;
                                 text: "ЗАГРУЗИТЬ";
                                 icon: @image-url("../assets/icons/upload.svg");
                                 primary: true;
@@ -420,14 +430,16 @@ export component SettingsScreen inherits Rectangle {
                         }
                     }
                     preview-panel := Rectangle {
-                        width: 238px;
-                        height: 344px;
+                        x: parent.width - self.width;
+                        y: 0px;
+                        width: 236px + 2 * root.edge;
+                        height: 339px + 2 * root.edge;
                         background: #0b0906;
-                        border-width: 1px;
+                        border-width: Math.floor(1px / 1phx) * 1phx;
                         border-color: Tokens.border;
                         SkinPreview {
-                            x: 9px;
-                            y: 9px;
+                            x: 8px + root.edge;
+                            y: 8px + root.edge;
                             frame: root.skin-frame;
                             drag-state(active) => { root.drag-state(active); }
                             drag-by(dx, dy) => { root.drag-by(dx, dy); }
@@ -435,8 +447,8 @@ export component SettingsScreen inherits Rectangle {
                             accessible-label: "Анимированный скин Minecraft; вращайте перетаскиванием";
                         }
                         Text {
-                            x: 9px;
-                            y: 318px;
+                            x: 8px + root.edge;
+                            y: 316px + root.edge;
                             width: 220px;
                             height: 14px;
                             text: root.caption;
@@ -448,7 +460,7 @@ export component SettingsScreen inherits Rectangle {
                         }
                         if root.skin-error != "": Text {
                             x: 9px;
-                            y: 332px;
+                            y: 330px;
                             width: 220px;
                             height: 12px;
                             text: root.skin-error;
@@ -461,20 +473,21 @@ export component SettingsScreen inherits Rectangle {
                 }
             }
             actions := Rectangle {
-                x: 0px;
-                y: parent.height - 64px;
-                width: parent.width;
-                height: 64px;
+                x: root.edge;
+                y: parent.height - 64px - 2 * root.edge;
+                width: parent.width - 2 * root.edge;
+                height: 64px + root.edge;
                 background: Tokens.chrome;
                 Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: #18130d; }
                 HorizontalLayout {
                     x: parent.width - self.preferred-width - 20px;
-                    y: 12px;
+                    y: 13px;
                     height: 40px;
-                    spacing: 8px;
+                    spacing: 12px;
                     alignment: start;
                     SettingsButton {
                         text: "СБРОС";
+                        horizontal-padding: 20px;
                         clicked => { root.reset(); }
                     }
                     SettingsButton {

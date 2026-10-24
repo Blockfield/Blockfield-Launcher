@@ -293,6 +293,7 @@ fn render_worker(
 ) {
     let mut renderer: Option<Renderer> = None;
     let mut renderer_scale = 0.0;
+    let mut previous_time = None;
     while let Ok(request) = receiver.recv() {
         match request {
             Request::Stop => break,
@@ -344,7 +345,13 @@ fn render_worker(
                         renderer = Some(replacement);
                         renderer_scale = scale;
                     }
-                    let frame = renderer.as_mut().unwrap().render_frame(time, 0.0)?;
+                    // skinview3d animates before incrementing progress; rotation uses this frame's dt.
+                    let frame = renderer.as_mut().unwrap().render_frame_with_pose_time(
+                        time,
+                        previous_time.unwrap_or(time),
+                        0.0,
+                    )?;
+                    previous_time = Some(time);
                     Ok(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
                         &frame.rgba,
                         frame.width,

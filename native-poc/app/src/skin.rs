@@ -29,7 +29,12 @@ pub fn attach(app: &AppWindow, activity: &Rc<Activity>) -> std::io::Result<Rc<Pr
     let weak = app.as_weak();
     let poll_activity = activity.clone();
     let host = PreviewHost::spawn(HostOptions {
-        clock: ClockMode::Live(0.0),
+        // Match the existing still-capture flag without changing live preview pacing.
+        clock: if std::env::args().any(|arg| arg == "--freeze-motion") {
+            ClockMode::Fixed(0.0)
+        } else {
+            ClockMode::Live(0.0)
+        },
         frame_hook: None,
         sink: FrameSink {
             set_frame: Box::new({
@@ -118,7 +123,8 @@ pub fn arm_self_check(app: &AppWindow, host: &Rc<PreviewHost>) {
                 let done = frozen.clone();
                 Timer::single_shot(Duration::from_millis(300), move || {
                     assert!(done.delivered() > count, "visible animation resumes");
-                    assert!(done.timer_running(), "visible frame timer runs");
+                    // Slint marks expired one-shots stopped before dispatching their callback batch.
+                    assert!(done.active_time() > time, "visible animation clock resumes");
                     println!("SELF_CHECK passed: drag, hidden timer/frame/clock, resume");
                 });
             });
