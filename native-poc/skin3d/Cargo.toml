@@ -1,0 +1,23 @@
+[package]
+name = "skin3d"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-only"
+description = "Caller-driven offscreen Minecraft skin preview feasibility renderer"
+
+[workspace]
+
+[dependencies]
+bytemuck = { version = "1.25", features = ["derive"] }
+glam = "0.33"
+image = { version = "0.25", default-features = false, features = ["png"] }
+pollster = "0.4"
+wgpu = { version = "28.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "dx12", "wgsl"] }
+
+[[example]]
+name = "render-frames"
+path = "examples/render-frames.rs"
+
+[profile.release]
+lto = "thin"
