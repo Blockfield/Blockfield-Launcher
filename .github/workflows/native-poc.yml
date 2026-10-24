@@ -55,7 +55,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb mesa-vulkan-drivers libgl1 libfontconfig-dev
+          # winit dlopens libxkbcommon-x11 at window creation (invisible to ldd).
+          sudo apt-get install -y -qq xvfb mesa-vulkan-drivers libgl1 libfontconfig-dev libxkbcommon-x11-0
       - name: Format check
         timeout-minutes: 3
         run: |
