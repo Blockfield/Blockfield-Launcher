@@ -28,6 +28,49 @@ min/p10/median/p90/max). Processes that appear/disappear mid-run (WebKit
 children re-spawning) are tolerated: each sample re-discovers the tree and
 unreadable PIDs are skipped.
 
+## Final shared-image A/B matrix
+
+`Shared.Containerfile` extends the existing Fedora headless POC image with
+WebKitGTK 4.1, so both release executables use exactly the same Mesa stack.
+Build both executables before starting measurements. The Tauri executable must
+be the capture-only build from `scripts/capture/build.sh` (fixture flag, local
+fonts, no production network). The Slint executable is the standalone release
+build in `native-poc/app`.
+
+```sh
+podman build -f scripts/bench/Shared.Containerfile -t localhost/blockfield-final-ab .
+agent-process start --name final-ab --cwd "$PWD" -- timeout 4200 \
+  python3 scripts/bench/final_ab.py --out /absolute/report/raw \
+  --tauri .cache/capture/cargo-target/release/blockfield-launcher \
+  --slint native-poc/app/target/release/blockfield-native-poc
+python3 scripts/bench/final_report.py /absolute/report/raw /absolute/report/report.md
+python3 scripts/bench/test_final_ab.py
+```
+
+Follow AGENTS.md process discovery/ownership rules before starting. The supervisor
+clears host display variables; containers mount only binaries, harness code and a
+disposable fixture directory, with no network or GPU devices. Every launch has
+a 120 s deadline and exact-container cleanup. A TERM to the supervisor also cleans
+its current container. Keep the outer deadline within the task budget.
+
+The five scenarios are animated main, visible skin preview, minimized skin,
+minimized main, and process-cold startup readiness. Each runs Tauri, Slint Skia GL
+with partial rendering, and Slint Skia software, interleaved by repeat. Resource
+runs use 5 s warmup and 3 × 30 s; startup uses five runs. Openbox's IconicState is
+asserted for minimized runs; the Slint skin must deliver its first preview frame
+before minimization and stop pacing afterward. Add `--smoke --duration 1 --warmup 2`
+for a short matrix with visible screenshots. Screenshots are excluded from measured
+runs. Inspect smoke evidence before the full matrix.
+
+Before **each** launch, `uptime` and host load are recorded; load ≥2 waits up to
+20 minutes and then marks that run NOISY. The report retains all loads, PSS/RSS/USS,
+CPU% (per-core sum and divided by CPU count), threads, p10/median/p90 and spread.
+Raw JSON includes samples, image metadata, binary hashes, exact commands and gate
+history; `progress.md` is appended beside the raw directory after each scenario.
+Startup timing excludes Xvfb/Openbox setup and uses existing app ready signals,
+which are **not equivalent first-frame signals**. Host page caches are not flushed.
+This headless llvmpipe result does not establish real-GPU performance or UI parity.
+
 ## What is measured
 
 Per sample, per process and summed over the tree: PSS/RSS/USS from
