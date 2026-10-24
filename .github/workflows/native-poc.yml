@@ -87,6 +87,8 @@ jobs:
           exe=target/release/blockfield-native-poc
           if [ "$RUNNER_OS" = Windows ]; then exe=$exe.exe; fi
           ls -l "$exe"
+          # Fail fast with an exact cause if a system .so is missing (Ubuntu).
+          if [ "$RUNNER_OS" = Linux ]; then ldd "./$exe" | grep "not found" || echo "ldd: all libs present"; fi
           out=xplat-captures
           rm -rf "$out"
           mkdir -p "$out"
@@ -135,7 +137,7 @@ jobs:
                   run_capture "$dir/app.log" \
                   "./$exe" --state "$state" --freeze-motion --capture-dir "$dir" || status=$?
                 echo "exit=$status (capture asserts panic nonzero on failure)"
-                if [ "$status" != 0 ]; then fail=1; fi
+                if [ "$status" != 0 ]; then fail=1; tail -c 3000 "$dir/app.log"; fi
               done
             done
           done
@@ -168,6 +170,7 @@ jobs:
           find "$out" -type f | sort
           [ "$fail" = 0 ]
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
         with:
           name: poc-${{ runner.os }}-${{ runner.arch }}
           path: native-poc/app/xplat-captures
