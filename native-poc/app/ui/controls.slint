@@ -1,0 +1,120 @@
+import { Tokens } from "tokens.slint";
+
+export component ActionArea inherits Rectangle {
+    in property <string> label;
+    out property <bool> hovered: touch.has-hover;
+    out property <bool> pressed: touch.pressed;
+    in property <length> focus-offset: 0px;
+    private property <bool> keyboard-focus;
+    callback clicked();
+    forward-focus: keys;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    keys := FocusScope {
+        focus-gained(reason) => { root.keyboard-focus = reason == FocusReason.tab-navigation; }
+        focus-lost(reason) => { root.keyboard-focus = false; }
+        key-released(event) => {
+            if (event.text == Key.Return || event.text == Key.Space) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                    keys.focus();
+                    root.keyboard-focus = false;
+                }
+            }
+            clicked => { root.clicked(); }
+        }
+    }
+    if keys.has-focus && root.keyboard-focus: Rectangle {
+        x: -root.focus-offset - 2px;
+        y: -root.focus-offset - 2px;
+        width: root.width + 2 * root.focus-offset + 4px;
+        height: root.height + 2 * root.focus-offset + 4px;
+        border-width: 2px;
+        border-color: Tokens.primary;
+    }
+    @children
+}
+
+export component ChromeButton inherits ActionArea {
+    in property <image> icon;
+    in property <length> icon-size: 12px;
+    in property <bool> destructive;
+    width: 32px;
+    height: 24px;
+    border-radius: Tokens.radius-sm;
+    background: root.hovered ? (root.destructive ? Tokens.close-hover : Tokens.secondary) : transparent;
+    animate background { duration: Tokens.transition; easing: Tokens.transition-easing; }
+    Image {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.icon-size;
+        height: root.icon-size;
+        source: root.icon;
+        colorize: root.destructive && root.hovered ? white : Tokens.muted-foreground;
+        animate colorize { duration: Tokens.transition; easing: Tokens.transition-easing; }
+        accessible-role: none;
+    }
+}
+
+export component NavItem inherits ActionArea {
+    in property <image> icon;
+    in property <bool> active;
+    private property <color> tint: root.active ? Tokens.foreground : (root.hovered ? Tokens.neutral-200 : Tokens.muted-foreground);
+    width: text.preferred-width + 49px;
+    height: 36px;
+    animate tint { duration: Tokens.transition; easing: Tokens.transition-easing; }
+    Image {
+        x: 14px;
+        y: 11.5px;
+        width: 13px;
+        height: 13px;
+        source: root.icon;
+        colorize: root.tint;
+        accessible-role: none;
+    }
+    text := Text {
+        x: 35px;
+        height: parent.height;
+        text: root.label;
+        color: root.tint;
+        font-size: Tokens.text-label;
+        font-weight: Tokens.weight-medium;
+        letter-spacing: Tokens.tracking-nav;
+        vertical-alignment: center;
+    }
+    if root.active: Rectangle {
+        x: 8px;
+        y: parent.height;
+        width: parent.width - 16px;
+        height: 1px;
+        background: Tokens.primary;
+    }
+}
+
+export component StatusDot inherits Rectangle {
+    in property <color> tint: Tokens.success;
+    in property <bool> pulse: false;
+    private property <bool> dim: false;
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background: root.tint;
+    drop-shadow-blur: 6px;
+    drop-shadow-color: root.tint.with-alpha(0.702);
+    opacity: root.pulse && root.dim ? 0.5 : 1;
+    animate opacity { duration: Tokens.pulse-half; easing: Tokens.pulse-easing; }
+    init => { root.dim = root.pulse; }
+    Timer {
+        interval: Tokens.pulse-half;
+        running: root.pulse;
+        triggered => { root.dim = !root.dim; }
+    }
+}

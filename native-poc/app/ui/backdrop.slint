@@ -1,0 +1,65 @@
+import { Tokens } from "tokens.slint";
+
+export component GridBackdrop inherits Rectangle {
+    in property <float> intensity: 1;
+    private property <length> gradient-radius: Math.sqrt((root.width / 1px) * (root.width / 1px) + (root.height / 1px) * (root.height / 1px)) * 0.8px;
+    private property <length> amber-x: root.width * 0.2;
+    private property <length> amber-y: root.height * 0.2;
+    private property <length> green-x: root.width * 0.8;
+    private property <length> green-y: root.height * 0.8;
+    Rectangle {
+        background: @radial-gradient(circle root.gradient-radius at root.green-x root.green-y, Tokens.success.with-alpha(0.04), transparent 55%);
+    }
+    Rectangle {
+        background: @radial-gradient(circle root.gradient-radius at root.amber-x root.amber-y, Tokens.primary.with-alpha(0.05), transparent 50%);
+    }
+    for row in Math.ceil(root.height / Tokens.grid-step): Rectangle {
+        y: row * Tokens.grid-step;
+        height: 1px;
+        background: Tokens.primary.with-alpha(0.06 * root.intensity);
+    }
+    for col in Math.ceil(root.width / Tokens.grid-step): Rectangle {
+        x: col * Tokens.grid-step;
+        width: 1px;
+        background: Tokens.primary.with-alpha(0.06 * root.intensity);
+    }
+}
+
+export component TopoBackdrop inherits Image {
+    width: 100%;
+    height: 100%;
+    source: @image-url("../assets/topo.svg");
+    image-fit: fill;
+    opacity: 0.07;
+    accessible-role: none;
+}
+
+export component CornerTicks inherits Rectangle {
+    for corner in 4: Image {
+        x: Math.mod(corner, 2) == 0 ? 0px : parent.width - self.width;
+        y: corner < 2 ? 0px : parent.height - self.height;
+        width: 14px;
+        height: 14px;
+        source: @image-url("../assets/tick.svg");
+        transform-rotation: corner == 0 ? 0deg : (corner == 1 ? 90deg : (corner == 2 ? -90deg : 180deg));
+        accessible-role: none;
+    }
+}
+
+export component GlowPanel inherits Rectangle {
+    in property <bool> glow: true;
+    Rectangle {
+        x: -1px;
+        y: -1px;
+        width: parent.width + 2px;
+        height: parent.height + 2px;
+        border-width: 1px;
+        border-color: root.glow ? Tokens.primary.with-alpha(0.2) : Tokens.border.with-alpha(0.6);
+    }
+    Rectangle {
+        border-width: 1px;
+        border-color: Tokens.border;
+        background: Tokens.panel-gradient;
+        @children
+    }
+}

@@ -1,0 +1,77 @@
+import "../assets/fonts/IBMPlexMono-400.ttf";
+import "../assets/fonts/IBMPlexMono-500.ttf";
+import "../assets/fonts/IBMPlexMono-600.ttf";
+import "../assets/fonts/IBMPlexMono-700.ttf";
+import "../assets/fonts/Inter-400.ttf";
+import "../assets/fonts/Inter-500.ttf";
+import "../assets/fonts/Inter-600.ttf";
+import "../assets/fonts/Inter-700.ttf";
+import "../assets/fonts/Inter-800.ttf";
+import { Tokens } from "tokens.slint";
+import { WindowChrome, Shell } from "shell.slint";
+import { GridBackdrop, TopoBackdrop, CornerTicks, GlowPanel } from "backdrop.slint";
+import { StatusDot } from "controls.slint";
+
+export component AppWindow inherits Window {
+    in property <string> chrome-title;
+    in property <string> brand;
+    in property <string> subtitle;
+    in property <string> username;
+    in property <string> role;
+    in property <[string]> nav-labels;
+    in property <string> launcher-label;
+    in property <string> update-label;
+    in property <string> server-label;
+    in property <string> support-label;
+    in property <string> network-label;
+    in property <bool> dev-build;
+    in property <bool> show-backdrop: false;
+    in property <bool> show-pulse: false;
+    in-out property <int> active: 0;
+    callback minimize();
+    callback maximize();
+    callback request-close();
+    callback navigate(int);
+    callback launcher-update();
+    callback support();
+    title: root.chrome-title + (root.dev-build ? " DEV" : "");
+    preferred-width: 1280px;
+    preferred-height: 720px;
+    min-width: 1280px;
+    min-height: 720px;
+    no-frame: true;
+    background: transparent;
+    default-font-family: Tokens.sans;
+    default-font-size: Tokens.base-size;
+    WindowChrome {
+        title: root.chrome-title;
+        dev-build: root.dev-build;
+        minimize => { root.minimize(); }
+        maximize => { root.maximize(); }
+        request-close => { root.request-close(); }
+        Shell {
+            active <=> root.active;
+            brand: root.brand;
+            subtitle: root.subtitle;
+            username: root.username;
+            role: root.role;
+            nav-labels: root.nav-labels;
+            launcher-label: root.launcher-label;
+            update-label: root.update-label;
+            server-label: root.server-label;
+            support-label: root.support-label;
+            network-label: root.network-label;
+            dev-build: root.dev-build;
+            navigate(index) => { root.navigate(index); }
+            launcher-update => { root.launcher-update(); }
+            support => { root.support(); }
+            if root.show-backdrop: Rectangle {
+                GridBackdrop { intensity: 0.9; }
+                TopoBackdrop {}
+                CornerTicks {}
+                GlowPanel { x: 20px; y: 20px; width: 280px; height: 80px; }
+            }
+            if root.show-pulse: StatusDot { x: 24px; y: 24px; pulse: true; }
+        }
+    }
+}
