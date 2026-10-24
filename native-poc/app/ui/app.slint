@@ -71,7 +71,7 @@ export component AppWindow inherits Window {
                 CornerTicks {}
                 GlowPanel { x: 20px; y: 20px; width: 280px; height: 80px; }
             }
-            if root.show-pulse: StatusDot { x: 24px; y: 24px; pulse: true; }
+            StatusDot { x: 24px; y: 24px; visible: root.show-pulse; pulse: root.show-pulse; }
         }
     }
 }

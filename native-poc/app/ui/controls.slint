@@ -110,8 +110,12 @@ export component StatusDot inherits Rectangle {
     drop-shadow-blur: 6px;
     drop-shadow-color: root.tint.with-alpha(0.702);
     opacity: root.pulse && root.dim ? 0.5 : 1;
-    animate opacity { duration: Tokens.pulse-half; easing: Tokens.pulse-easing; }
-    init => { root.dim = root.pulse; }
+    animate opacity { duration: root.pulse ? Tokens.pulse-half : 0ms; easing: Tokens.pulse-easing; }
+    init => {
+        // Evaluate the lazy opacity binding before starting its first animation.
+        if root.opacity == 1 { root.dim = root.pulse; }
+    }
+    changed pulse => { root.dim = root.pulse; }
     Timer {
         interval: Tokens.pulse-half;
         running: root.pulse;

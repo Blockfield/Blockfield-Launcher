@@ -45,7 +45,7 @@ def main():
              f"{round(20 * scale)}x{round(20 * scale)}+{round(18 * scale)}+{round(111 * scale)}",
              "-format", "%[fx:mean]", "info:"], text=True
         ).strip())
-    assert pulse_values[0] != pulse_values[1], "pulse must animate"
+    assert float(pulse_values[0]) > float(pulse_values[1]), "pulse starts bright and fades before returning"
     fonts = Path(__file__).resolve().parents[1] / "assets/fonts"
     for filename, _family, _weight, _url, digest in json.loads((fonts / "sources.json").read_text()):
         assert hashlib.sha256((fonts / filename).read_bytes()).hexdigest() == digest, filename

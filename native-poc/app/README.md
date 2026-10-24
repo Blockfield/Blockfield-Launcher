@@ -72,8 +72,10 @@ The port preserved the incumbent design. Impeccable context/craft guidance was r
 
 ## Checked build (2026-10-24)
 
-Release binary: 30,014,168 bytes (28.62 MiB), SHA-256 `4db567afef774708c225b991e1f3ffa661f680d47334192918467148bfdc47b4`.
-Ten-second idle sample (2s warmup, 0.5s interval, 21 samples): peak app-tree RSS 147,896 KiB (144.43 MiB), PSS 133,649 KiB (130.52 MiB); sampled CPU max 0.0%, 28 threads.
+Release binary: 30,006,616 bytes (28.62 MiB), SHA-256 `1a34eabc4e027bcbd470d8645b19f9dce8e9feadedd100c447ee3a3c57c60895`.
+Ten-second idle sample (2s warmup, 0.5s interval, 21 samples): peak app-tree RSS 146,808 KiB (143.37 MiB), PSS 132,969 KiB (129.85 MiB); sampled CPU max 0.0%, 28 threads.
 Renderer: Slint 1.18.1 winit + Skia/OpenGL, Mesa llvmpipe in private Fedora 44 Podman/Xvfb. No FemtoVG fallback.
 
-All 24 release captures and input/pulse/font checks passed. Evidence: `.dev/coord-20261024/plans/native-migration/reports/poc-shell/` in the coordinator checkout (see `progress.md`, `review.md`, `1x/`, `1.25x/`, `1.5x/`, `idle/idle.json`). Required Rust formatting, Clippy and release build passed with four build jobs; shell syntax/Python compile and whitespace checks also passed. No application/container/watcher remains running.
+All 24 release captures and mouse/keyboard/close/pulse/font checks passed. The pulse test checks phase ordering (early bright frame > return-half dim frame), including a false→true→false toggle on the same StatusDot. Lazy binding initialization is forced before its first animation; stopping pulse restores full opacity immediately.
+
+Evidence: `.dev/coord-20261024/plans/native-migration/reports/poc-shell/` in the coordinator checkout (`progress.md`, `review.md`, `1x/`, `1.25x/`, `1.5x/`, `idle/idle.json`). Required Rust formatting, Clippy and release build passed with four build jobs; shell syntax/Python compile and whitespace checks also passed. The repository pre-commit hook additionally passed root Tauri/shared formatting, Clippy and workspace tests (the existing public-release-download test is ignored). No task-owned app/container/watcher remains running.
