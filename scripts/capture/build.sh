@@ -15,7 +15,18 @@ cp "$CACHE/fonts/fonts.css" "$CACHE/source/src/styles/fonts.css"
 mkdir -p "$CACHE/source/public/capture-fonts"
 cp "$CACHE"/fonts/*.woff2 "$CACHE/source/public/capture-fonts/"
 ln -sfn "$ROOT/node_modules" "$CACHE/source/node_modules"
-(cd "$CACHE/source" && VITE_CAPTURE_FIXTURES=1 pnpm build)
+(cd "$CACHE/source" && VITE_CAPTURE_FIXTURES=1 VITE_BLOCKFIELD_PACK_URL=https://capture.invalid pnpm build)
+python3 - "$CACHE/source/dist" <<'PY_CHECK'
+import pathlib, sys
+root = pathlib.Path(sys.argv[1])
+js = '\n'.join(p.read_text() for p in root.rglob('*.js'))
+css = '\n'.join(p.read_text() for p in root.rglob('*.css'))
+assert 'https://capture.invalid' in js, 'Missing capture-only API URL; do not spend a release build'
+assert 'capture-ready:' in js, 'Capture fixture flag was not enabled'
+assert 'fonts.googleapis.com' not in css and 'fonts.gstatic.com' not in css, 'Remote fonts invalidate captures'
+assert 'capture-fonts/' in css, 'Local capture fonts missing'
+print('Capture frontend preflight passed')
+PY_CHECK
 python3 - "$CACHE/source" <<'PY'
 import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
@@ -33,11 +44,13 @@ import hashlib, json, pathlib, subprocess, sys
 root = pathlib.Path(sys.argv[1])
 cache = root / '.cache/capture'
 binary = cache / 'cargo-target/release/blockfield-launcher'
-info = {'buildSha': subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(),
+info = {'valid': True, 'buildSha': subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(),
         'sourceDiffSha256': hashlib.sha256(subprocess.check_output(['git','diff','HEAD'])).hexdigest(),
         'binarySha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
         'profile': 'release', 'jobs': 4,
         'image': subprocess.check_output(['podman','image','inspect','localhost/blockfield-capture:latest','--format','{{.Id}}'], text=True).strip(),
-        'fontSources': json.loads((cache / 'fonts/sources.json').read_text())}
+        'fontSources': json.loads((cache / 'fonts/sources.json').read_text()),
+        'sourceFilesSha256': {str(p.relative_to(cache / 'source')): hashlib.sha256(p.read_bytes()).hexdigest()
+            for base in ('src', 'dist') for p in sorted((cache / 'source' / base).rglob('*')) if p.is_file()}}
 (cache / 'build.json').write_text(json.dumps(info, indent=2) + '\n')
 PY

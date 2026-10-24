@@ -26,7 +26,10 @@ The one release build uses `CARGO_BUILD_JOBS=4`. Artifacts stay in `.cache/captu
 `build.sh` stages tracked source plus the owned fixture files, excluding `.env`
 and unrelated untracked files. It changes font CSS and adds WebKit zoom permission
 **only in that staged capture source**. It builds with Tauri `custom-protocol` and
-`VITE_CAPTURE_FIXTURES=1`; do not distribute this test executable.
+`VITE_CAPTURE_FIXTURES=1` and the nonproduction `VITE_BLOCKFIELD_PACK_URL=https://capture.invalid`;
+do not distribute this test executable. A preflight checks the API URL, fixture
+marker, and local-font CSS before starting the costly Rust build. The API URL is
+required even with mocks because content modules validate it during import.
 
 The capture font stylesheet uses the same Google Fonts request as production
 `src/styles/fonts.css`. `prepare-fonts.py` downloads all requested Inter and IBM Plex
@@ -57,6 +60,10 @@ per second. Recordings preserve the existing CSS and skin walking/rotation anima
 Static captures pause CSS animations and transitions, fix JS wall/animation clocks,
 and hide the caret. Motion capture preserves the animation clock but fixes wall time.
 
+`scripts/capture/baseline.sh OUT` runs the full requested first matrix sequentially
+(13 states, main/skin at all three scales and requested languages, a 1600×900 main,
+and four 3-second motion recordings). Use a new output directory on each run.
+
 Available states: `first-run`, `login`, `main`, `main-launching`, `update-42`, `stats`,
 `settings-general`, `settings-runtime`, `settings-commands`, `settings-skin`,
 `settings-launcher`, `offline`, `error`.
@@ -79,6 +86,12 @@ mock is installed and one real `save_settings` afterward. Application commands a
 mocked and unexpected commands fail closed; native window controls remain native.
 A URL query (`?state=main&lang=ru&scale=1&motion=0`) can select the fixture when the
 capture build is embedded in another isolated Tauri harness.
+
+A small capture-only preload (`console.c`, compiled inside the container) enables
+WebKit console output in release builds. It changes no UI settings and makes early
+module/import failures observable in the app log. Screenshots are rejected when
+unexpected frontend errors appear in the fixture evidence. Failed runs preserve
+an explicitly named diagnostic screenshot, never a successful baseline entry.
 
 The WebKit subprocess sandbox is disabled only inside this private rootless,
 networkless container because nested sandbox user namespaces are unavailable on

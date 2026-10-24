@@ -63,6 +63,22 @@ def main():
         "hideWhilePlaying": False,
     }
     cfg_path.write_text(json.dumps(cfg))
+    flags = subprocess.check_output(
+        ["pkg-config", "--cflags", "--libs", "webkit2gtk-4.1"], text=True
+    ).split()
+    subprocess.run(
+        [
+            "gcc",
+            "-shared",
+            "-fPIC",
+            "/harness/console.c",
+            "-o",
+            "/capture/console.so",
+            *flags,
+            "-ldl",
+        ],
+        check=True,
+    )
     children = []
     try:
         with (WORK / "display.log").open("w") as log:
@@ -95,9 +111,10 @@ def main():
                 "isolated Xvfb :97",
             )
             with (WORK / "app.log").open("w") as app_log:
+                app_env = {**env, "LD_PRELOAD": "/capture/console.so"}
                 app = subprocess.Popen(
                     ["dbus-run-session", "--", "/opt/blockfield-launcher"],
-                    env=env,
+                    env=app_env,
                     stdout=app_log,
                     stderr=subprocess.STDOUT,
                 )
@@ -137,6 +154,13 @@ def main():
                 )
 
                 def ready():
+                    if (
+                        "VITE_BLOCKFIELD_PACK_URL is required for production"
+                        in (WORK / "app.log").read_text()
+                    ):
+                        raise RuntimeError(
+                            "Capture build omitted VITE_BLOCKFIELD_PACK_URL; frontend cannot initialize"
+                        )
                     lang = json.loads(cfg_path.read_text()).get("lang", "")
                     if lang.startswith("capture-failed:"):
                         raise RuntimeError(lang)
@@ -149,6 +173,10 @@ def main():
                     )
 
                 evidence = wait(ready, 35, "fixture state and font proof")
+                if evidence["errors"] and request["state"] != "error":
+                    raise RuntimeError(
+                        f"Frontend errors invalidate capture: {evidence['errors']}"
+                    )
                 if not evidence["fonts"]["inter"]:
                     raise RuntimeError("Inter check failed")
                 time.sleep(0.2)
@@ -217,6 +245,32 @@ def main():
                 )
                 return evidence
     finally:
+        if not (WORK / "capture.png").exists() and children:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-f",
+                    "x11grab",
+                    "-draw_mouse",
+                    "0",
+                    "-video_size",
+                    f"{width}x{height}",
+                    "-i",
+                    ":97+0,0",
+                    "-frames:v",
+                    "1",
+                    "-threads",
+                    "1",
+                    str(WORK / "failure.png"),
+                ],
+                env=env,
+                capture_output=True,
+                timeout=10,
+            )
         for process in reversed(children):
             if process.poll() is None:
                 process.terminate()

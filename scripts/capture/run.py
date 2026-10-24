@@ -52,6 +52,10 @@ def run(args):
     args.out.mkdir(parents=True, exist_ok=True)
     cache = ROOT / ".cache/capture"
     build = json.loads((cache / "build.json").read_text())
+    if build.get("valid") is not True:
+        raise SystemExit(
+            f"Capture binary is not validated: {build.get('failure', 'rebuild with build.sh')}"
+        )
     stem = f"{args.state}-{args.size}@{args.scale:g}x-{args.lang}" + (
         "-motion" if args.record else ""
     )
@@ -122,7 +126,7 @@ def run(args):
                     f"Capture deadline exceeded; process log: {registered['log']}"
                 )
             result = json.loads((scratch / "result.json").read_text())
-            for name in ("app.log", "display.log"):
+            for name in ("app.log", "display.log", "failure.png"):
                 if (scratch / name).exists():
                     (args.out / f"{stem}-{name}").write_bytes(
                         (scratch / name).read_bytes()
