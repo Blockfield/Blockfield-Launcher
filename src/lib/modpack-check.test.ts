@@ -130,3 +130,23 @@ it('binds verification to the workshop profile that was checked', async () => {
   await checkModpack(true)
   expect(invoke).toHaveBeenCalledWith('verify_files', { profile: 'workshop' })
 })
+
+it('verifies files even when a version-only check is still in flight', async () => {
+  const { checkModpack } = await import('./modpack-check')
+  const implementation = invoke.getMockImplementation()!
+  let finish!: (value: unknown) => void
+  invoke.mockImplementation(async (command: string) => {
+    if (command === 'check_modpack_version' && !finish)
+      return new Promise((resolve) => {
+        finish = resolve
+      })
+    return implementation(command)
+  })
+  const background = checkModpack()
+  const verified = checkModpack(true)
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+  finish({ needsUpdate: false, javaOk: true, loaderOk: true })
+  await background
+  await verified
+  expect(invoke).toHaveBeenCalledWith('verify_files', { profile: 'game' })
+})

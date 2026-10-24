@@ -41,7 +41,8 @@ export function useModpackVersion(): VersionCheckResult | null {
 }
 
 export function checkModpack(verify = false): Promise<VersionCheckResult> {
-  if (pending) return pending
+  // A version-only check in flight must not stand in for verification: wait it out, then verify.
+  if (pending) return verify ? pending.catch(() => {}).then(() => checkModpack(true)) : pending
   if (cached && !verify) return Promise.resolve(cached)
   const requestedGeneration = generation
   const request: Promise<VersionCheckResult> = (async () => {
