@@ -297,8 +297,10 @@ export component SettingsScreen inherits Rectangle {
         height: parent.height - 40px;
         title-text := Text {
             x: 0px;
-            y: 0px;
-            height: 26px;
+            // Taller than the 26px line box so semibold ascenders (Й breve) are not
+            // clipped; symmetric around y13 keeps glyph and panel geometry fixed.
+            y: -4px;
+            height: 34px;
             text: root.title;
             font-size: 26px;
             font-weight: 600;
