@@ -41,21 +41,21 @@ export function useModpackVersion(): VersionCheckResult | null {
 }
 
 export function checkModpack(verify = false): Promise<VersionCheckResult> {
-  if (pending) return pending
+  // A version-only check in flight must not stand in for verification: wait it out, then verify.
+  if (pending) return verify ? pending.catch(() => {}).then(() => checkModpack(true)) : pending
   if (cached && !verify) return Promise.resolve(cached)
   const requestedGeneration = generation
   const request: Promise<VersionCheckResult> = (async () => {
     const config = await invoke<LauncherConfig>('load_settings')
     const result = await invoke<VersionCheckResult>('check_modpack_version')
     if (requestedGeneration !== generation) throw new Error('Профиль изменён. Повторите проверку.')
-    if ((verify || config.autoUpdate) && !result.needsUpdate && result.javaOk && result.loaderOk) {
+    // Navigation and startup only compare versions; hashing every file is reserved for an explicit
+    // verify (manual button or the pre-launch check), which used to stall each tab switch.
+    if (verify && !result.needsUpdate && result.javaOk && result.loaderOk) {
       const game = await invoke<GameStatus>('game_status')
       if (requestedGeneration !== generation)
         throw new Error('Профиль изменён. Повторите проверку.')
-      if (game.phase !== 'idle') {
-        if (verify) throw new Error('Закройте игру перед проверкой файлов')
-        return result
-      }
+      if (game.phase !== 'idle') throw new Error('Закройте игру перед проверкой файлов')
       const failed = await invoke<string[]>('verify_files', {
         profile: config.activeProfile ?? 'game',
       })
