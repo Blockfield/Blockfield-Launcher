@@ -1,6 +1,7 @@
 import { Tokens } from "tokens.slint";
 
 export component ActionArea inherits Rectangle {
+    in property <bool> enabled: true;
     in property <string> label;
     out property <bool> hovered: touch.has-hover;
     out property <bool> pressed: touch.pressed;
@@ -10,8 +11,10 @@ export component ActionArea inherits Rectangle {
     forward-focus: keys;
     accessible-role: button;
     accessible-label: root.label;
+    accessible-enabled: root.enabled;
     accessible-action-default => { root.clicked(); }
     keys := FocusScope {
+        enabled: root.enabled;
         focus-gained(reason) => { root.keyboard-focus = reason == FocusReason.tab-navigation; }
         focus-lost(reason) => { root.keyboard-focus = false; }
         key-released(event) => {
@@ -22,6 +25,7 @@ export component ActionArea inherits Rectangle {
             return reject;
         }
         touch := TouchArea {
+            enabled: root.enabled;
             mouse-cursor: pointer;
             pointer-event(event) => {
                 if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
