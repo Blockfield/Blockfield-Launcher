@@ -136,9 +136,9 @@ const ru = {
   'settings.ramHint': '{gb} ГБ выделено · по умолчанию 4 ГБ',
   'settings.language': 'ЯЗЫК',
   'settings.languageHint': 'Язык интерфейса лаунчера.',
-  'settings.autoUpdate': 'ПРОВЕРКА ПРИ СТАРТЕ',
+  'settings.autoUpdate': 'ПРОВЕРКА ПЕРЕД ЗАПУСКОМ',
   'settings.autoUpdateHint':
-    'Проверять и восстанавливать файлы установленной сборки при открытии лаунчера.',
+    'Проверять и восстанавливать файлы установленной сборки перед запуском игры.',
   'settings.commands': 'КОМАНДЫ ЗАПУСКА',
   'settings.preLaunch': 'ПЕРЕД ЗАПУСКОМ',
   'settings.preLaunchHint': 'Выполняется перед Minecraft. При ошибке запуск игры отменяется.',

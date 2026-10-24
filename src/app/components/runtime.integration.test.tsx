@@ -788,3 +788,37 @@ it('keeps unsaved settings edits when the profile prop changes instead of reload
     container.querySelector<HTMLInputElement>('input[aria-label="Адрес мастерской"]')?.value,
   ).toBe('typed.example:25565')
 })
+
+it.each([true, false])(
+  'checks only the version on navigation and verifies files before launch when enabled (%s)',
+  async (autoUpdate) => {
+    vi.stubGlobal('__TAURI_INTERNALS__', {})
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'load_settings') return { activeProfile: 'game', username: 'Player', autoUpdate }
+      if (cmd === 'account_status')
+        return { loggedIn: true, uuid: 'player-uuid-2', username: 'Player' }
+      if (cmd === 'stats_player') return { profile: { uuid: 'player-uuid-2', role: 'player' } }
+      if (cmd === 'check_modpack_version')
+        return { remoteVersion: '1.0.0', needsUpdate: false, javaOk: true, loaderOk: true }
+      if (cmd === 'game_status') return { phase: 'idle', revision: 0 }
+      if (cmd === 'verify_files') return []
+      return null
+    })
+    await act(async () => root!.render(<App />))
+    const deploy = await vi.waitFor(() => {
+      const button = container.querySelector<HTMLButtonElement>('button.group')
+      expect(button?.disabled).toBe(false)
+      return button!
+    })
+    expect(invoke.mock.calls.some(([cmd]) => cmd === 'verify_files')).toBe(false)
+    await act(async () => deploy.click())
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('launch_game'))
+    const commands = invoke.mock.calls.map(([cmd]) => cmd)
+    if (autoUpdate) {
+      expect(commands.indexOf('verify_files')).toBeGreaterThan(-1)
+      expect(commands.indexOf('verify_files')).toBeLessThan(commands.indexOf('launch_game'))
+    } else {
+      expect(commands).not.toContain('verify_files')
+    }
+  },
+)
