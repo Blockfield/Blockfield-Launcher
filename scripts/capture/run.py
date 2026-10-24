@@ -2,6 +2,7 @@
 """Run one isolated release capture and append its evidence to manifest.json."""
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -32,10 +33,15 @@ def arguments(argv=None):
     parser.add_argument("state", choices=STATES)
     parser.add_argument("--size", default="1280x720", help="logical viewport size")
     parser.add_argument("--scale", type=float, choices=(1, 1.25, 1.5), default=1)
-    parser.add_argument("--lang", choices=("en", "ru", "uk"), default="en")
+    parser.add_argument("--lang", choices=("ru",), default="ru")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--record", type=float, default=0, metavar="SECONDS")
     parser.add_argument("--fps", type=int, default=60)
+    parser.add_argument(
+        "--validate-build",
+        action="store_true",
+        help="validate a new build with a main/RU/1x smoke capture",
+    )
     args = parser.parse_args(argv)
     try:
         width, height = map(int, args.size.split("x"))
@@ -43,6 +49,13 @@ def arguments(argv=None):
         assert 0 <= args.record <= 60 and args.fps == 60
     except (ValueError, AssertionError):
         parser.error("Use 1280x720..2560x1440, 0..60 seconds, and --fps 60")
+    if args.validate_build and (
+        args.state != "main"
+        or args.scale != 1
+        or args.record
+        or args.size != "1280x720"
+    ):
+        parser.error("--validate-build requires main at 1280x720@1x without recording")
     args.width, args.height = width, height
     return args
 
@@ -52,7 +65,7 @@ def run(args):
     args.out.mkdir(parents=True, exist_ok=True)
     cache = ROOT / ".cache/capture"
     build = json.loads((cache / "build.json").read_text())
-    if build.get("valid") is not True:
+    if build.get("valid") is not True and not args.validate_build:
         raise SystemExit(
             f"Capture binary is not validated: {build.get('failure', 'rebuild with build.sh')}"
         )
@@ -143,9 +156,23 @@ def run(args):
                     shutil.copyfile(
                         scratch / name, args.out / f"{stem}{Path(name).suffix}"
                     )
+            if args.validate_build:
+                build["valid"] = True
+                build.pop("failure", None)
+                build["smokeValidated"] = True
+                (cache / "build.json").write_text(json.dumps(build, indent=2) + "\n")
+            artifacts = {
+                f"{stem}{Path(name).suffix}": hashlib.sha256(
+                    (scratch / name).read_bytes()
+                ).hexdigest()
+                for name in ("capture.png", "capture.mp4")
+                if (scratch / name).exists()
+            }
             result.update(
                 {
                     "build": build,
+                    "productLanguage": "product is RU-only",
+                    "artifactsSha256": artifacts,
                     "state": args.state,
                     "size": args.size,
                     "scale": args.scale,
@@ -166,11 +193,21 @@ def run(args):
             manifest.write_text(json.dumps(entries, indent=2) + "\n")
             print(args.out / f"{stem}.png")
         finally:
-            subprocess.run(
+            stopped = subprocess.run(
                 ["agent-process", "stop", registered["id"]],
-                check=True,
                 capture_output=True,
+                text=True,
             )
+            if stopped.returncode:
+                status = json.loads(
+                    subprocess.check_output(
+                        ["agent-process", "status", registered["id"]], text=True
+                    )
+                )
+                if status["live"]:
+                    raise RuntimeError(
+                        f"Could not stop capture process {registered['id']}: {stopped.stderr}"
+                    )
 
 
 if __name__ == "__main__":

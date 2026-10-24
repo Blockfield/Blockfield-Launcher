@@ -3,6 +3,7 @@ import { defineConfig } from 'vite'
 import path from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+import { captureIPC } from './scripts/capture/vite.ts'
 
 export default defineConfig({
   // Same switch as src-tauri/src/dev.rs: the CMS owns the window title, so a dev build marks it here.
@@ -12,6 +13,7 @@ export default defineConfig({
     ),
   },
   plugins: [
+    process.env.VITE_CAPTURE_FIXTURES === '1' && captureIPC(),
     // The React and Tailwind plugins are both required for Make, even if
     // Tailwind is not being actively used – do not remove them
     react(),

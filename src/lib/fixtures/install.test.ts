@@ -1,6 +1,23 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+vi.mock('@tauri-apps/api/core', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@tauri-apps/api/core')>()
+  return {
+    ...original,
+    invoke: (command: string, args = {}) => {
+      const target = window as unknown as {
+        __BLOCKFIELD_CAPTURE_INVOKE__?: typeof original.invoke
+        __TAURI_INTERNALS__: { invoke: typeof original.invoke }
+      }
+      return (target.__BLOCKFIELD_CAPTURE_INVOKE__ ?? target.__TAURI_INTERNALS__.invoke)(
+        command,
+        args,
+      )
+    },
+  }
+})
+
 const native = vi.fn()
 const callback = vi.fn()
 
@@ -13,7 +30,11 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.spyOn(window, 'open').mockImplementation(() => null)
   vi.spyOn(performance, 'now').mockReturnValue(1000)
-  vi.stubGlobal('__TAURI_INTERNALS__', { invoke: native, runCallback: callback })
+  vi.stubGlobal(
+    '__TAURI_INTERNALS__',
+    Object.defineProperty({ runCallback: callback }, 'invoke', { value: native }),
+  )
+  vi.stubGlobal('__BLOCKFIELD_CAPTURE_INVOKE__', undefined)
   document.body.innerHTML = '<div id="root"><span>Existing UI</span></div>'
 })
 

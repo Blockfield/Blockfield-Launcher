@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import time
+from urllib.parse import urlencode
 
 WORK = Path("/capture")
 
@@ -56,7 +57,7 @@ def main():
         "ramMb": 4096,
         "autoUpdate": False,
         "lang": "ru",
-        "username": json.dumps(request),
+        "username": "CaptureOperator",
         "discordPresence": False,
         "preLaunchCommand": "",
         "postExitCommand": "",
@@ -111,7 +112,16 @@ def main():
                 "isolated Xvfb :97",
             )
             with (WORK / "app.log").open("w") as app_log:
-                app_env = {**env, "LD_PRELOAD": "/capture/console.so"}
+                app_env = {
+                    **env,
+                    "LD_PRELOAD": "/capture/console.so",
+                    "BLOCKFIELD_CAPTURE_QUERY": urlencode(
+                        {key: request[key] for key in ("state", "lang", "scale")}
+                        | {"motion": int(request["motion"])}
+                    ),
+                }
+                if not request["motion"]:
+                    app_env["BLOCKFIELD_CAPTURE_STATIC"] = "1"
                 app = subprocess.Popen(
                     ["dbus-run-session", "--", "/opt/blockfield-launcher"],
                     env=app_env,
@@ -154,6 +164,8 @@ def main():
                 )
 
                 def ready():
+                    if "Unhandled Promise Rejection" in (WORK / "app.log").read_text():
+                        raise RuntimeError((WORK / "app.log").read_text())
                     if (
                         "VITE_BLOCKFIELD_PACK_URL is required for production"
                         in (WORK / "app.log").read_text()

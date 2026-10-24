@@ -39,7 +39,8 @@ export async function install() {
     : (JSON.parse(String(nativeConfig.username)) as Selection)
   if (!CAPTURE_STATES.includes(selection.state)) throw new Error('Unknown capture state')
   await nativeInvoke('plugin:webview|set_webview_zoom', { label: 'main', value: selection.scale })
-  if (!selection.motion) performance.now = () => 1000
+  if (!selection.motion)
+    Object.defineProperty(performance, 'now', { configurable: true, value: () => 1000 })
   localStorage.clear()
   window.Date = new Proxy(Date, {
     construct: (target, args) => Reflect.construct(target, args.length ? args : [FIXED_TIME]),
@@ -62,7 +63,9 @@ export async function install() {
       return new Response('{}', { headers: { 'Content-Type': 'application/json' } })
     throw new Error(`Capture fixture: unexpected HTTP ${url}`)
   }
-  internals.invoke = (async (command, args) => {
+  ;(
+    window as unknown as { __BLOCKFIELD_CAPTURE_INVOKE__: typeof invoke }
+  ).__BLOCKFIELD_CAPTURE_INVOKE__ = (async (command, args) => {
     const payload = (args ?? {}) as Record<string, unknown>
     if (command === 'plugin:event|listen') {
       events.set(Number(payload.handler), String(payload.event))
@@ -138,7 +141,7 @@ export async function drive() {
       await until(() => click('ТОП', 'nav button'), 'stats navigation')
     } else if (state === 'update-42') {
       await until(() => click('ОБНОВЛЕНИЯ', 'nav button'), 'update navigation')
-      await until(() => document.body.textContent?.includes('42%') ?? false, '42% download')
+      await until(() => /42(?:\.0)?\s*%/.test(document.body.textContent ?? ''), '42% download')
     } else {
       await until(() => !document.querySelector('#root:empty'), 'root render')
     }
@@ -153,7 +156,9 @@ export async function drive() {
       unicodeRange: face.unicodeRange,
     }))
     if (
-      !faces.some((face) => face.family.replace(/"/g, '') === 'Inter' && face.status === 'loaded')
+      !faces.some(
+        (face) => face.family.replace(/["']/g, '') === 'Inter' && face.status === 'loaded',
+      )
     )
       throw new Error('Inter font was not loaded: invalid baseline')
     let webgl: Record<string, unknown> | null = null

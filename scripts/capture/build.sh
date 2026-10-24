@@ -11,6 +11,13 @@ cp -a scripts/capture "$CACHE/source/scripts/"
 mkdir -p "$CACHE/source/src/lib/fixtures"
 cp -a src/lib/fixtures/. "$CACHE/source/src/lib/fixtures/"
 cp src/main.tsx "$CACHE/source/src/main.tsx"
+# Staged tests otherwise get discovered a second time by the host's Vitest run.
+python3 - "$CACHE/source" <<'PY_TESTS'
+from pathlib import Path
+import sys
+for path in Path(sys.argv[1]).rglob('*.test.*'):
+    path.unlink()
+PY_TESTS
 cp "$CACHE/fonts/fonts.css" "$CACHE/source/src/styles/fonts.css"
 mkdir -p "$CACHE/source/public/capture-fonts"
 cp "$CACHE"/fonts/*.woff2 "$CACHE/source/public/capture-fonts/"
@@ -44,7 +51,7 @@ import hashlib, json, pathlib, subprocess, sys
 root = pathlib.Path(sys.argv[1])
 cache = root / '.cache/capture'
 binary = cache / 'cargo-target/release/blockfield-launcher'
-info = {'valid': True, 'buildSha': subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(),
+info = {'valid': False, 'failure': 'Smoke validation required', 'buildSha': subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(),
         'sourceDiffSha256': hashlib.sha256(subprocess.check_output(['git','diff','HEAD'])).hexdigest(),
         'binarySha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
         'profile': 'release', 'jobs': 4,

@@ -24,7 +24,7 @@ class CaptureArguments(unittest.TestCase):
                     "--scale",
                     "1.25",
                     "--lang",
-                    "uk",
+                    "ru",
                     "--out",
                     "/tmp/capture-test",
                 ]
@@ -40,6 +40,8 @@ class CaptureArguments(unittest.TestCase):
             ["--record", "61"],
             ["--fps", "30"],
             ["--scale", "2"],
+            ["--lang", "en"],
+            ["--validate-build", "--record", "3"],
         ):
             with self.subTest(options=options), self.assertRaises(SystemExit):
                 MODULE.arguments(["main", "--out", "/tmp/capture-test", *options])
