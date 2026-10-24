@@ -1,0 +1,64 @@
+import { Button } from "std-widgets.slint";
+
+export component SkinPreview inherits Rectangle {
+    width: 220px;
+    height: 300px;
+    in property <image> frame;
+    callback drag-state(bool);
+    callback drag-by(float, float);
+    private property <length> last-x;
+    private property <length> last-y;
+    Image { source: root.frame; width: 100%; height: 100%; }
+    touch := TouchArea {
+        mouse-cursor: self.pressed ? grabbing : grab;
+        changed pressed => {
+            root.last-x = self.mouse-x;
+            root.last-y = self.mouse-y;
+            root.drag-state(self.pressed);
+        }
+        moved => {
+            if self.pressed {
+                root.drag-by((self.mouse-x - root.last-x) / 1px, (self.mouse-y - root.last-y) / 1px);
+                root.last-x = self.mouse-x;
+                root.last-y = self.mouse-y;
+            }
+        }
+    }
+}
+
+export component PreviewWindow inherits Window {
+    title: "Blockfield — Slint skin preview";
+    width: 320px;
+    height: 420px;
+    background: #0B0906;
+    in property <image> frame;
+    in property <string> error;
+    in-out property <bool> preview-visible: true;
+    callback visibility-changed();
+    callback frame-ready();
+    callback drag-state(bool);
+    callback drag-by(float, float);
+    changed preview-visible => { root.visibility-changed(); }
+    if root.preview-visible: SkinPreview {
+        x: 50px;
+        y: 20px;
+        frame: root.frame;
+        drag-state(active) => { root.drag-state(active); }
+        drag-by(dx, dy) => { root.drag-by(dx, dy); }
+        accessible-role: image;
+        accessible-label: "Animated Minecraft skin and cape; drag to rotate";
+    }
+    Text {
+        x: 16px; y: 330px; width: parent.width - 32px; height: 32px;
+        text: root.error != "" ? root.error : "Classic fixture · drag to rotate";
+        color: #8E7A5E;
+        font-size: 12px;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+    Button {
+        x: 50px; y: 370px; width: 220px; height: 32px;
+        text: root.preview-visible ? "Hide preview" : "Show preview";
+        clicked => { root.preview-visible = !root.preview-visible; }
+    }
+}
