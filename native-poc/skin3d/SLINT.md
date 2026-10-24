@@ -1,14 +1,14 @@
 # Slint skin preview feasibility example
 
-`examples/slint_preview/preview.slint` exports the reusable **SkinPreview** component
+`src/slint-preview.slint` exports the reusable **SkinPreview** component
 at 220×300 logical pixels. `PreviewWindow` is a small demonstration with a keyboard
 accessible visibility toggle, separate from `native-poc/app`. This is a feasibility
 example, not a port of the settings screen.
 
 ```sh
-CARGO_BUILD_JOBS=4 cargo build --release --examples --features slint-preview
+CARGO_BUILD_JOBS=4 cargo build --release --examples --features slint
 # Use an isolated display, never the owner's desktop, for agent testing.
-SLINT_BACKEND=winit-skia-opengl target/release/examples/slint-preview
+SLINT_BACKEND=winit-skia-opengl target/release/examples/slint
 ```
 
 On the immutable Linux host, reuse the sibling POC's project-local runtime link
@@ -17,7 +17,7 @@ if the development symlink for libstdc++ is absent (no OS changes):
 ```sh
 mkdir -p target/link-libs
 ln -s /usr/lib64/libstdc++.so.6 target/link-libs/libstdc++.so
-LIBRARY_PATH="$PWD/target/link-libs" CARGO_BUILD_JOBS=4 cargo build --release --examples --features slint-preview
+LIBRARY_PATH="$PWD/target/link-libs" CARGO_BUILD_JOBS=4 cargo build --release --examples --features slint
 ```
 
 The optional feature uses Slint ~1.18 and the same winit, Skia OpenGL, software,
@@ -38,7 +38,9 @@ builds do not enable Slint. The exact Tauri capture fixture PNGs are embedded fr
 - At most one render/delivery is in flight. No frame backlog is accumulated.
   Absolute 60 Hz deadlines round up to Slint's whole-millisecond timer precision;
   missed deadlines are dropped. Slow renderers lower delivered FPS rather than
-  making the UI wait or producing catch-up bursts.
+  making the UI wait or producing catch-up bursts. Each deadline also polls for
+  deliveries: the invoke wakeup is a hint, but the timer (which only runs while
+  visible) guarantees progress even when a posted user event is never dispatched.
 - Hiding the preview stops its timer, freezes active animation time, cancels drag
   and invalidates outstanding delivery. The worker blocks in `recv()`. One render
   already executing may finish; its result is discarded. No hidden redraw or
@@ -57,10 +59,12 @@ builds do not enable Slint. The exact Tauri capture fixture PNGs are embedded fr
   a nonzero process status at exit. There is no retry loop. Close stops the timer,
   sends a worker shutdown message, and joins the worker before returning.
 
-For later app wiring, feed `SkinPreview.frame` and forward its `drag-state` and
-`drag-by` callbacks as this example does. Invoke the same visibility transition
-when mounting/unmounting or hiding the containing window. The controller is
-intentionally local to this example until the final app integration unit.
+For app wiring, use the `skin3d::slint::PreviewHost` library controller behind
+the `slint` feature: point the app's Slint build at `src/slint-preview.slint`
+for the `SkinPreview` component, feed `frame` from the host sink, forward
+`drag-state`/`drag-by`, and call `set_tab_visible`/`refresh` on the same
+visibility transitions the example uses. The pacing, worker and clock code lives
+in the library; the example is a thin binary over it and keeps working.
 
 Upstream contracts checked against Slint 1.18.1 source and documentation:
 [Image / sending pixel buffers](https://docs.slint.dev/latest/docs/rust/slint/struct.Image),
@@ -72,9 +76,9 @@ Run from `native-poc/skin3d` (or use `--manifest-path` from the checkout root):
 
 ```sh
 cargo fmt --check
-CARGO_BUILD_JOBS=4 cargo clippy --all-targets --features slint-preview -- -D warnings
-CARGO_BUILD_JOBS=4 cargo test --features slint-preview
-CARGO_BUILD_JOBS=4 cargo build --release --examples --features slint-preview
+CARGO_BUILD_JOBS=4 cargo clippy --all-targets --features slint -- -D warnings
+CARGO_BUILD_JOBS=4 cargo test --features slint
+CARGO_BUILD_JOBS=4 cargo build --release --examples --features slint
 ```
 
 The example's unit tests check active-time freeze/resume, idempotent visibility,

@@ -1,5 +1,6 @@
-use std::{fs, io::Write, path::PathBuf, time::Duration};
+use std::{cell::Cell, fs, io::Write, path::PathBuf, rc::Rc, time::Duration};
 
+use skin3d::slint::PreviewHost;
 use slint::{ComponentHandle, LogicalPosition, Model, Timer, TimerMode, platform::WindowEvent};
 
 use crate::AppWindow;
@@ -19,9 +20,16 @@ fn snapshot(app: &AppWindow, directory: &std::path::Path, name: &str) {
     file.write_all(&rgb).expect("capture pixels");
 }
 
-pub fn start(app: &AppWindow, directory: PathBuf) -> std::io::Result<Timer> {
+pub fn start(
+    app: &AppWindow,
+    host: &Rc<PreviewHost>,
+    directory: PathBuf,
+) -> std::io::Result<Timer> {
     if app.get_show_main() {
         return start_main(app, directory);
+    }
+    if app.get_active() == 3 {
+        return start_settings(app, host, directory);
     }
     fs::create_dir_all(&directory)?;
     let timer = Timer::default();
@@ -98,6 +106,41 @@ pub fn start(app: &AppWindow, directory: PathBuf) -> std::io::Result<Timer> {
             }),
             17 => panic!("Close button did not quit the event loop"),
             _ => {}
+        }
+        frame += 1;
+    });
+    Ok(timer)
+}
+
+pub fn start_settings(
+    app: &AppWindow,
+    host: &Rc<PreviewHost>,
+    directory: PathBuf,
+) -> std::io::Result<Timer> {
+    fs::create_dir_all(&directory)?;
+    let timer = Timer::default();
+    let weak = app.as_weak();
+    let host = host.clone();
+    let start_count = host.delivered();
+    let snapshotted = Rc::new(Cell::new(false));
+    let mut frame = 0;
+    timer.start(TimerMode::Repeated, Duration::from_millis(250), move || {
+        let app = weak.upgrade().expect("capture window");
+        assert_eq!(app.get_active(), 3, "settings screen stays mounted");
+        assert_eq!(app.get_settings_tab(), 3, "skin tab stays selected");
+        if frame > 60 {
+            panic!("skin preview produced no frames");
+        }
+        if !snapshotted.get() && host.delivered() >= start_count + 3 {
+            snapshot(&app, &directory, "settings-skin");
+            assert!(
+                host.delivered() > start_count,
+                "preview animates during capture"
+            );
+            snapshotted.set(true);
+        } else if snapshotted.get() && frame >= 12 {
+            println!("PASS settings-skin capture");
+            slint::quit_event_loop().expect("finish settings capture");
         }
         frame += 1;
     });

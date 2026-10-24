@@ -20,7 +20,14 @@ pub fn apply(app: &AppWindow) {
     app.set_dev_build(cfg!(debug_assertions));
 }
 
-pub const STATES: &[&str] = &["main", "main-launching", "offline", "error", "shell"];
+pub const STATES: &[&str] = &[
+    "main",
+    "main-launching",
+    "offline",
+    "error",
+    "shell",
+    "settings-skin",
+];
 pub const SCENARIOS: &[&str] = &[
     "default",
     "workshop",
@@ -158,6 +165,29 @@ pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), St
     )));
     app.set_rooms(ModelRc::new(VecModel::from(rooms)));
     app.set_main_data(data);
+    Ok(())
+}
+
+pub fn apply_settings(app: &AppWindow) -> Result<(), String> {
+    app.set_show_main(false);
+    // Same shell fixture values as the main capture: the operator role hides profile selection.
+    app.set_username("CaptureOperator".into());
+    app.set_update_label("Доступна 1.0.20".into());
+    app.set_active(3);
+    app.set_settings_tab(3);
+    app.set_settings_tabs(ModelRc::new(VecModel::from(
+        ["ОБЩИЕ", "JAVA И ПАМЯТЬ", "КОМАНДЫ", "СКИН", "ЛАУНЧЕР"]
+            .map(SharedString::from)
+            .to_vec(),
+    )));
+    app.set_settings_title("НАСТРОЙКИ".into());
+    app.set_settings_subtitle("/ ПАРАМЕТРЫ ЛАУНЧЕРА".into());
+    // Fixture preview_skin is custom with empty file rows, classic model.
+    app.set_skin_path("".into());
+    app.set_cape_path("".into());
+    app.set_slim(false);
+    app.set_skin_caption("ВАШ СКИН".into());
+    app.set_skin_error("".into());
     Ok(())
 }
 

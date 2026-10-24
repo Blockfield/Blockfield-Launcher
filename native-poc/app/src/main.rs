@@ -1,5 +1,6 @@
 mod capture;
 mod fixtures;
+mod skin;
 
 use slint::ComponentHandle;
 
@@ -29,18 +30,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let weak = app.as_weak();
+    let skin_host = skin::attach(&app)?;
+    let navigate_host = skin_host.clone();
     app.on_navigate(move |index| {
         if let Some(app) = weak.upgrade() {
             app.set_active(index);
+            skin::sync_visibility(&app, &navigate_host);
         }
     });
     let weak = app.as_weak();
+    let update_host = skin_host.clone();
     app.on_launcher_update(move || {
         if let Some(app) = weak.upgrade() {
             app.set_active(3);
+            skin::sync_visibility(&app, &update_host);
         }
     });
     app.on_support(|| eprintln!("POC support action: https://discord.gg/cAUcpeCVDM"));
+    let weak = app.as_weak();
+    let tab_host = skin_host.clone();
+    app.on_settings_tab_changed(move |index| {
+        if let Some(app) = weak.upgrade() {
+            app.set_settings_tab(index);
+            skin::sync_visibility(&app, &tab_host);
+        }
+    });
+    let slim_host = skin_host.clone();
+    let slim_weak = app.as_weak();
+    app.on_toggle_slim(move |value| {
+        if let Some(app) = slim_weak.upgrade() {
+            app.set_slim(value);
+            skin::sync_visibility(&app, &slim_host);
+        }
+    });
+    app.on_browse_skin(|| eprintln!("POC settings: skin browse is a stub (no backend)"));
+    app.on_browse_cape(|| eprintln!("POC settings: cape browse is a stub (no backend)"));
+    app.on_upload_skin(|| eprintln!("POC settings: skin upload is a stub (no backend)"));
+    app.on_settings_reset(|| eprintln!("POC settings: reset is a stub (no backend)"));
+    app.on_settings_save(|| eprintln!("POC settings: save is a stub (no backend)"));
+    let frame_host = skin_host.clone();
+    app.on_skin_frame_ready(move || frame_host.poll_frame());
+    let drag_host = skin_host.clone();
+    app.on_skin_drag_state(move |active| drag_host.on_drag_state(active));
+    let drag_by_host = skin_host.clone();
+    app.on_skin_drag_by(move |dx, dy| drag_by_host.on_drag_by(dx, dy));
     app.global::<SelectSearch>()
         .on_find(|options, search| fixtures::find_option(&options, &search));
     let weak = app.as_weak();
@@ -96,6 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scenario = "default".to_string();
     let mut capture_dir = None;
     let mut idle_seconds = None;
+    let mut self_check = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -110,13 +144,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--state" => state = args.next().ok_or("--state needs a name")?,
             "--scenario" => scenario = args.next().ok_or("--scenario needs a name")?,
             "--freeze-motion" => app.global::<MainMotion>().set_enabled(false),
+            "--self-check" => self_check = true,
             "--dev" => app.set_dev_build(true),
             _ => return Err(format!("Unknown argument: {arg}").into()),
         }
     }
-    fixtures::apply_main(&app, &state, &scenario)?;
+    if state == "settings-skin" {
+        fixtures::apply_settings(&app)?;
+    } else {
+        fixtures::apply_main(&app, &state, &scenario)?;
+    }
+    if self_check {
+        skin::arm_self_check(&app, &skin_host);
+    }
     let _capture_timer = capture_dir
-        .map(|path| capture::start(&app, path.into()))
+        .map(|path| capture::start(&app, &skin_host, path.into()))
         .transpose()?;
     if let Some(seconds) = idle_seconds {
         slint::Timer::single_shot(std::time::Duration::from_secs(seconds), || {
@@ -124,6 +166,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     app.show()?;
+    skin::sync_visibility(&app, &skin_host);
     println!("READY pid={}", std::process::id());
     app.run()?;
     Ok(())

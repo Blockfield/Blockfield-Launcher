@@ -10,6 +10,7 @@ build = "build.rs"
 
 [dependencies]
 slint = { version = "~1.18", default-features = false, features = ["std", "backend-winit", "renderer-skia-opengl", "renderer-software", "compat-1-2"] }
+skin3d = { path = "../skin3d", features = ["slint"] }
 
 [build-dependencies]
 slint-build = "~1.18"

@@ -9,7 +9,7 @@ description = "Caller-driven offscreen Minecraft skin preview feasibility render
 [workspace]
 
 [features]
-slint-preview = ["dep:slint"]
+slint = ["dep:slint"]
 
 [dependencies]
 bytemuck = { version = "1.25", features = ["derive"] }
@@ -26,7 +26,7 @@ path = "examples/render-frames.rs"
 [[example]]
 name = "slint-preview"
 path = "examples/slint-preview.rs"
-required-features = ["slint-preview"]
+required-features = ["slint"]
 test = true
 
 [profile.release]
