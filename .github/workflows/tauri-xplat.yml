@@ -54,6 +54,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
         with:
           toolchain: 1.99.0
+          components: rustfmt, clippy
       - name: Linux dependencies and isolated display
         if: runner.os == 'Linux'
         timeout-minutes: 8
