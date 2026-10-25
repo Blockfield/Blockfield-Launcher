@@ -145,6 +145,37 @@ pub async fn install_launcher_update<R: tauri::Runtime>(
 mod tests {
     use super::*;
 
+    fn fixture(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name);
+        let raw = std::fs::read_to_string(path).unwrap();
+        raw.strip_suffix('\n').unwrap_or(&raw).to_string()
+    }
+
+    #[test]
+    fn update_info_and_progress_keep_their_camel_case_snapshots() {
+        assert_eq!(
+            serde_json::to_string(&UpdateInfo {
+                current_version: "1.0.19".into(),
+                version: "1.0.20".into(),
+                body: Some("Fixes and improvements".into()),
+            })
+            .unwrap(),
+            fixture("update_info.json"),
+        );
+        assert_eq!(
+            serde_json::to_string(&UpdateProgress {
+                phase: "downloading",
+                downloaded: 3,
+                total: Some(9),
+            })
+            .unwrap(),
+            fixture("update_progress.json"),
+        );
+    }
+
     #[tokio::test]
     async fn dev_build_refuses_stable_updates_before_accessing_updater_or_launcher() {
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());

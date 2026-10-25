@@ -17,8 +17,75 @@ use tauri_plugin_deep_link::DeepLinkExt;
 mod updater;
 
 use commands::LauncherAppState;
+use launcher_app::LauncherEvent;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+
+/// Names of the commands served through Tauri `invoke`, in `generate_handler!`
+/// order below. `generate_handler!` cannot be introspected, so this adjacent
+/// fixed-size list is the testable copy: the size forces a compile error when
+/// a command is added or removed, and `tests/adapter_contract.rs` fails CI if
+/// the contents drift from either side (macro or frontend `invoke()` calls).
+pub const REGISTERED_COMMANDS: [&str; 27] = [
+    "check_launcher_update",
+    "install_launcher_update",
+    "account_status",
+    "login",
+    "register",
+    "logout",
+    "change_password",
+    "load_settings",
+    "save_settings",
+    "select_profile",
+    "check_modpack_version",
+    "download_modpack",
+    "verify_files",
+    "cancel_download",
+    "launch_game",
+    "game_status",
+    "server_status",
+    "stats_leaderboard",
+    "stats_seasons",
+    "stats_player",
+    "open_url",
+    "dev_status",
+    "upload_skin",
+    "preview_skin",
+    "pending_room",
+    "select_room",
+    "join_running_room",
+];
+
+/// Frontend event name for a [`LauncherEvent`], exactly as emitted today.
+pub fn event_name(event: &LauncherEvent) -> &'static str {
+    match event {
+        LauncherEvent::Status(_) => "launcher://status",
+        LauncherEvent::DownloadProgress(_) => "download://progress",
+        LauncherEvent::DownloadMirror(_) => "download://mirror",
+        LauncherEvent::GameStatus(_) => "game://status",
+        LauncherEvent::RoomPending => "room://pending",
+        LauncherEvent::AccountExpired => "account://expired",
+    }
+}
+
+/// Frontend payload for a [`LauncherEvent`], exactly as emitted today
+/// (`room://pending` and `account://expired` carry `null`, like `()` does).
+/// Raw JSON keeps today's key order byte-for-byte: routing the structs through
+/// `serde_json::Value` would re-sort keys and change the wire bytes.
+pub fn event_payload(event: &LauncherEvent) -> Box<serde_json::value::RawValue> {
+    let json = match event {
+        LauncherEvent::Status(payload) => serde_json::to_string(payload),
+        LauncherEvent::DownloadProgress(payload) => serde_json::to_string(payload),
+        LauncherEvent::DownloadMirror(mirror) => serde_json::to_string(&serde_json::json!({
+            "name": mirror.name,
+            "speed": mirror.speed,
+        })),
+        LauncherEvent::GameStatus(status) => serde_json::to_string(status),
+        LauncherEvent::RoomPending | LauncherEvent::AccountExpired => Ok("null".to_string()),
+    }
+    .expect("event payloads serialize to valid JSON");
+    serde_json::value::RawValue::from_string(json).expect("event payloads serialize to valid JSON")
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -93,39 +160,13 @@ pub fn run() {
             // each variant back to today's exact event name and payload.
             let sink_app = app.handle().clone();
             let events: launcher_app::EventSink = Arc::new(move |event| {
-                use launcher_app::LauncherEvent::*;
-                match event {
-                    Status(payload) => {
-                        if let Err(e) = sink_app.emit("launcher://status", payload) {
-                            log::error!("Failed to emit launcher status: {e}");
-                        }
-                    }
-                    DownloadProgress(payload) => {
-                        let _ = sink_app.emit("download://progress", payload);
-                    }
-                    DownloadMirror(mirror) => {
-                        let _ = sink_app.emit(
-                            "download://mirror",
-                            serde_json::json!({
-                                "name": mirror.name,
-                                "speed": mirror.speed,
-                            }),
-                        );
-                    }
-                    GameStatus(status) => {
-                        let _ = sink_app.emit("game://status", status);
-                    }
-                    RoomPending => {
-                        // The rooms bridge showed the window before emitting;
-                        // every core RoomPending (deep link or Discord join)
-                        // restores it here so the shell mapping stays exact.
-                        crate::game::show_launcher(&sink_app);
-                        let _ = sink_app.emit("room://pending", ());
-                    }
-                    AccountExpired => {
-                        let _ = sink_app.emit("account://expired", ());
-                    }
+                if matches!(event, LauncherEvent::RoomPending) {
+                    // The rooms bridge showed the window before emitting;
+                    // every core RoomPending (deep link or Discord join)
+                    // restores it here so the shell mapping stays exact.
+                    crate::game::show_launcher(&sink_app);
                 }
+                let _ = sink_app.emit(event_name(&event), event_payload(&event));
             });
             let progress_app = app.handle().clone();
             let progress_sink: download::ProgressSink =

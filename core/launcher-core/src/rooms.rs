@@ -85,6 +85,6 @@ mod tests {
     }
 
     /// Any valid application id exercises the same branch; the production value
-    /// lives in src-tauri (`presence::APPLICATION_ID`) and is injected by callers.
+    /// lives in launcher-app (`presence::APPLICATION_ID`) and is injected by callers.
     const APP_ID: &str = "1234567890123456789";
 }

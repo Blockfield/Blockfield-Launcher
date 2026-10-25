@@ -1,0 +1,8 @@
+[
+  "account://expired",
+  "download://mirror",
+  "download://progress",
+  "game://status",
+  "launcher://status",
+  "room://pending"
+]
