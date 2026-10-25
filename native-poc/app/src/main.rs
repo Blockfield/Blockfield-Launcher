@@ -1,10 +1,50 @@
 use blockfield_native_poc::{AppWindow, fixtures, idle_self_check, skin};
 use slint::ComponentHandle;
 
+// Resident set size in KiB (Linux only; None elsewhere) for the RENDERER_PROBE cost line.
+#[cfg(target_os = "linux")]
+fn rss_kb() -> Option<u64> {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .and_then(|value| value.split_whitespace().next()?.parse().ok())
+}
+#[cfg(not(target_os = "linux"))]
+fn rss_kb() -> Option<u64> {
+    None
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    slint::BackendSelector::new()
-        .backend_name("winit".into())
-        .select()?;
+    // Partial rendering is opt-in upstream but pixel-identical here (u10: AE=0 on
+    // captures; real-GPU run with the flag); default it on so GPU-less GL/llvmpipe
+    // setups do not repaint the whole window every animation frame.
+    if std::env::var_os("SLINT_SKIA_PARTIAL_RENDERING").is_none() {
+        // SAFETY: single-threaded before any thread spawn.
+        unsafe { std::env::set_var("SLINT_SKIA_PARTIAL_RENDERING", "1") };
+    }
+    // An explicit SLINT_BACKEND wins (Layer-2 e2e pins winit-software for
+    // bit-stable goldens). Otherwise probe once: on software-only GL
+    // (llvmpipe, WARP) Skia GL rasters on the CPU behind a per-frame texture
+    // upload (u33: settings-skin +30% vs plain software), so ask for Skia CPU
+    // raster directly; real GPUs keep Skia GL/Metal/D3D. Probe objects are
+    // dropped before the UI is created; cost is logged as RENDERER_PROBE.
+    let mut selector = slint::BackendSelector::new().backend_name("winit".into());
+    if std::env::var_os("SLINT_BACKEND").is_none() {
+        let probe_start = std::time::Instant::now();
+        let rss_before = rss_kb();
+        let software = skin3d::software_adapter_only();
+        let rss_after = rss_kb();
+        eprintln!(
+            "RENDERER_PROBE software_only={software} elapsed_ms={} rss_delta_kb={}",
+            probe_start.elapsed().as_millis(),
+            rss_before
+                .and_then(|b| rss_after.map(|a| a as i64 - b as i64))
+                .map_or("-".into(), |d| d.to_string()),
+        );
+        selector = selector.renderer_name(if software { "skia-software" } else { "skia" }.into());
+    }
+    selector.select()?;
     let app = AppWindow::new()?;
     let (skin_host, activity) = blockfield_native_poc::wire_app(&app)?;
     let mut state = std::env::var("BLOCKFIELD_CAPTURE_STATE").unwrap_or_else(|_| "main".into());

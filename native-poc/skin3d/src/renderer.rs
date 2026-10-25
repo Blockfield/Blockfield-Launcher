@@ -62,6 +62,28 @@ struct Uniforms {
     camera: [f32; 4],
 }
 
+/// True when the only usable GPU adapter is software (llvmpipe/lavapipe, WARP,
+/// "Microsoft Basic Render Driver", ...): same instance/adapter options as
+/// `Renderer::new`; `device_type == Cpu` (or no adapter at all) means a GL
+/// renderer would raster on the CPU too, so the caller should prefer Skia's
+/// CPU raster directly. Drops the probe objects before returning.
+pub fn software_adapter_only() -> bool {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::VULKAN | wgpu::Backends::METAL | wgpu::Backends::DX12,
+        ..Default::default()
+    });
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(
+        &wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        },
+    )) else {
+        return true;
+    };
+    adapter.get_info().device_type == wgpu::DeviceType::Cpu
+}
+
 /// No window, surface, timer, worker or redraw loop. Each call submits one frame
 /// and waits (at most 10 seconds) for GPU readback. Drop releases its GPU objects.
 pub struct Renderer {
