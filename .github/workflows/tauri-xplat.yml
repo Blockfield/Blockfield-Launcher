@@ -145,11 +145,11 @@ jobs:
       - name: Build Slint release from same commit
         id: slint_build
         timeout-minutes: 30
-        if: always() && steps.tauri_build.outcome == 'success'
+        if: ${{ !cancelled() && steps.tauri_build.outcome == 'success' }}
         working-directory: native-poc/app
         run: cargo build --locked --release
       - name: Matched resource benchmark
-        if: always() && steps.tauri_build.outcome == 'success' && steps.slint_build.outcome == 'success'
+        if: ${{ !cancelled() && steps.tauri_build.outcome == 'success' && steps.slint_build.outcome == 'success' }}
         timeout-minutes: 12
         run: |
           set -euo pipefail
