@@ -31,16 +31,10 @@ tauri-plugin-updater = { version = "2.13.1", default-features = false, features 
 tauri-plugin-process = "2.4.0"
 tauri-plugin-single-instance = { version = "2.5.2", features = ["deep-link"] }
 tauri-plugin-deep-link = "2.6.1"
-reqwest = { version = "0.13", features = ["gzip", "json", "query", "stream"] }
 base64 = "0.23"
-sha2 = "0.11"
-sha1 = "0.11"
-md-5 = "0.11"
 zip = { version = "9", default-features = false, features = ["deflate"] }
-directories = "6"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "time", "macros", "net", "io-util"] }
-futures-util = "0.3"
 dotenvy = "0.15"
 blockfield-shared = { path = "../shared" }
 launcher-core = { path = "../core/launcher-core" }
