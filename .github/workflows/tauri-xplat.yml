@@ -10,7 +10,8 @@ permissions:
 
 concurrency:
   group: tauri-xplat-${{ github.ref }}
-  cancel-in-progress: true
+  # Preserve measured pairs while a newer evidence run queues.
+  cancel-in-progress: false
 
 env:
   CARGO_BUILD_JOBS: 4
@@ -65,7 +66,7 @@ jobs:
         timeout-minutes: 8
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb xdotool mesa-vulkan-drivers libgl1 libfontconfig-dev libxkbcommon-x11-0 imagemagick
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb xdotool mesa-utils mesa-vulkan-drivers libgl1 libfontconfig-dev libxkbcommon-x11-0 imagemagick
           # Ubuntu 24.04 ships ImageMagick 6; expose the v7 command used by the harness.
           if ! command -v magick; then
             mkdir -p "$RUNNER_TEMP/bin"

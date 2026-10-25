@@ -100,8 +100,8 @@ def launch(app, state, motion, args, directory):
                     return None
                 evidence = wait(ready, process)
                 if app == 'tauri':
-                    validate(evidence, state, motion)
                     (directory / 'proof.json').write_text(json.dumps(evidence, indent=2))
+                    validate(evidence, state, motion)
                 yield root, baseline, tracked
             finally:
                 for child in tree(root, baseline):
@@ -126,6 +126,36 @@ def launch(app, state, motion, args, directory):
                 process.wait(timeout=5)
 
 
+def windows_display(out):
+    import ctypes
+    from ctypes import wintypes as w
+    class DisplayMode(ctypes.Structure):
+        _fields_ = [
+            ('device', w.WCHAR * 32),
+            *[(name, w.WORD) for name in ('spec', 'driver', 'size', 'extra')],
+            ('fields', w.DWORD), ('position', w.POINT),
+            ('orientation', w.DWORD), ('fixed_output', w.DWORD),
+            *[(name, ctypes.c_short) for name in ('color', 'duplex', 'y_resolution', 'tt', 'collate')],
+            ('form', w.WCHAR * 32), ('log_pixels', w.WORD),
+            *[(name, w.DWORD) for name in ('bits', 'width', 'height', 'flags', 'frequency',
+                'icm_method', 'icm_intent', 'media', 'dither', 'reserved1', 'reserved2', 'pan_width', 'pan_height')],
+        ]
+    assert ctypes.sizeof(DisplayMode) == 220
+    user = ctypes.windll.user32
+    user.SetProcessDPIAware()
+    mode = DisplayMode()
+    mode.size = ctypes.sizeof(mode)
+    assert user.EnumDisplaySettingsW(None, -1, ctypes.byref(mode)), 'EnumDisplaySettingsW failed'
+    before = [mode.width, mode.height]
+    mode.width, mode.height = 1920, 1080
+    mode.fields = 0x00080000 | 0x00100000  # DM_PELSWIDTH | DM_PELSHEIGHT
+    status = user.ChangeDisplaySettingsW(ctypes.byref(mode), 0)
+    assert status == 0, f'ChangeDisplaySettingsW returned {status}'
+    after = [user.GetSystemMetrics(0), user.GetSystemMetrics(1)]
+    (out / 'display.json').write_text(json.dumps(dict(before=before, after=after)))
+    assert after == [1920, 1080], after
+
+
 def screenshot(root, destination):
     from PIL import Image, ImageGrab
     if sys.platform == 'win32':
@@ -147,6 +177,8 @@ def screenshot(root, destination):
             return True
         user.EnumWindows(callback_type(visit), 0)
         assert len(rectangles) == 1, rectangles
+        left, top, right, bottom = rectangles[0]
+        assert 0 <= left < right <= user.GetSystemMetrics(0) and 0 <= top < bottom <= user.GetSystemMetrics(1), rectangles
         ImageGrab.grab(bbox=rectangles[0], all_screens=True).save(destination)
     elif sys.platform == 'darwin':
         import Quartz
@@ -195,8 +227,12 @@ def main():
         raise RuntimeError('Runner-only harness: refuses access to a local desktop')
     args.out.mkdir(parents=True, exist_ok=True)
     if sys.platform == 'win32':
-        import ctypes
-        ctypes.windll.user32.SetProcessDPIAware()
+        windows_display(args.out)
+    if sys.platform.startswith('linux'):
+        renderer = subprocess.run(['glxinfo', '-B'], env=dict(os.environ, LIBGL_ALWAYS_SOFTWARE='1'),
+                                  capture_output=True, text=True, timeout=10)
+        (args.out / 'glxinfo.txt').write_text(renderer.stdout + renderer.stderr)
+        assert renderer.returncode == 0, 'GLX renderer probe failed; see glxinfo.txt'
     if args.mode == 'capture':
         failures = []
         for state in STATES:

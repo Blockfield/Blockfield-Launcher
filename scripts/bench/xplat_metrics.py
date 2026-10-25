@@ -22,7 +22,7 @@ def tree(root, baseline):
     except psutil.NoSuchProcess:
         pass
     if sys.platform == 'darwin':
-        # XPC WebKit services are launchd children, not descendants of the Tauri PID.
+        # shortcut: launch-window matching can include unrelated WebKit apps; use responsible PID if runners run those concurrently.
         for process in psutil.process_iter():
             try:
                 if identity(process) not in baseline and webkit(process):
@@ -43,6 +43,7 @@ def sample(root, baseline):
                 memory = process.memory_full_info().uss
                 metric = 'private_working_set'
             elif sys.platform == 'darwin':
+                # shortcut: RSS can double-count shared pages; use phys_footprint when a reliable runner probe is available.
                 memory = process.memory_info().rss
                 metric = 'rss_fallback'
             else:

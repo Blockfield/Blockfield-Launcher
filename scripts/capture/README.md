@@ -144,7 +144,9 @@ disposable native config's language field. The old Linux query path is preserved
 `xplat.py` refuses to run outside GitHub Actions. It captures nine matched states
 at 1280×720, verifies fixture state, viewport and loaded Inter faces, and records
 WebGL renderer evidence for skin. Native screenshots use client bounds (Windows),
-window-only `screencapture` (macOS), or Xvfb window geometry (Linux). Wrong scale or
+window-only `screencapture` (macOS), or Xvfb window geometry (Linux). The disposable
+Windows runner display is set to 1920×1080 through ChangeDisplaySettingsW before
+launch; its default small desktop otherwise clamps the 1280px window. Wrong scale or
 size fails, rather than silently resizing the evidence. Capture errors and app
 logs are artifacts even on failure. `xplat_report.py` compares committed per-OS
 native goldens using ImageMagick RMSE and AE with fuzz 2%, writing JSON, diff PNGs

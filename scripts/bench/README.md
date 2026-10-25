@@ -118,7 +118,8 @@ status within 30 s. `--variant` can also select just the Slint variants for a
 
 The `tauri-xplat` workflow builds both apps from the same commit, then interleaves
 Tauri/Slint for main idle and animated settings-skin: three launches per app/state,
-5 seconds warmup after readiness, 30 seconds sampling at 1 second intervals.
+5 seconds warmup after readiness (including Slint skin first-frame delivery),
+30 seconds sampling at 1 second intervals.
 Screenshots run separately, with motion frozen; measured apps keep real animation.
 Raw samples retain process PID/birth time/name, memory and cumulative CPU time.
 The report gives per-run means, their mean/sample standard deviation and savings

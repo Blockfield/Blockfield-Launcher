@@ -17,7 +17,7 @@ class XplatTests(unittest.TestCase):
         module = load('xplat_report')
         with patch.object(module.subprocess, 'run') as run:
             run.side_effect = [type('Result', (), dict(returncode=1, stderr='655.35 (0.01)')),
-                               type('Result', (), dict(returncode=1, stderr='42'))]
+                               type('Result', (), dict(returncode=1, stderr='42 (4.55729e-05)'))]
             result = module.compare(Path('a'), Path('b'), Path('diff'))
             self.assertEqual(result['rmse_normalized'], .01)
             self.assertEqual(result['different_pixels_2pct'], 42)

@@ -24,7 +24,7 @@ def compare(actual, golden, out):
             raise RuntimeError(process.stderr)
         metrics[metric] = process.stderr.strip()
     metrics['rmse_normalized'] = float(re.search(r'\(([^)]+)\)', metrics['RMSE'])[1])
-    metrics['different_pixels_2pct'] = int(float(metrics['AE']))
+    metrics['different_pixels_2pct'] = int(float(metrics['AE'].split()[0]))
     return metrics
 
 
@@ -49,6 +49,7 @@ def report(out, goldens):
         result = json.loads(path.read_text())
         lines += ['', '| Scenario | App | Memory MiB mean ± sample SD | CPU % mean ± sample SD | Runs |',
                   '|---|---|---:|---:|---:|']
+        savings_lines = []
         for state in ('main', 'settings-skin'):
             for app in ('tauri', 'slint'):
                 runs = [r for r in result['runs'] if r['state'] == state and r['app'] == app]
@@ -66,7 +67,8 @@ def report(out, goldens):
             if len(pairs) == 3:
                 savings = {k: statistics.mean(p[k] for p in pairs) if all(p[k] is not None for p in pairs) else None
                            for k in ('memory_bytes', 'cpu_pct')}
-                lines += ['', f"{state}: mean savings from three matched pairs: {savings} (percent).", '']
+                savings_lines += ['', f"{state}: mean savings from three matched pairs: {savings} (percent)."]
+        lines += savings_lines
         lines += ['', 'Accounting: ' + result['mac_attribution'], result['limits'],
                   '5s fixed warmup after readiness; 3 × 30s per app/scenario, interleaved on the same runner.',
                   'Windows private working set; Linux PSS; macOS RSS fallback (shared pages may be double counted).',
