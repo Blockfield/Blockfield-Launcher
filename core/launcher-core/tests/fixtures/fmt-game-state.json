@@ -1,0 +1,31 @@
+{
+  "base": "b4583ca",
+  "suite": "game-state.ts:66 gameStateLabel",
+  "cases": [
+    {
+      "fn": "game_state_label",
+      "input": "running",
+      "expected": "В ИГРЕ"
+    },
+    {
+      "fn": "game_state_label",
+      "input": "launching",
+      "expected": "ЗАПУСК"
+    },
+    {
+      "fn": "game_state_label",
+      "input": "finishing",
+      "expected": "ЗАВЕРШЕНИЕ"
+    },
+    {
+      "fn": "game_state_label",
+      "input": "unknown",
+      "expected": "ПРОВЕРКА…"
+    },
+    {
+      "fn": "game_state_label",
+      "input": "idle",
+      "expected": "ИГРАТЬ"
+    }
+  ]
+}

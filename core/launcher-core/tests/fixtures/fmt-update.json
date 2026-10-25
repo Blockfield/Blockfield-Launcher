@@ -1,0 +1,266 @@
+{
+  "base": "b4583ca",
+  "suite": "UpdateScreen.tsx:43-64 formatSpeed/formatMirror/formatBytes",
+  "cases": [
+    {
+      "fn": "format_speed",
+      "input": 0,
+      "expected": "0 B/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 0.4,
+      "expected": "0 B/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1,
+      "expected": "1 B/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 999,
+      "expected": "999 B/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1023,
+      "expected": "1023 B/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1023.4,
+      "expected": "1023 B/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1023.5,
+      "expected": "1024 B/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1024,
+      "expected": "1.0 KB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1280,
+      "expected": "1.3 KB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1536,
+      "expected": "1.5 KB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1792,
+      "expected": "1.8 KB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1792.5,
+      "expected": "1.8 KB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1048575,
+      "expected": "1024.0 KB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1048576,
+      "expected": "1.0 MB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1310720,
+      "expected": "1.3 MB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 1572864,
+      "expected": "1.5 MB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 2500000,
+      "expected": "2.4 MB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 104857600,
+      "expected": "100.0 MB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": 10737418240,
+      "expected": "10240.0 MB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": -5,
+      "expected": "-5 B/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": -1280,
+      "expected": "-1280 B/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": "NaN",
+      "expected": "NaN MB/s"
+    },
+    {
+      "fn": "format_speed",
+      "input": "Infinity",
+      "expected": "Infinity MB/s"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 0,
+      "expected": "0 B"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1,
+      "expected": "1 B"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 512,
+      "expected": "512 B"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1023,
+      "expected": "1023 B"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1023.5,
+      "expected": "1023.5 B"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1024,
+      "expected": "1 KB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1280,
+      "expected": "1 KB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1536,
+      "expected": "2 KB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 2560,
+      "expected": "3 KB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1047040,
+      "expected": "1023 KB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1048064,
+      "expected": "1024 KB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1048832,
+      "expected": "1.0 MB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1048575,
+      "expected": "1024 KB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1048576,
+      "expected": "1.0 MB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1572864,
+      "expected": "1.5 MB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 10485760,
+      "expected": "10.0 MB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1610612736,
+      "expected": "1.50 GB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": 1099511627776,
+      "expected": "1024.00 GB"
+    },
+    {
+      "fn": "format_bytes",
+      "input": -1,
+      "expected": "—"
+    },
+    {
+      "fn": "format_bytes",
+      "input": "NaN",
+      "expected": "—"
+    },
+    {
+      "fn": "format_bytes",
+      "input": "Infinity",
+      "expected": "—"
+    },
+    {
+      "fn": "format_mirror",
+      "input": "http://host.com:8080/x",
+      "expected": "host.com:8080"
+    },
+    {
+      "fn": "format_mirror",
+      "input": "https://example.com/path",
+      "expected": "example.com"
+    },
+    {
+      "fn": "format_mirror",
+      "input": "http://example.com:80/",
+      "expected": "example.com"
+    },
+    {
+      "fn": "format_mirror",
+      "input": "https://EXAMPLE.com/AbC",
+      "expected": "example.com"
+    },
+    {
+      "fn": "format_mirror",
+      "input": "http://[::1]:8080/x",
+      "expected": "[::1]:8080"
+    },
+    {
+      "fn": "format_mirror",
+      "input": "ftp://h:21/f",
+      "expected": "h"
+    },
+    {
+      "fn": "format_mirror",
+      "input": "not a url",
+      "expected": "not a url"
+    },
+    {
+      "fn": "format_mirror",
+      "input": "",
+      "expected": "—"
+    }
+  ]
+}

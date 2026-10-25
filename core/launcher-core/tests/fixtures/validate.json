@@ -1,0 +1,266 @@
+{
+  "base": "b4583ca",
+  "suite": "ram.ts + username.ts + game-directory.ts",
+  "cases": [
+    {
+      "fn": "ram_limit_gb",
+      "input": {
+        "value": 32768
+      },
+      "expected": 32
+    },
+    {
+      "fn": "ram_limit_gb",
+      "input": {
+        "value": 0
+      },
+      "expected": 0
+    },
+    {
+      "fn": "ram_limit_gb",
+      "input": {
+        "value": 1024
+      },
+      "expected": 1
+    },
+    {
+      "fn": "ram_limit_gb",
+      "input": {
+        "value": 1536
+      },
+      "expected": 1
+    },
+    {
+      "fn": "ram_limit_gb",
+      "input": {
+        "value": 2048
+      },
+      "expected": 2
+    },
+    {
+      "fn": "ram_limit_gb",
+      "input": {
+        "value": 16384
+      },
+      "expected": 16
+    },
+    {
+      "fn": "ram_limit_gb",
+      "input": {
+        "value": 65536
+      },
+      "expected": 32
+    },
+    {
+      "fn": "ram_limit_gb",
+      "input": {
+        "value": -100
+      },
+      "expected": 0
+    },
+    {
+      "fn": "ram_limit_gb",
+      "input": {
+        "value": "NaN"
+      },
+      "expected": "NaN"
+    },
+    {
+      "fn": "ram_limit_gb",
+      "input": {
+        "value": "Infinity"
+      },
+      "expected": 32
+    },
+    {
+      "fn": "clamp_ram_gb",
+      "input": {
+        "value": 1,
+        "max": 16
+      },
+      "expected": 2
+    },
+    {
+      "fn": "clamp_ram_gb",
+      "input": {
+        "value": 2,
+        "max": 16
+      },
+      "expected": 2
+    },
+    {
+      "fn": "clamp_ram_gb",
+      "input": {
+        "value": 2.4,
+        "max": 16
+      },
+      "expected": 2
+    },
+    {
+      "fn": "clamp_ram_gb",
+      "input": {
+        "value": 2.5,
+        "max": 16
+      },
+      "expected": 3
+    },
+    {
+      "fn": "clamp_ram_gb",
+      "input": {
+        "value": 8,
+        "max": 16
+      },
+      "expected": 8
+    },
+    {
+      "fn": "clamp_ram_gb",
+      "input": {
+        "value": 20,
+        "max": 16
+      },
+      "expected": 16
+    },
+    {
+      "fn": "clamp_ram_gb",
+      "input": {
+        "value": "NaN",
+        "max": 16
+      },
+      "expected": 2
+    },
+    {
+      "fn": "clamp_ram_gb",
+      "input": {
+        "value": "Infinity",
+        "max": 8
+      },
+      "expected": 2
+    },
+    {
+      "fn": "clamp_ram_gb",
+      "input": {
+        "value": "-Infinity",
+        "max": 8
+      },
+      "expected": 2
+    },
+    {
+      "fn": "clamp_ram_gb",
+      "input": {
+        "value": -5,
+        "max": 16
+      },
+      "expected": 2
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "abc",
+      "expected": true
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "ab",
+      "expected": false
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "abcdefghijklmnop",
+      "expected": true
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "abcdefghijklmnopq",
+      "expected": false
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "a b",
+      "expected": false
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "A_Z-9",
+      "expected": false
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "  abc  ",
+      "expected": true
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "",
+      "expected": false
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "   ",
+      "expected": false
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "иван",
+      "expected": false
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "ABC_123_xyz45678",
+      "expected": true
+    },
+    {
+      "fn": "is_valid_username",
+      "input": "_ab",
+      "expected": true
+    },
+    {
+      "fn": "selected_game_directory",
+      "input": "C:/Games",
+      "expected": "C:/Games/Blockfield"
+    },
+    {
+      "fn": "selected_game_directory",
+      "input": "C:/Games/Blockfield",
+      "expected": "C:/Games/Blockfield"
+    },
+    {
+      "fn": "selected_game_directory",
+      "input": "C:/Games/blockfield/",
+      "expected": "C:/Games/blockfield/"
+    },
+    {
+      "fn": "selected_game_directory",
+      "input": "/home/u/.games/",
+      "expected": "/home/u/.games/Blockfield"
+    },
+    {
+      "fn": "selected_game_directory",
+      "input": "/x/BLOCKFIELD",
+      "expected": "/x/BLOCKFIELD"
+    },
+    {
+      "fn": "selected_game_directory",
+      "input": "",
+      "expected": "Blockfield"
+    },
+    {
+      "fn": "selected_game_directory",
+      "input": "/",
+      "expected": "/Blockfield"
+    },
+    {
+      "fn": "selected_game_directory",
+      "input": "relative/dir",
+      "expected": "relative/dir/Blockfield"
+    },
+    {
+      "fn": "selected_game_directory",
+      "input": "C:\\Games\\Blockfield",
+      "expected": "C:\\Games\\Blockfield"
+    },
+    {
+      "fn": "selected_game_directory",
+      "input": "C:\\Games\\Other\\",
+      "expected": "C:\\Games\\Other\\/Blockfield"
+    }
+  ]
+}

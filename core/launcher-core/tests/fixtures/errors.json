@@ -1,0 +1,470 @@
+{
+  "base": "b4583ca",
+  "suite": "errors.ts:1-141 friendlyError (+ SESSION_EXPIRED passthrough, network hints)",
+  "cases": [
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "invoke failed: something broke",
+        "context": "modpack-check"
+      },
+      "expected": "Не удалось проверить обновление модпака."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "invoke failed: something broke",
+        "context": "modpack-download"
+      },
+      "expected": "Не удалось скачать обновление модпака."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "invoke failed: something broke",
+        "context": "launch"
+      },
+      "expected": "Не удалось запустить игру."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "invoke failed: something broke",
+        "context": "launcher-update"
+      },
+      "expected": "Не удалось проверить или установить обновление лаунчера."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "invoke failed: something broke",
+        "context": "settings-save"
+      },
+      "expected": "Не удалось сохранить настройки. Откройте подробности ошибки."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "invoke failed: something broke",
+        "context": "settings-load"
+      },
+      "expected": "Не удалось загрузить настройки. Проверьте доступ к папке настроек и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "invoke failed: something broke",
+        "context": "skin-upload"
+      },
+      "expected": "Не удалось загрузить скин. Откройте подробности ошибки."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "invoke failed: something broke",
+        "context": "account"
+      },
+      "expected": "Не удалось выполнить запрос к серверу аккаунтов."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "invoke failed: something broke",
+        "context": "select-profile"
+      },
+      "expected": "Не удалось переключить профиль."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "reqwest error trying to connect: dns error",
+        "context": "modpack-check"
+      },
+      "expected": "Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "reqwest error trying to connect: dns error",
+        "context": "launcher-update"
+      },
+      "expected": "Нет доступа к серверу обновлений лаунчера — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "reqwest error trying to connect: dns error",
+        "context": "skin-upload"
+      },
+      "expected": "Нет доступа к серверу скинов skins.blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "reqwest error trying to connect: dns error",
+        "context": "account"
+      },
+      "expected": "Нет доступа к серверу аккаунтов skins.blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "reqwest error trying to connect: dns error",
+        "context": "select-profile"
+      },
+      "expected": "Не удалось переключить профиль. Проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "error sending request: connection refused",
+        "context": "modpack-check"
+      },
+      "expected": "Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "error sending request: connection refused",
+        "context": "launcher-update"
+      },
+      "expected": "Нет доступа к серверу обновлений лаунчера — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "error sending request: connection refused",
+        "context": "skin-upload"
+      },
+      "expected": "Нет доступа к серверу скинов skins.blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "error sending request: connection refused",
+        "context": "account"
+      },
+      "expected": "Нет доступа к серверу аккаунтов skins.blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "error sending request: connection refused",
+        "context": "select-profile"
+      },
+      "expected": "Не удалось переключить профиль. Проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "operation timed out",
+        "context": "modpack-check"
+      },
+      "expected": "Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "operation timed out",
+        "context": "launcher-update"
+      },
+      "expected": "Нет доступа к серверу обновлений лаунчера — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "operation timed out",
+        "context": "skin-upload"
+      },
+      "expected": "Нет доступа к серверу скинов skins.blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "operation timed out",
+        "context": "account"
+      },
+      "expected": "Нет доступа к серверу аккаунтов skins.blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "operation timed out",
+        "context": "select-profile"
+      },
+      "expected": "Не удалось переключить профиль. Проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "network is unreachable",
+        "context": "modpack-check"
+      },
+      "expected": "Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "network is unreachable",
+        "context": "launcher-update"
+      },
+      "expected": "Нет доступа к серверу обновлений лаунчера — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "network is unreachable",
+        "context": "skin-upload"
+      },
+      "expected": "Нет доступа к серверу скинов skins.blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "network is unreachable",
+        "context": "account"
+      },
+      "expected": "Нет доступа к серверу аккаунтов skins.blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "network is unreachable",
+        "context": "select-profile"
+      },
+      "expected": "Не удалось переключить профиль. Проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "tcp connect error: connection refused",
+        "context": "modpack-check"
+      },
+      "expected": "Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "tcp connect error: connection refused",
+        "context": "launcher-update"
+      },
+      "expected": "Нет доступа к серверу обновлений лаунчера — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "tcp connect error: connection refused",
+        "context": "skin-upload"
+      },
+      "expected": "Нет доступа к серверу скинов skins.blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "tcp connect error: connection refused",
+        "context": "account"
+      },
+      "expected": "Нет доступа к серверу аккаунтов skins.blockfield.pro — проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "tcp connect error: connection refused",
+        "context": "select-profile"
+      },
+      "expected": "Не удалось переключить профиль. Проверьте интернет и повторите."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "x SESSION_EXPIRED y",
+        "context": "launch"
+      },
+      "expected": "Сессия истекла — войдите снова."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Drasl account server unavailable",
+        "context": "account"
+      },
+      "expected": "Сервер аккаунтов недоступен, попробуйте позже."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "oops Drasl: Invalid credentials tail",
+        "context": "account"
+      },
+      "expected": "Неверный никнейм или пароль."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Drasl: Invalid credentials",
+        "context": "launch"
+      },
+      "expected": "Не удалось запустить игру."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "oops Drasl: That username is taken tail",
+        "context": "account"
+      },
+      "expected": "Этот никнейм уже занят."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Drasl: That username is taken",
+        "context": "launch"
+      },
+      "expected": "Не удалось запустить игру."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "oops Drasl: That player name is taken tail",
+        "context": "account"
+      },
+      "expected": "Этот никнейм уже занят."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Drasl: That player name is taken",
+        "context": "launch"
+      },
+      "expected": "Не удалось запустить игру."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "oops Drasl: Invalid password tail",
+        "context": "account"
+      },
+      "expected": "Пароль слишком короткий — нужно не меньше 8 символов."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Drasl: Invalid password",
+        "context": "launch"
+      },
+      "expected": "Не удалось запустить игру."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "oops Drasl: Weird new drasl failure tail",
+        "context": "account"
+      },
+      "expected": "Weird new drasl failure tail"
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Drasl: Weird new drasl failure",
+        "context": "launch"
+      },
+      "expected": "Не удалось запустить игру."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Game directory must be a safe absolute path: C:\\",
+        "context": "settings-save"
+      },
+      "expected": "Выберите отдельную папку для игры, например D:\\Blockfield, а не корень диска."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Game directory cannot be created: EACCES",
+        "context": "settings-save"
+      },
+      "expected": "Не удалось создать папку игры. Выберите другую папку или проверьте доступ к выбранному пути."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Game directory is not writable: EACCES",
+        "context": "settings-save"
+      },
+      "expected": "Не удалось записать файл в папку игры. Выберите другую папку или проверьте права на запись."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Selected Java executable does not exist: /usr/bin/java",
+        "context": "settings-save"
+      },
+      "expected": "Выбранный файл Java не найден. Очистите поле для автоматического выбора или укажите существующий файл."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Failed to run selected Java: exit 1",
+        "context": "settings-save"
+      },
+      "expected": "Не удалось запустить выбранную Java. Очистите поле для автоматического выбора или выберите другую Java."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Selected Java must be a working Java 17 or 21 runtime, got 11",
+        "context": "settings-save"
+      },
+      "expected": "Для игры нужна Java 17 или 21. Очистите поле для автоматического выбора или выберите подходящую Java."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "RAM must be between 2048 and 16384 MB",
+        "context": "settings-save"
+      },
+      "expected": "Выбранный объём RAM недопустим. Уменьшите его с учётом памяти компьютера; минимум — 2 ГБ."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "settings-save Game directory must be a safe absolute path",
+        "context": "settings-save"
+      },
+      "expected": "Не удалось сохранить настройки. Откройте подробности ошибки."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "wrap Укажите адрес мастерской в настройках выбранного профиля. wrap",
+        "context": "modpack-check"
+      },
+      "expected": "Укажите адрес мастерской в настройках выбранного профиля."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "wrap Закройте игру перед сменой профиля. wrap",
+        "context": "modpack-check"
+      },
+      "expected": "Закройте игру перед сменой профиля."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "wrap Дождитесь завершения текущей операции. wrap",
+        "context": "modpack-check"
+      },
+      "expected": "Дождитесь завершения текущей операции."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "Error: boom",
+        "context": "launch"
+      },
+      "expected": "Не удалось запустить игру."
+    }
+  ]
+}

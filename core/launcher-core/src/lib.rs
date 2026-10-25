@@ -1,5 +1,9 @@
 pub mod config;
 pub mod dev;
+pub mod errors;
+pub mod fmt;
 pub mod game;
 pub mod host_env;
+pub mod roles;
 pub mod rooms;
+pub mod validate;

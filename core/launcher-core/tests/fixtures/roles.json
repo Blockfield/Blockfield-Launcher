@@ -1,0 +1,65 @@
+{
+  "base": "b4583ca",
+  "suite": "workshop.ts:1-7 hasWorkshopAccess (+ App.tsx:103 usage)",
+  "cases": [
+    {
+      "fn": "has_workshop_access",
+      "input": "builder",
+      "expected": true
+    },
+    {
+      "fn": "has_workshop_access",
+      "input": "moderator",
+      "expected": true
+    },
+    {
+      "fn": "has_workshop_access",
+      "input": "admin",
+      "expected": true
+    },
+    {
+      "fn": "has_workshop_access",
+      "input": "owner",
+      "expected": true
+    },
+    {
+      "fn": "has_workshop_access",
+      "input": null,
+      "expected": false
+    },
+    {
+      "fn": "has_workshop_access",
+      "expected": false
+    },
+    {
+      "fn": "has_workshop_access",
+      "input": "",
+      "expected": false
+    },
+    {
+      "fn": "has_workshop_access",
+      "input": "player",
+      "expected": false
+    },
+    {
+      "fn": "has_workshop_access",
+      "input": "unknown",
+      "expected": false
+    },
+    {
+      "fn": "has_workshop_access",
+      "input": "Admin",
+      "expected": false
+    },
+    {
+      "fn": "has_workshop_access",
+      "input": " builder",
+      "expected": false
+    },
+    {
+      "fn": "has_workshop_access",
+      "input": "owner ",
+      "expected": false
+    }
+  ]
+}
