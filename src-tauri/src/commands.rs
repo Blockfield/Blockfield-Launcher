@@ -1,87 +1,30 @@
 use crate::config::{ClientProfile, LauncherConfig};
 use crate::download::Downloader;
-use crate::pack::{self, JavaInfo, LauncherInfo, PackMeta};
+use crate::pack::{self, JavaInfo};
 use crate::status::ServerStatus;
-use serde::Serialize;
+// Moved to launcher-app (phase 2, no behaviour change); re-export keeps every
+// `crate::commands::…` call site unchanged.
+use launcher_app::EventSink;
+pub use launcher_app::{GameIdentity, LauncherAppState, PackState, VersionCheckResult};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::sync::RwLock;
 
 const INSTALLED_VERSION_FILE: &str = ".blockfield-pack-version";
 const INSTALLER_JAR: &str = "packwiz-installer.jar";
 const BOOTSTRAP_JAR: &str = "packwiz-installer-bootstrap.jar";
 
-/// Shared application state managed by Tauri.
-pub struct LauncherAppState {
-    /// No outer mutex — Downloader uses atomics internally for cancel flag and progress.
-    pub downloader: Arc<Downloader>,
-    pub pack: RwLock<Option<PackState>>,
-    pub config: RwLock<LauncherConfig>,
-    pub app_data_dir: PathBuf,
-    /// Direct handle to the atomic cancel flag so cancel_download can set it
-    /// without any lock contention.
-    pub cancel_flag: Arc<AtomicBool>,
-    pub game: Arc<crate::game::GameState>,
-    pub operation: tokio::sync::Mutex<()>,
-}
-
-/// What `check_modpack_version` learned about the hosted pack.
-#[derive(Clone)]
-pub struct PackState {
-    pub info: LauncherInfo,
-    pub meta: PackMeta,
-}
-
-/// Drasl player and Yggdrasil access token the game session runs with.
-#[derive(Clone)]
-pub struct GameIdentity {
-    pub username: String,
-    pub uuid: String,
-    pub access_token: String,
-}
-
 // Canonical implementation moved to launcher-core with config validation;
 // re-export keeps every `crate::commands::valid_username` call site unchanged.
 pub use launcher_core::config::valid_username;
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VersionCheckResult {
-    pub needs_update: bool,
-    pub remote_version: String,
-    pub installed_version: String,
-    pub mirror: String,
-    pub file_count: usize,
-    pub total_size: u64,
-    pub java: Option<JavaInfo>,
-    pub java_ok: bool,
-    pub loader_ok: bool,
-}
-
-#[derive(Clone, Serialize)]
-struct LauncherStatusPayload {
-    phase: &'static str,
-    message: String,
-    cancelable: bool,
-}
-
 fn emit_status(
-    app_handle: &AppHandle,
+    events: &EventSink,
     phase: &'static str,
     message: impl Into<String>,
     cancelable: bool,
 ) {
-    let payload = LauncherStatusPayload {
-        phase,
-        message: message.into(),
-        cancelable,
-    };
-
-    if let Err(e) = app_handle.emit("launcher://status", payload) {
-        log::error!("Failed to emit launcher status: {e}");
-    }
+    events(LauncherAppState::status_event(phase, message, cancelable));
 }
 
 fn java_exe_name() -> &'static str {
@@ -366,10 +309,7 @@ pub async fn download_modpack(
     app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
 ) -> Result<(), String> {
-    let _operation = state
-        .operation
-        .try_lock()
-        .map_err(|_| "Another launcher operation is in progress")?;
+    let _operation = state.begin_operation()?;
     if state.game.is_busy() {
         return Err("Close the game before updating files".to_string());
     }
@@ -396,13 +336,13 @@ pub async fn download_modpack(
     state
         .downloader
         .set_grand_total(java_bytes + 64 * 1024 * 1024);
-    emit_status(&app_handle, "setup", "Подготовка установки", false);
+    emit_status(&state.events, "setup", "Подготовка установки", false);
 
     if let Some(java) = java {
         if java_runtime_ready(&game_dir, &java.version) {
-            emit_status(&app_handle, "java", "Java установлена", false);
+            emit_status(&state.events, "java", "Java установлена", false);
         } else {
-            let java_exe = install_java(&app_handle, &state, &game_dir, &java).await?;
+            let java_exe = install_java(&state, &game_dir, &java).await?;
             let java_path = java_exe.to_string_lossy().to_string();
             let mut cfg = state.config.write().await;
             match cfg.active_profile {
@@ -412,7 +352,7 @@ pub async fn download_modpack(
             config.java_path = java_path.clone();
             let _ = crate::config::save_config(&state.app_data_dir, &cfg);
             log::info!("Java installed, path saved: {java_path}");
-            emit_status(&app_handle, "java", "Java установлена", false);
+            emit_status(&state.events, "java", "Java установлена", false);
         }
     }
 
@@ -424,14 +364,14 @@ pub async fn download_modpack(
     let loader_version_id = match &pack.meta.loader {
         Some(loader) => {
             emit_status(
-                &app_handle,
+                &state.events,
                 "loader",
                 format!("Fetching Fabric {loader} profile"),
                 false,
             );
             crate::minecraft::ensure_loader_profile(&game_dir, &pack.meta.minecraft, loader)
                 .await?;
-            emit_status(&app_handle, "loader", "Fabric установлен", false);
+            emit_status(&state.events, "loader", "Fabric установлен", false);
             Some(crate::minecraft::loader_version_id(
                 &pack.meta.minecraft,
                 loader,
@@ -440,15 +380,16 @@ pub async fn download_modpack(
         None => None,
     };
 
-    emit_status(&app_handle, "modpack", "Обновление файлов модпака", true);
+    emit_status(&state.events, "modpack", "Обновление файлов модпака", true);
     ensure_jar(&state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
     ensure_jar(&state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
     let cancel = state.cancel_flag.clone();
     let app = app_handle.clone();
+    let events = state.events.clone();
     let (java_for_installer, dir, pack_url) =
         (java.clone(), game_dir.clone(), pack.info.pack.clone());
     tokio::task::spawn_blocking(move || {
-        run_packwiz_installer(&app, &cancel, &java_for_installer, &dir, &pack_url)
+        run_packwiz_installer(&app, events, &cancel, &java_for_installer, &dir, &pack_url)
     })
     .await
     .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
@@ -457,10 +398,10 @@ pub async fn download_modpack(
         format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
     )
     .map_err(|e| format!("Failed to record installed version: {e}"))?;
-    emit_status(&app_handle, "modpack", "Файлы модпака готовы", false);
+    emit_status(&state.events, "modpack", "Файлы модпака готовы", false);
 
     emit_status(
-        &app_handle,
+        &state.events,
         "setup",
         "Planning required runtime files",
         false,
@@ -480,19 +421,18 @@ pub async fn download_modpack(
         loader_version_id.as_deref(),
     )
     .await?;
-    emit_status(&app_handle, "ready", "Игра готова к запуску", false);
+    emit_status(&state.events, "ready", "Игра готова к запуску", false);
     Ok(())
 }
 
 async fn install_java(
-    app_handle: &AppHandle,
     state: &State<'_, LauncherAppState>,
     game_dir: &Path,
     java: &JavaInfo,
 ) -> Result<PathBuf, String> {
     log::info!("Downloading Java {} for {}", java.version, java.platform);
     emit_status(
-        app_handle,
+        &state.events,
         "java",
         format!("Загрузка Java {}", java.version),
         true,
@@ -540,7 +480,7 @@ async fn install_java(
     }
     crate::download::activate_partial(&partial, &archive_path)
         .map_err(|e| format!("Failed to activate Java archive: {e}"))?;
-    emit_status(app_handle, "java", "Распаковка Java", false);
+    emit_status(&state.events, "java", "Распаковка Java", false);
     let java_exe = install_java_archive(&archive_path, game_dir, &java.version);
     let _ = std::fs::remove_file(&archive_path);
     java_exe
@@ -603,6 +543,7 @@ fn installer_mirror(line: &str) -> Option<(String, Option<String>)> {
 /// pack contents itself. Output lines are forwarded to the UI as status/progress events.
 fn run_packwiz_installer(
     app_handle: &AppHandle,
+    events: EventSink,
     cancel: &AtomicBool,
     java: &str,
     game_dir: &Path,
@@ -615,7 +556,7 @@ fn run_packwiz_installer(
             game_dir.display()
         );
         emit_status(
-            app_handle,
+            &events,
             "modpack",
             "Dev: пак заморожен, файлы не трогаем",
             false,
@@ -686,7 +627,7 @@ fn run_packwiz_installer(
                 crate::download::DownloadProgressPayload::files(line.clone(), done, total),
             );
         } else {
-            emit_status(app_handle, "modpack", line.clone(), true);
+            emit_status(&events, "modpack", line.clone(), true);
         }
         if tail.len() == 20 {
             tail.pop_front();
@@ -728,10 +669,7 @@ pub async fn verify_files(
     state: State<'_, LauncherAppState>,
     profile: Option<ClientProfile>,
 ) -> Result<Vec<String>, String> {
-    let _operation = state
-        .operation
-        .try_lock()
-        .map_err(|_| "Another launcher operation is in progress")?;
+    let _operation = state.begin_operation()?;
     if state.game.is_busy() {
         return Err("Close the game before verifying files".to_string());
     }
@@ -756,8 +694,16 @@ pub async fn verify_files(
     ensure_jar(&state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
     state.downloader.reset_cancel();
     let cancel = state.cancel_flag.clone();
+    let events = state.events.clone();
     tokio::task::spawn_blocking(move || {
-        run_packwiz_installer(&app_handle, &cancel, &java, &game_dir, &pack.info.pack)
+        run_packwiz_installer(
+            &app_handle,
+            events,
+            &cancel,
+            &java,
+            &game_dir,
+            &pack.info.pack,
+        )
     })
     .await
     .map_err(|e| format!("Verification task failed: {e}"))??;
@@ -884,10 +830,7 @@ pub async fn launch_game(
     app_handle: AppHandle,
     state: State<'_, LauncherAppState>,
 ) -> Result<(), String> {
-    let _operation = state
-        .operation
-        .try_lock()
-        .map_err(|_| "Another launcher operation is in progress")?;
+    let _operation = state.begin_operation()?;
     let running = state.game.begin()?;
     let config = state.config.read().await.validated_active()?;
     let identity = crate::account::game_identity(&app_handle, &state).await?;
@@ -953,7 +896,7 @@ pub async fn launch_game(
         state.downloader.reset_cancel();
         // Floor so the frontend always has a non-zero denominator for progress.
         state.downloader.set_grand_total(16 * 1024 * 1024);
-        emit_status(&app_handle, "launch", "Проверка компонентов игры", false);
+        emit_status(&state.events, "launch", "Проверка компонентов игры", false);
         crate::minecraft::ensure_launch_dependencies(
             &state.downloader,
             &app_handle,
@@ -968,7 +911,7 @@ pub async fn launch_game(
         log::warn!("Cannot write default game options: {error}");
     }
 
-    emit_status(&app_handle, "launch", "Подготовка запуска", false);
+    emit_status(&state.events, "launch", "Подготовка запуска", false);
     let args = crate::minecraft::build_launch_args(
         &game_dir_path,
         ram_mb,
@@ -980,7 +923,7 @@ pub async fn launch_game(
 
     if !config.pre_launch_command.trim().is_empty() {
         emit_status(
-            &app_handle,
+            &state.events,
             "launch",
             "Выполнение команды перед запуском",
             false,
@@ -998,7 +941,7 @@ pub async fn launch_game(
         .await
         .map_err(|e| format!("Pre-launch task failed: {e}"))??;
     }
-    emit_status(&app_handle, "launch", "Запуск игры", false);
+    emit_status(&state.events, "launch", "Запуск игры", false);
     let log_dir = game_dir_path.join("logs");
     std::fs::create_dir_all(&log_dir).map_err(|e| format!("Cannot create log directory: {e}"))?;
     let output = std::fs::File::create(log_dir.join("launcher-game.log"))
@@ -1044,7 +987,8 @@ pub async fn launch_game(
         }
     }
     log::info!("Game process spawned (pid {})", child.id());
-    emit_status(&app_handle, "launch", "Игра запущена", false);
+    emit_status(&state.events, "launch", "Игра запущена", false);
+    let events = state.events.clone();
     std::thread::spawn(move || {
         let _running = running;
         let exit = child.wait();
@@ -1061,14 +1005,14 @@ pub async fn launch_game(
                 let message = match result {
                     Ok(()) => format!("Game exited ({exit})"),
                     Err(error) => {
-                        emit_status(&app_handle, "hook-error", &error, false);
+                        emit_status(&events, "hook-error", &error, false);
                         format!("Post-exit command failed: {error}")
                     }
                 };
-                emit_status(&app_handle, "exited", message, false);
+                emit_status(&events, "exited", message, false);
             }
             Err(error) => emit_status(
-                &app_handle,
+                &events,
                 "exited",
                 format!("Failed to wait for game: {error}"),
                 false,

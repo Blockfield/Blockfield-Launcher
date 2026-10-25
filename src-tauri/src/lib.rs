@@ -92,7 +92,40 @@ pub fn run() {
                 loaded_config.lang
             );
 
-            // Bootstrap managed state
+            // Phase 2 event seam: core state emits LauncherEvent; the adapter maps
+            // each variant back to today's exact event name and payload.
+            let sink_app = app.handle().clone();
+            let events: launcher_app::EventSink = Arc::new(move |event| {
+                use launcher_app::LauncherEvent::*;
+                match event {
+                    Status(payload) => {
+                        if let Err(e) = sink_app.emit("launcher://status", payload) {
+                            log::error!("Failed to emit launcher status: {e}");
+                        }
+                    }
+                    DownloadProgress(payload) => {
+                        let _ = sink_app.emit("download://progress", payload);
+                    }
+                    DownloadMirror(mirror) => {
+                        let _ = sink_app.emit(
+                            "download://mirror",
+                            serde_json::json!({
+                                "name": mirror.name,
+                                "speed": mirror.speed,
+                            }),
+                        );
+                    }
+                    GameStatus(status) => {
+                        let _ = sink_app.emit("game://status", status);
+                    }
+                    RoomPending => {
+                        let _ = sink_app.emit("room://pending", ());
+                    }
+                    AccountExpired => {
+                        let _ = sink_app.emit("account://expired", ());
+                    }
+                }
+            });
             let progress_app = app.handle().clone();
             let progress_sink: download::ProgressSink =
                 std::sync::Arc::new(move |payload: download::DownloadProgressPayload| {
@@ -127,6 +160,7 @@ pub fn run() {
                 downloader,
                 cancel_flag,
                 operation: tokio::sync::Mutex::new(()),
+                events,
                 game: Arc::new(game::GameState::new({
                     let app = app.handle().clone();
                     move |status| {

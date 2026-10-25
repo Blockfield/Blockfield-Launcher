@@ -45,6 +45,7 @@ dotenvy = "0.15"
 blockfield-shared = { path = "../shared" }
 launcher-core = { path = "../core/launcher-core" }
 launcher-net = { path = "../core/launcher-net" }
+launcher-app = { path = "../core/launcher-app" }
 fs2 = "0.4"
 
 [target.'cfg(windows)'.dependencies]
