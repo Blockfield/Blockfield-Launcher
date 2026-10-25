@@ -72,13 +72,11 @@ pub fn software_adapter_only() -> bool {
         backends: wgpu::Backends::VULKAN | wgpu::Backends::METAL | wgpu::Backends::DX12,
         ..Default::default()
     });
-    let Ok(adapter) = pollster::block_on(instance.request_adapter(
-        &wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        },
-    )) else {
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    })) else {
         return true;
     };
     adapter.get_info().device_type == wgpu::DeviceType::Cpu

@@ -6,7 +6,7 @@ The default window is frameless, resizable, initially/minimally 1280×720 logica
 
 ## Build
 
-From `native-poc/app` with the repository Rust 1.99.0 toolchain:
+From `native/app` with the repository Rust 1.99.0 toolchain:
 
 ```sh
 cargo fmt --check
@@ -29,22 +29,22 @@ No packages were installed into the base OS. Do not run a GUI on the owner's dis
 From the repository root, first inspect existing processes according to AGENTS.md. Build the isolated capture image:
 
 ```sh
-podman build -f native-poc/app/Headless.Containerfile -t localhost/blockfield-main-headless native-poc/app
+podman build -f native/app/Headless.Containerfile -t localhost/blockfield-main-headless native/app
 ```
 
 Then start the bounded harness through the ownership helper (use an absolute output directory):
 
 ```sh
-agent-process start --name native-shell-capture --cwd "$PWD" -- native-poc/app/scripts/headless.sh /absolute/output/1x 1
+agent-process start --name native-shell-capture --cwd "$PWD" -- native/app/scripts/headless.sh /absolute/output/1x 1
 ```
 
-Run `python3 native-poc/app/scripts/verify_captures.py OUTPUT SCALE` once captures finish. The harness clears the host display variables and runs Xvfb `:99` inside a network-isolated, read-only Podman container with Mesa llvmpipe. It mounts only this POC, the output directory, and the existing benchmark script. X11 sockets, user D-Bus, browser sessions, devices and home directories are not mounted. The container exits after its exact app child completes; the outer deadline is 45 seconds. Use `agent-process status <id>` / `agent-process stop <id>` for a current-session process that remains live. The harness closes only its container.
+Run `python3 native/app/scripts/verify_captures.py OUTPUT SCALE` once captures finish. The harness clears the host display variables and runs Xvfb `:99` inside a network-isolated, read-only Podman container with Mesa llvmpipe. It mounts only this POC, the output directory, and the existing benchmark script. X11 sockets, user D-Bus, browser sessions, devices and home directories are not mounted. The container exits after its exact app child completes; the outer deadline is 45 seconds. Use `agent-process status <id>` / `agent-process stop <id>` for a current-session process that remains live. The harness closes only its container.
 
 Scale arguments `1.25` and `1.5` produce 1600×900 and 1920×1080 PNGs with the same 1280×720 logical layout. `capture.rs` asserts dimensions, mouse activation of all four nav items, home/logo, footer update routing, Tab/Return activation and actual close-button dispatch. It captures normal, hover, active, focus, DEV/backdrop/pulse and close press states using the renderer's `take_snapshot`; transient PPM files are converted to PNG and deleted.
 
 ```sh
-python3 native-poc/app/scripts/verify_captures.py /absolute/output/1x 1
-agent-process start --name native-shell-idle --cwd "$PWD" -- native-poc/app/scripts/headless.sh /absolute/output/idle 1 idle
+python3 native/app/scripts/verify_captures.py /absolute/output/1x 1
+agent-process start --name native-shell-idle --cwd "$PWD" -- native/app/scripts/headless.sh /absolute/output/idle 1 idle
 ```
 
 Idle mode samples the **release app PID/tree**, using the unchanged `scripts/bench/bench.py sample --duration 10 --interval 0.5` after a two-second warmup. Xvfb and container overhead are excluded; Skia/driver memory mapped into the app is included. This empty-shell measurement is not a Tauri comparison or evidence of migration savings.
@@ -97,10 +97,10 @@ Fixture actions stay inside this executable: deploy changes the fixture launch s
 After checking existing processes/ownership, use the same isolated harness:
 
 ```sh
-agent-process start --name native-main-capture --cwd "$PWD" -- native-poc/app/scripts/headless.sh /absolute/report/main/1x 1 capture main
-python3 native-poc/app/scripts/verify_main.py /absolute/report/main/1x 1
-agent-process start --name native-main-motion --cwd "$PWD" -- native-poc/app/scripts/headless.sh /absolute/report/main/motion 1 record main
-agent-process start --name native-main-idle --cwd "$PWD" -- native-poc/app/scripts/headless.sh /absolute/report/main/idle 1 idle main
+agent-process start --name native-main-capture --cwd "$PWD" -- native/app/scripts/headless.sh /absolute/report/main/1x 1 capture main
+python3 native/app/scripts/verify_main.py /absolute/report/main/1x 1
+agent-process start --name native-main-motion --cwd "$PWD" -- native/app/scripts/headless.sh /absolute/report/main/motion 1 record main
+agent-process start --name native-main-idle --cwd "$PWD" -- native/app/scripts/headless.sh /absolute/report/main/idle 1 idle main
 ```
 
 Repeat capture for each canonical state and scale 1, 1.25 and 1.5. A sixth argument is not required: the optional fifth argument is the diagnostic scenario. MainScreen still capture mode adds `--freeze-motion`, matching Tauri’s paused CSS animations and disabled transitions; interactive runs, shell regression tests, recordings and idle runs animate normally. Capture scripts assert room paging, tabs, keyboard select, verify and deploy/disabled behavior through actual dispatched input. Screenshots after `main.png` intentionally show interaction states, not independent canonical fixtures.

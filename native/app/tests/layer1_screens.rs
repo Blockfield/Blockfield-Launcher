@@ -17,7 +17,7 @@
 
 use std::rc::Rc;
 
-use blockfield_native_poc::{AppWindow, PreviewHost, fixtures, wire_app};
+use blockfield_native::{AppWindow, PreviewHost, fixtures, wire_app};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementQuery};
 use slint::{ComponentHandle, Model};
 

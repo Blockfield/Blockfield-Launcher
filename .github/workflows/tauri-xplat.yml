@@ -112,7 +112,7 @@ jobs:
           cache-on-failure: true
           workspaces: |
             .cache/capture/xplat -> target
-            native-poc/app -> target
+            native/app -> target
       - name: Build Tauri capture release (unsigned, no bundle)
         id: tauri_build
         timeout-minutes: 30
@@ -147,7 +147,7 @@ jobs:
         id: slint_build
         timeout-minutes: 30
         if: ${{ !cancelled() && steps.tauri_build.outcome == 'success' }}
-        working-directory: native-poc/app
+        working-directory: native/app
         run: cargo build --locked --release
       - name: Matched resource benchmark
         if: ${{ !cancelled() && steps.tauri_build.outcome == 'success' && steps.slint_build.outcome == 'success' }}
@@ -155,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           tauri=.cache/capture/xplat/target/release/blockfield-launcher
-          slint=native-poc/app/target/release/blockfield-native-poc
+          slint=native/app/target/release/blockfield-native
           if [ "$RUNNER_OS" = Windows ]; then tauri=$tauri.exe; slint=$slint.exe; fi
           if [ "$RUNNER_OS" = Linux ]; then
             xvfb-run -a -s '-screen 0 1920x1080x24 -dpi 96' python scripts/capture/xplat.py --mode bench --tauri "$tauri" --slint "$slint" --out xplat-out/bench
@@ -166,14 +166,14 @@ jobs:
         if: always()
         run: |
           mkdir -p xplat-out
-          python scripts/capture/xplat_report.py --out xplat-out --goldens native-poc/app/tests/golden/${{ matrix.platform }} | tee -a "$GITHUB_STEP_SUMMARY"
+          python scripts/capture/xplat_report.py --out xplat-out --goldens native/app/tests/golden/${{ matrix.platform }} | tee -a "$GITHUB_STEP_SUMMARY"
           cp .cache/capture/fonts/sources.json xplat-out/font-sources.json
           git rev-parse HEAD > xplat-out/commit.txt
           python - <<'PY'
           import hashlib, json, os, platform, subprocess
           from pathlib import Path
           binaries = [*Path('.cache/capture/xplat/target/release').glob('blockfield-launcher*'),
-                      *Path('native-poc/app/target/release').glob('blockfield-native-poc*')]
+                      *Path('native/app/target/release').glob('blockfield-native*')]
           info = dict(os=platform.platform(), cpu_count=os.cpu_count(), processor=platform.processor(),
                       rustc=subprocess.check_output(['rustc', '-vV'], text=True),
                       python=platform.python_version(), node=subprocess.check_output(['node', '--version'], text=True),

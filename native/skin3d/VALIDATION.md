@@ -1,7 +1,7 @@
 # u07 validation — 2026-10-24
 
 Implemented on branch `native/skin3d`, based on `feat/native-slint` at 31938ca.
-Only `native-poc/skin3d/**` is changed by this unit. The root Cargo workspace and
+Only `native/skin3d/**` is changed by this unit. The root Cargo workspace and
 shipped Tauri UI are untouched. No PR was requested or opened.
 
 ## Checks
@@ -18,7 +18,7 @@ All checks ran with Rust/Cargo 1.99.0 and `CARGO_BUILD_JOBS=4`:
 - Byte-identical frame at t=0 before/after each 121-frame sequence: passed in all nine runs.
 - Inspected rendered classic t=0,1,2, slim t=1 and legacy t=1: model, inflated alpha layers, cape, walking/rotation visible; no clipping or obvious missing geometry. This is not a visual diff against skinview3d.
 
-Commands used `--manifest-path native-poc/skin3d/Cargo.toml` from the checkout root.
+Commands used `--manifest-path native/skin3d/Cargo.toml` from the checkout root.
 The harness had a cargo/rustup proxy-name error when tools were launched with the
 crate as working directory; the manifest-path invocation used the same pinned
 compiler successfully and required no toolchain or system changes.

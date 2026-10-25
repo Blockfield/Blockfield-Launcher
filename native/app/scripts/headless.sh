@@ -47,13 +47,13 @@ env -u DISPLAY -u WAYLAND_DISPLAY timeout --kill-after=5 45 podman run --rm --ci
             sleep 0.1
         done
         if test "$CAPTURE_MODE" = idle; then
-            /app/target/release/blockfield-native-poc --state "$CAPTURE_STATE" --scenario "$CAPTURE_SCENARIO" --idle-seconds 14 >/out/idle.log 2>&1 &
+            /app/target/release/blockfield-native --state "$CAPTURE_STATE" --scenario "$CAPTURE_SCENARIO" --idle-seconds 14 >/out/idle.log 2>&1 &
             app_pid=$!
             sleep 2
             python3 /bench.py sample --pid "$app_pid" --duration 10 --interval 0.5 --json-out /out/idle.json
             wait "$app_pid"
         elif test "$CAPTURE_MODE" = record; then
-            /app/target/release/blockfield-native-poc --state "$CAPTURE_STATE" --scenario "$CAPTURE_SCENARIO" --idle-seconds 8 >/out/motion.log 2>&1 &
+            /app/target/release/blockfield-native --state "$CAPTURE_STATE" --scenario "$CAPTURE_SCENARIO" --idle-seconds 8 >/out/motion.log 2>&1 &
             app_pid=$!
             attempt=0
             until grep -q "^READY pid=" /out/motion.log; do
@@ -67,7 +67,7 @@ env -u DISPLAY -u WAYLAND_DISPLAY timeout --kill-after=5 45 podman run --rm --ci
             wait "$app_pid"
         else
             if test "$CAPTURE_STATE" = shell; then freeze=; else freeze=--freeze-motion; fi
-            /app/target/release/blockfield-native-poc --state "$CAPTURE_STATE" --scenario "$CAPTURE_SCENARIO" $freeze --capture-dir /out
+            /app/target/release/blockfield-native --state "$CAPTURE_STATE" --scenario "$CAPTURE_SCENARIO" $freeze --capture-dir /out
             for capture in /out/*.ppm; do
                 magick "$capture" "${capture%.ppm}.png"
                 rm "$capture"

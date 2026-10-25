@@ -6,7 +6,7 @@
 set -eu
 app_dir=$(
     CDPATH=
-    cd -- "$(dirname -- "$0")/../../native-poc/app" && pwd
+    cd -- "$(dirname -- "$0")/../../native/app" && pwd
 )
 bench_py=$(
     CDPATH=
@@ -49,7 +49,7 @@ while test "$i" -lt "$repeats"; do
         sleep 0.1
       done
       DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe WINIT_UNIX_BACKEND=x11 \
-        /app/target/release/blockfield-native-poc --state main --idle-seconds $total >/out/$tag-repeat$i.log 2>&1 &
+        /app/target/release/blockfield-native --state main --idle-seconds $total >/out/$tag-repeat$i.log 2>&1 &
       app_pid=\$!
       sleep $warmup
       DISPLAY=:99 python3 /bench.py sample --pid \"\$app_pid\" --duration $dur --interval 0.5 --json-out /out/$tag-repeat$i.json

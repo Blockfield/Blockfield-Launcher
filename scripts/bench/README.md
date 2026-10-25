@@ -35,14 +35,14 @@ WebKitGTK 4.1, so both release executables use exactly the same Mesa stack.
 Build both executables before starting measurements. The Tauri executable must
 be the capture-only build from `scripts/capture/build.sh` (fixture flag, local
 fonts, no production network). The Slint executable is the standalone release
-build in `native-poc/app`.
+build in `native/app`.
 
 ```sh
 podman build -f scripts/bench/Shared.Containerfile -t localhost/blockfield-final-ab .
 agent-process start --name final-ab --cwd "$PWD" -- timeout 4200 \
   python3 scripts/bench/final_ab.py --out /absolute/report/raw \
   --tauri .cache/capture/cargo-target/release/blockfield-launcher \
-  --slint native-poc/app/target/release/blockfield-native-poc
+  --slint native/app/target/release/blockfield-native
 python3 scripts/bench/final_report.py /absolute/report/raw /absolute/report/report.md
 python3 scripts/bench/test_final_ab.py
 ```
@@ -94,14 +94,14 @@ processes are skipped via their unreadable `/proc` entries.
 
 ## Main-screen minimize/restore self-check
 
-After building `native-poc/app`, use the existing shared image and an owned
+After building `native/app`, use the existing shared image and an owned
 process (no host display is mounted):
 
 ```sh
 agent-process start --name main-idle-check --cwd "$PWD" -- timeout 180 \
   python3 scripts/bench/final_ab.py --out /absolute/report/self-check \
   --tauri /path/to/capture/blockfield-launcher \
-  --slint native-poc/app/target/release/blockfield-native-poc \
+  --slint native/app/target/release/blockfield-native \
   --scenario main --variant slint-gl --variant slint-sw --self-check
 ```
 

@@ -397,7 +397,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "blockfield-native-poc"
+name = "blockfield-native"
 version = "0.1.0"
 dependencies = [
  "i-slint-backend-testing",

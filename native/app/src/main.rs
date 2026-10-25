@@ -1,4 +1,4 @@
-use blockfield_native_poc::{AppWindow, fixtures, idle_self_check, skin};
+use blockfield_native::{AppWindow, fixtures, idle_self_check, skin};
 use slint::ComponentHandle;
 
 // Resident set size in KiB (Linux only; None elsewhere) for the RENDERER_PROBE cost line.
@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     selector.select()?;
     let app = AppWindow::new()?;
-    let (skin_host, activity) = blockfield_native_poc::wire_app(&app)?;
+    let (skin_host, activity) = blockfield_native::wire_app(&app)?;
     let mut state = std::env::var("BLOCKFIELD_CAPTURE_STATE").unwrap_or_else(|_| "main".into());
     let mut scenario = "default".to_string();
     let mut capture_dir = None;
@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--state" => state = args.next().ok_or("--state needs a name")?,
             "--scenario" => scenario = args.next().ok_or("--scenario needs a name")?,
             "--freeze-motion" => app
-                .global::<blockfield_native_poc::MainMotion>()
+                .global::<blockfield_native::MainMotion>()
                 .set_enabled(false),
             "--self-check" => self_check = true,
             "--idle-self-check" => idle_self_check_flag = true,
@@ -93,10 +93,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         idle_self_check::arm(&app, &activity);
     }
     let _capture_timer = capture_dir
-        .map(|path| blockfield_native_poc::capture::start(&app, &skin_host, path.into()))
+        .map(|path| blockfield_native::capture::start(&app, &skin_host, path.into()))
         .transpose()?;
     let _e2e_timer = match (e2e_dir, e2e_golden) {
-        (Some(out), Some(golden)) => Some(blockfield_native_poc::e2e::start(
+        (Some(out), Some(golden)) => Some(blockfield_native::e2e::start(
             &app,
             &skin_host,
             out.into(),

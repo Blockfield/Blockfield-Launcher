@@ -92,7 +92,7 @@ different GPUs/drivers.
 
 ## Checks and frame dumps
 
-From this directory (or use `--manifest-path native-poc/skin3d/Cargo.toml` from the
+From this directory (or use `--manifest-path native/skin3d/Cargo.toml` from the
 checkout root), always limit Rust builds to four jobs:
 
 ```sh

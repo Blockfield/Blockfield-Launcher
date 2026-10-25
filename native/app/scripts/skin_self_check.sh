@@ -43,7 +43,7 @@ env -u DISPLAY -u WAYLAND_DISPLAY timeout --kill-after=5 120 podman run --rm --c
             test "$attempt" -lt 100 || { cat /out/openbox.log; exit 1; }
             sleep 0.1
         done
-        /app/target/release/blockfield-native-poc --state settings-skin --self-check --idle-seconds 30 >/out/self-check.log 2>&1 &
+        /app/target/release/blockfield-native --state settings-skin --self-check --idle-seconds 30 >/out/self-check.log 2>&1 &
         app_pid=$!
         attempt=0
         until grep -q "^READY pid=" /out/self-check.log; do

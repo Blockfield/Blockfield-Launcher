@@ -2,7 +2,7 @@
 
 `src/slint-preview.slint` exports the reusable **SkinPreview** component
 at 220×300 logical pixels. `PreviewWindow` is a small demonstration with a keyboard
-accessible visibility toggle, separate from `native-poc/app`. This is a feasibility
+accessible visibility toggle, separate from `native/app`. This is a feasibility
 example, not a port of the settings screen.
 
 ```sh
@@ -21,7 +21,7 @@ LIBRARY_PATH="$PWD/target/link-libs" CARGO_BUILD_JOBS=4 cargo build --release --
 ```
 
 The optional feature uses Slint ~1.18 and the same winit, Skia OpenGL, software,
-std and compatibility feature choices as `native-poc/app`. `unstable-winit-030`
+std and compatibility feature choices as `native/app`. `unstable-winit-030`
 is additionally required for native window lifecycle events; this API is explicitly
 unstable upstream, so upgrades require checking the event hook. Default library
 builds do not enable Slint. The exact Tauri capture fixture PNGs are embedded from
@@ -72,7 +72,7 @@ Upstream contracts checked against Slint 1.18.1 source and documentation:
 
 ## Checks and isolated evidence
 
-Run from `native-poc/skin3d` (or use `--manifest-path` from the checkout root):
+Run from `native/skin3d` (or use `--manifest-path` from the checkout root):
 
 ```sh
 cargo fmt --check
@@ -121,4 +121,4 @@ Tauri comparison or evidence of the phase-1 GO gate.
 and exits after frame 180. The baseline recording has no per-pose time trace, so
 its initial phase must be visually aligned and its uncertainty documented in the
 external evidence report. Pixel-diff scoring, hardware GPUs, touch hardware,
-Wayland, Windows, macOS and integration into `native-poc/app` remain later work.
+Wayland, Windows, macOS and integration into `native/app` remain later work.

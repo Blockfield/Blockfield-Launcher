@@ -1,7 +1,7 @@
 # Native e2e screen tests
 
 Two layers gate every merge into `feat/native-slint` (workflow
-`.github/workflows/native-poc.yml`, matrix Windows/macOS/Ubuntu).
+`.github/workflows/native.yml`, matrix Windows/macOS/Ubuntu).
 
 - **Layer 1** — `tests/layer1_screens.rs`: in-process scenarios driving the
   real Slint UI tree headless via the Slint testing backend
@@ -24,20 +24,20 @@ Two layers gate every merge into `feat/native-slint` (workflow
 ## Run locally
 
 ```sh
-cd native-poc/app
+cd native/app
 SLINT_EMIT_DEBUG_INFO=1 CARGO_BUILD_JOBS=4 cargo test --locked --release
 ```
 
 Layer 2 needs a display; use the isolated container (never the owner screen):
 
 ```sh
-podman build -f native-poc/app/Headless.Containerfile -t localhost/blockfield-main-headless native-poc/app
+podman build -f native/app/Headless.Containerfile -t localhost/blockfield-main-headless native/app
 podman run --rm --network=none --security-opt label=disable --read-only \
-  -v "$PWD/native-poc/app:/app:ro" -v /tmp/e2e:/out:rw \
+  -v "$PWD/native/app:/app:ro" -v /tmp/e2e:/out:rw \
   localhost/blockfield-main-headless sh -ec '
   Xvfb :99 -screen 0 1920x1080x24 & sleep 1
   DISPLAY=:99 SLINT_BACKEND=winit-software BLOCKFIELD_E2E_STATE=main \
-    /app/target/release/blockfield-native-poc --state main --freeze-motion \
+    /app/target/release/blockfield-native --state main --freeze-motion \
     --e2e /out/main --e2e-golden /app/tests/golden/linux'
 ```
 
@@ -50,7 +50,7 @@ podman run --rm --network=none --security-opt label=disable --read-only \
    in `ui/*.slint` — metadata only, never layout or pixels.
 2. Layer 2: if the screen is reachable by navigation, extend the walk in
    `src/e2e.rs` (new `step` + `check_shot`); if it needs fixtures, add the
-   state to the CI `for state in ...` list in `native-poc.yml`.
+   state to the CI `for state in ...` list in `native.yml`.
 3. Goldens: run the walk once per OS with `--e2e-update-goldens`
    (`workflow_dispatch` with `update_goldens=true` writes candidates as
    artifacts), **look at every image** against the parity reports, then
