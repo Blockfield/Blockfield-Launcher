@@ -5,6 +5,7 @@
 pub mod archive;
 pub mod install;
 pub mod java;
+pub mod launch;
 pub mod pack_check;
 pub mod settings;
 

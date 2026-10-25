@@ -31,10 +31,6 @@ pub fn select_room(
     launcher_app::rooms::select_room(&state, &pending, id)
 }
 
-pub fn write_request(state: &LauncherAppState, id: &str) -> Result<(), String> {
-    launcher_app::rooms::write_request(state, id)
-}
-
 #[tauri::command]
 pub fn join_running_room(id: String, state: State<'_, LauncherAppState>) -> Result<(), String> {
     launcher_app::rooms::join_running_room(&state, id)

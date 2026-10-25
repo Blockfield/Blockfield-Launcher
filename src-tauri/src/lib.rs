@@ -6,11 +6,9 @@ mod download;
 mod game;
 mod host_env;
 mod installed_files;
-mod launch_hooks;
 mod minecraft;
 #[cfg(target_os = "linux")]
 mod native_update;
-mod pack;
 mod presence;
 mod rooms;
 mod skins;

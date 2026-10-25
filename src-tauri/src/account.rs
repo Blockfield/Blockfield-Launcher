@@ -1,7 +1,6 @@
 //! Drasl account commands — thin Tauri wrappers; the engine lives in launcher-net.
-use crate::commands::{GameIdentity, LauncherAppState};
-use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use crate::commands::LauncherAppState;
+use tauri::State;
 
 pub use launcher_net::account::AccountStatus;
 
@@ -54,18 +53,4 @@ pub async fn change_password(
 ) -> Result<AccountStatus, String> {
     let base = skins_base(&state).await;
     launcher_net::account::change_password(&state.config, &state.app_data_dir, base, password).await
-}
-
-/// Validates the stored session, refreshing it when needed. The expiry emit keeps today's
-/// exact `account://expired` name and `()` payload via the core callback.
-pub async fn game_identity(
-    app: &AppHandle,
-    state: &LauncherAppState,
-) -> Result<GameIdentity, String> {
-    let base = skins_base(state).await;
-    let app = app.clone();
-    let on_expired: launcher_net::account::SessionExpiredSink =
-        Arc::new(move || _ = app.emit("account://expired", ()));
-    launcher_net::account::game_identity(&state.config, &state.app_data_dir, base, &on_expired)
-        .await
 }
