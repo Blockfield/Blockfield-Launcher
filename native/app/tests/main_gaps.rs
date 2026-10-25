@@ -76,6 +76,36 @@ fn main_pager_join_verify_and_status_contract() {
         );
     }
     fixtures::apply_main(&app, "main", "default").unwrap();
+    for phase in ["idle", "launching", "running", "finishing", "unknown"] {
+        for checking in [false, true] {
+            for checked in [false, true] {
+                for launching in [false, true] {
+                    for updating in [false, true] {
+                        let mut data = app.get_main_data();
+                        data.phase = phase.into();
+                        data.checking = checking;
+                        data.checked = checked;
+                        data.launching = launching;
+                        data.updating = updating;
+                        app.set_main_data(data);
+                        let enabled = !launching
+                            && (phase == "running" || (!checking && checked && phase == "idle"));
+                        assert_eq!(
+                            button(&app, "Войти: ALPHA").accessible_enabled(),
+                            Some(enabled && !updating),
+                            "match {phase}/{checking}/{checked}/{launching}/{updating}"
+                        );
+                        assert_eq!(
+                            button(&app, "Войти в лобби").accessible_enabled(),
+                            Some(enabled),
+                            "lobby {phase}/{checking}/{checked}/{launching}/{updating}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    fixtures::apply_main(&app, "main", "default").unwrap();
     let mut data = app.get_main_data();
     data.updating = true;
     app.set_main_data(data);

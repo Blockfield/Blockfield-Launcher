@@ -28,8 +28,14 @@ pub(crate) fn step(
     let index = *step / 2;
     if index >= SHOTS.len() {
         if index == SHOTS.len() {
-            fixtures::apply_main(app, "main", "default").unwrap();
-            *step += 2;
+            // Recreate Main after its keyboard probe so later baseline shots have no focus ring.
+            if (*step).is_multiple_of(2) {
+                app.set_show_main(false);
+            } else {
+                fixtures::apply_main(app, "main", "default").unwrap();
+            }
+            *step += 1;
+            return true;
         }
         return false;
     }
@@ -63,8 +69,8 @@ pub(crate) fn step(
             }
             7 => fixtures::apply_main(app, "error", "default").unwrap(),
             8 => {
-                // Chrome (3) and navigation (4) precede Deploy in the focus chain.
-                for _ in 0..8 {
+                // Chrome (3), brand (1) and navigation (4) precede Deploy.
+                for _ in 0..9 {
                     app.window()
                         .dispatch_event(slint::platform::WindowEvent::KeyPressed {
                             text: slint::platform::Key::Tab.into(),

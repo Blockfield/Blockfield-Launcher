@@ -7,7 +7,7 @@ use launcher_app::{
     status_ops,
 };
 use launcher_net::{minecraft, status::ServerStatus};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use tokio::runtime::Handle;
 
 use crate::{AppWindow, MainData, Room, bridge, runtime};
@@ -174,6 +174,10 @@ async fn presence(state: Arc<LauncherAppState>) {
 }
 
 fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
+    let selected = app
+        .get_rooms()
+        .row_data(app.get_room_index() as usize)
+        .map(|room| room.id);
     let mut data = app.get_main_data();
     let Ok(status) = status else {
         data.online = false;
@@ -184,6 +188,7 @@ fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
         data.region = "—".into();
         data.location = "".into();
         data.maintenance = "".into();
+        app.set_room_index(0);
         app.set_rooms(ModelRc::default());
         app.set_room_names(ModelRc::default());
         app.set_main_data(data);
@@ -238,6 +243,12 @@ fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
             joinable: room.joinable && room.admission.as_deref() != Some("closed"),
         })
         .collect();
+    app.set_room_index(
+        rooms
+            .iter()
+            .position(|room| Some(&room.id) == selected.as_ref())
+            .unwrap_or(0) as i32,
+    );
     app.set_room_names(ModelRc::new(VecModel::from(
         rooms.iter().map(|r| r.name.clone()).collect::<Vec<_>>(),
     )));
@@ -292,6 +303,26 @@ mod tests {
         assert_eq!(app.get_main_data().players, "3");
         assert_eq!(app.get_main_data().ping, "7");
         assert!(!app.get_rooms().row_data(0).unwrap().joinable);
+        let mut second = status.rooms.as_ref().unwrap()[0].clone();
+        second.id = "second".into();
+        status.rooms.as_mut().unwrap().push(second);
+        super::apply_server(&app, Ok(status.clone()));
+        app.set_room_index(1);
+        status.rooms.as_mut().unwrap().reverse();
+        super::apply_server(&app, Ok(status.clone()));
+        assert_eq!(
+            app.get_room_index(),
+            0,
+            "refresh preserves the selected room ID"
+        );
+        status.rooms.as_mut().unwrap().remove(0);
+        super::apply_server(&app, Ok(status.clone()));
+        assert_eq!(
+            app.get_room_index(),
+            0,
+            "removed selection falls back to the first room"
+        );
+
         status.online = false;
         status.rooms = None;
         status.players_online = None;
