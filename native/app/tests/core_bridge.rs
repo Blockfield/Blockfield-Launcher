@@ -61,5 +61,5 @@ fn worker_events_reach_only_the_ui_thread() {
     });
     slint::Timer::single_shot(Duration::from_secs(10), || panic!("event bridge timed out"));
     app.run().unwrap();
-    assert!(worker.is_finished());
+    runtime.block_on(worker).unwrap();
 }
