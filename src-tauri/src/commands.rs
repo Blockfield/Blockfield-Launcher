@@ -385,7 +385,7 @@ pub async fn download_modpack(
     let _tracking = crate::installed_files::begin(&state.app_data_dir, &game_dir)?;
 
     state.downloader.reset_cancel();
-    Downloader::cleanup_partials(&game_dir);
+    crate::download::cleanup_partials(&game_dir);
     let java = pack.info.java_for_this_platform();
     let java_bytes = java
         .as_ref()

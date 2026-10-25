@@ -359,6 +359,7 @@ dependencies = [
  "fs2",
  "futures-util",
  "launcher-core",
+ "launcher-net",
  "log",
  "md-5",
  "reqwest",
@@ -2312,6 +2313,22 @@ dependencies = [
  "tempfile",
  "url",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "launcher-net"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "launcher-core",
+ "log",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
