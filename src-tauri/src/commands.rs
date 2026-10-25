@@ -716,49 +716,19 @@ pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), S
 
 #[tauri::command]
 pub async fn server_status(state: State<'_, LauncherAppState>) -> Result<ServerStatus, String> {
-    let base = pack_base_url()?;
-    let config = state.config.read().await.clone();
-    let game_target = match state.pack.read().await.as_ref() {
-        Some(pack) => pack.info.server.clone(),
-        None => pack::fetch_launcher_info(&base).await?.server,
-    };
-    let target = config
-        .target(&game_target)?
-        .ok_or("Адрес игрового сервера не настроен.")?;
-    let (host, port) = crate::status::split_host_port(&target);
-    let ping_host = host.clone();
-    let (status, (region_code, location_name), rooms) = tokio::join!(
-        tokio::task::spawn_blocking(move || crate::status::ping(&ping_host, port)),
-        crate::status::locate(&host, port),
-        async {
-            if config.active_profile == ClientProfile::Game {
-                crate::status::fetch_rooms(&base).await
-            } else {
-                None
-            }
-        },
-    );
-    let mut status = status.map_err(|e| format!("status task failed: {e}"))?;
-    if let Some((available, rooms, maintenance)) = rooms {
-        status.game_available = Some(available);
-        status.rooms = Some(rooms);
-        status.maintenance = maintenance;
-    }
-    status.region_code = region_code;
-    status.location_name = location_name;
-    Ok(status)
+    launcher_app::status_ops::server_status(&state, &pack_base_url()?).await
 }
 
 type StatsQuery = std::collections::BTreeMap<String, String>;
 
 #[tauri::command]
 pub async fn stats_leaderboard(query: StatsQuery) -> Result<Option<serde_json::Value>, String> {
-    crate::status::fetch_stats(&pack_base_url()?, "leaderboard", &query).await
+    launcher_app::status_ops::stats_leaderboard(&pack_base_url()?, &query).await
 }
 
 #[tauri::command]
 pub async fn stats_seasons() -> Result<Option<serde_json::Value>, String> {
-    crate::status::fetch_stats(&pack_base_url()?, "seasons", &StatsQuery::new()).await
+    launcher_app::status_ops::stats_seasons(&pack_base_url()?).await
 }
 
 #[tauri::command]
@@ -766,41 +736,19 @@ pub async fn stats_player(
     uuid: String,
     query: StatsQuery,
 ) -> Result<Option<serde_json::Value>, String> {
-    crate::status::fetch_stats(&pack_base_url()?, &format!("players/{uuid}"), &query).await
+    launcher_app::status_ops::stats_player(&pack_base_url()?, &uuid, &query).await
 }
 
 #[tauri::command]
 pub fn game_status(state: State<'_, LauncherAppState>) -> crate::game::GameStatus {
-    state.game.snapshot()
+    launcher_app::status_ops::game_status(&state)
 }
 
 /// Opens a link in the user's browser. The URL can come from remote launcher content, so only
 /// plain https links are accepted — never a local path, a `file:`/`javascript:` URL or an option.
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
-    if !url.starts_with("https://") || url.contains(char::is_whitespace) {
-        return Err(format!("Refusing to open {url}"));
-    }
-    #[cfg(windows)]
-    let mut command = {
-        // Empty title argument: `start` treats a lone quoted argument as the window title.
-        let mut command = crate::host_env::command("cmd.exe");
-        command.args(["/D", "/S", "/C", "start", "", url.as_str()]);
-        command
-    };
-    #[cfg(not(windows))]
-    let mut command = {
-        let mut command = crate::host_env::command("xdg-open");
-        command.arg(&url);
-        command
-    };
-    command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("Cannot open link: {e}"))
+    launcher_app::status_ops::open_url(&url)
 }
 
 /// Server defaults for a first launch. Minecraft fills in every other option itself and rewrites
@@ -1022,7 +970,7 @@ pub async fn launch_game(
 /// Always `None` in a production build.
 #[tauri::command]
 pub fn dev_status() -> Option<crate::dev::DevStatus> {
-    crate::dev::status(&pack_base_url().unwrap_or_default())
+    launcher_app::status_ops::dev_status(&pack_base_url().unwrap_or_default())
 }
 
 // ── Helpers ────────────────────────────────────────────────────

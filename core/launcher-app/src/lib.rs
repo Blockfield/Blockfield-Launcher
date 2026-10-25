@@ -16,6 +16,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::{Mutex, MutexGuard, RwLock};
 
+pub mod status_ops;
+
 /// Shared application state, moved unchanged from the Tauri adapter except for
 /// the added [`EventSink`]: core and shell observe the same events.
 pub struct LauncherAppState {
