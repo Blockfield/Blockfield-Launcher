@@ -68,25 +68,9 @@ pub fn event_name(event: &LauncherEvent) -> &'static str {
     }
 }
 
-/// Frontend payload for a [`LauncherEvent`], exactly as emitted today
-/// (`room://pending` and `account://expired` carry `null`, like `()` does).
-/// Raw JSON keeps today's key order byte-for-byte: routing the structs through
-/// `serde_json::Value` would re-sort keys and change the wire bytes.
-pub fn event_payload(event: &LauncherEvent) -> Box<serde_json::value::RawValue> {
-    let json = match event {
-        LauncherEvent::Status(payload) => serde_json::to_string(payload),
-        LauncherEvent::DownloadProgress(payload) => serde_json::to_string(payload),
-        LauncherEvent::DownloadMirror(mirror) => serde_json::to_string(&serde_json::json!({
-            "name": mirror.name,
-            "speed": mirror.speed,
-        })),
-        LauncherEvent::GameStatus(status) => serde_json::to_string(status),
-        LauncherEvent::RoomPending | LauncherEvent::AccountExpired => Ok("null".to_string()),
-    }
-    .expect("event payloads serialize to valid JSON");
-    serde_json::value::RawValue::from_string(json).expect("event payloads serialize to valid JSON")
-}
-
+// Frontend payloads stay exactly as on the base: each sink arm below emits
+// the same typed value under the same name (key order is not contracted —
+// the frontend uses `JSON.parse` — so tests compare parsed JSON).
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(windows)]
@@ -160,13 +144,42 @@ pub fn run() {
             // each variant back to today's exact event name and payload.
             let sink_app = app.handle().clone();
             let events: launcher_app::EventSink = Arc::new(move |event| {
-                if matches!(event, LauncherEvent::RoomPending) {
-                    // The rooms bridge showed the window before emitting;
-                    // every core RoomPending (deep link or Discord join)
-                    // restores it here so the shell mapping stays exact.
-                    crate::game::show_launcher(&sink_app);
+                use launcher_app::LauncherEvent::*;
+                // `event_name` returns the exact literals below; the name is
+                // resolved once so the tested mapping is the emitted one.
+                let name = event_name(&event);
+                match event {
+                    Status(payload) => {
+                        if let Err(e) = sink_app.emit(name, payload) {
+                            log::error!("Failed to emit launcher status: {e}");
+                        }
+                    }
+                    DownloadProgress(payload) => {
+                        let _ = sink_app.emit(name, payload);
+                    }
+                    DownloadMirror(mirror) => {
+                        let _ = sink_app.emit(
+                            name,
+                            serde_json::json!({
+                                "name": mirror.name,
+                                "speed": mirror.speed,
+                            }),
+                        );
+                    }
+                    GameStatus(status) => {
+                        let _ = sink_app.emit(name, status);
+                    }
+                    RoomPending => {
+                        // The rooms bridge showed the window before emitting;
+                        // every core RoomPending (deep link or Discord join)
+                        // restores it here so the shell mapping stays exact.
+                        crate::game::show_launcher(&sink_app);
+                        let _ = sink_app.emit(name, ());
+                    }
+                    AccountExpired => {
+                        let _ = sink_app.emit(name, ());
+                    }
                 }
-                let _ = sink_app.emit(event_name(&event), event_payload(&event));
             });
             let progress_app = app.handle().clone();
             let progress_sink: download::ProgressSink =

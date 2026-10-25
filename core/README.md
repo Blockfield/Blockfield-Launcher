@@ -14,9 +14,11 @@ Nothing in `core/**` depends on `tauri` (CI pins this: no `tauri` in
 `core/*/Cargo.toml`).
 
 The Tauri adapter maps each `LauncherEvent` back to today's exact event
-name and payload (`event_name`/`event_payload` in `src-tauri/src/lib.rs`,
-pinned by `src-tauri/tests/adapter_contract.rs`); command return shapes are
+name and payload (`event_name` in `src-tauri/src/lib.rs`, pinned by
+`src-tauri/tests/adapter_contract.rs`); command return shapes are
 pinned by `core/launcher-app/tests/adapter_contract.rs` plus golden files.
+JSON key order is not part of the contract (the frontend uses `JSON.parse`);
+goldens compare as parsed JSON.
 
 The native app drives `LauncherAppState` directly and subscribes its own UI
 updates through the `EventSink` instead of the Tauri adapter.

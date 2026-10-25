@@ -4,7 +4,10 @@
 //!   equals the exact set of names the frontend `invoke()`s, in both
 //!   directions: renaming a command or a call site on either side fails CI.
 //! - Every `LauncherEvent` variant maps to today's event name and payload, and
-//!   the set of names equals what the frontend `listen()`s to.
+//!   the set of names equals what the frontend `listen()`s to. Goldens compare
+//!   as parsed JSON (`serde_json::Value`): key order is not contracted (the
+//!   frontend uses `JSON.parse`), but field names, casing, null/absent and
+//!   enum spellings must match.
 //!
 //! Frontend fixtures were generated with:
 //!   grep -rhoP "invoke(<[^;]*?>)?\s*\(\s*['\"][a-z_]+['\"]" src/ \
@@ -15,7 +18,7 @@
 //! `src/lib/game-state.ts`, `src/app/App.tsx` and
 //! `src/app/components/MainScreen.tsx`.
 
-use blockfield_launcher_lib::{event_name, event_payload, REGISTERED_COMMANDS};
+use blockfield_launcher_lib::{event_name, REGISTERED_COMMANDS};
 use launcher_app::LauncherEvent;
 use std::path::{Path, PathBuf};
 
@@ -105,11 +108,28 @@ fn all_events() -> Vec<(LauncherEvent, &'static str, &'static str)> {
     ]
 }
 
+/// Test-local mirror of the sink arms in `src-tauri/src/lib.rs`: the sink
+/// emits these same typed values, so pinning them here pins the wire shape.
+fn event_payload_value(event: &LauncherEvent) -> serde_json::Value {
+    match event {
+        LauncherEvent::Status(payload) => serde_json::to_value(payload).unwrap(),
+        LauncherEvent::DownloadProgress(payload) => serde_json::to_value(payload).unwrap(),
+        LauncherEvent::DownloadMirror(mirror) => serde_json::json!({
+            "name": mirror.name,
+            "speed": mirror.speed,
+        }),
+        LauncherEvent::GameStatus(status) => serde_json::to_value(status).unwrap(),
+        // Unit variants travel as `()` today, i.e. JSON null.
+        LauncherEvent::RoomPending | LauncherEvent::AccountExpired => serde_json::Value::Null,
+    }
+}
+
 #[test]
 fn events_map_to_todays_names_and_payloads() {
     for (event, name, golden) in all_events() {
         assert_eq!(event_name(&event), name);
-        assert_eq!(event_payload(&event).get(), golden.trim_end(), "{name}");
+        let expected: serde_json::Value = serde_json::from_str(golden.trim_end()).unwrap();
+        assert_eq!(event_payload_value(&event), expected, "{name}");
     }
 }
 

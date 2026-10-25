@@ -145,34 +145,35 @@ pub async fn install_launcher_update<R: tauri::Runtime>(
 mod tests {
     use super::*;
 
-    fn fixture(name: &str) -> String {
+    fn fixture_value(name: &str) -> serde_json::Value {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("fixtures")
             .join(name);
         let raw = std::fs::read_to_string(path).unwrap();
-        raw.strip_suffix('\n').unwrap_or(&raw).to_string()
+        serde_json::from_str(raw.trim_end()).unwrap()
     }
 
     #[test]
     fn update_info_and_progress_keep_their_camel_case_snapshots() {
+        // Parsed-JSON comparison: key order is not contracted.
         assert_eq!(
-            serde_json::to_string(&UpdateInfo {
+            serde_json::to_value(&UpdateInfo {
                 current_version: "1.0.19".into(),
                 version: "1.0.20".into(),
                 body: Some("Fixes and improvements".into()),
             })
             .unwrap(),
-            fixture("update_info.json"),
+            fixture_value("update_info.json"),
         );
         assert_eq!(
-            serde_json::to_string(&UpdateProgress {
+            serde_json::to_value(&UpdateProgress {
                 phase: "downloading",
                 downloaded: 3,
                 total: Some(9),
             })
             .unwrap(),
-            fixture("update_progress.json"),
+            fixture_value("update_progress.json"),
         );
     }
 

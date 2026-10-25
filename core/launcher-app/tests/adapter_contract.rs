@@ -1,8 +1,10 @@
-//! Phase 2 close-out: byte-for-byte goldens for every command return type and
-//! every event payload of the Tauri frontend/backend contract. Tauri sends the
-//! `Ok` value directly, so each golden is `serde_json::to_string` of the value
-//! (struct field order = declaration order, camelCase). A renamed field, a new
-//! variant or a changed key order fails here before it can break the frontend.
+//! Phase 2 close-out: goldens for every command return type and every event
+//! payload of the Tauri frontend/backend contract. Tauri sends the `Ok` value
+//! directly, so each golden is the JSON of the value. Goldens compare as
+//! parsed JSON (`serde_json::Value`): key order is not contracted (the
+//! frontend uses `JSON.parse`), but field names, casing, null/absent shapes
+//! and enum spellings must match — a rename on either side fails here before
+//! it can break the frontend.
 
 use launcher_app::{LauncherEvent, LauncherStatusPayload, VersionCheckResult};
 use launcher_core::config::LauncherConfig;
@@ -15,15 +17,15 @@ fn goldens_dir() -> PathBuf {
         .join("goldens")
 }
 
-fn golden(name: &str) -> String {
+fn golden_value(name: &str) -> serde_json::Value {
     let raw = std::fs::read_to_string(goldens_dir().join(name)).unwrap();
-    raw.strip_suffix('\n').unwrap_or(&raw).to_string()
+    serde_json::from_str(raw.trim_end()).unwrap()
 }
 
 fn assert_golden(name: &str, value: &impl Serialize) {
     assert_eq!(
-        serde_json::to_string(value).unwrap(),
-        golden(name),
+        serde_json::to_value(value).unwrap(),
+        golden_value(name),
         "{name}"
     );
 }
@@ -109,14 +111,16 @@ fn account_status_shape() {
 #[test]
 fn load_settings_shape() {
     // `maxRamMb` is 3/4 of host RAM, so no fixed golden is possible: the file
-    // holds the placeholder `"$MAX_RAM_MB"` (quoted, replaced by the number)
-    // and every other byte — key order included — is pinned.
+    // holds the placeholder `"$MAX_RAM_MB"` (quoted, replaced by the number).
     let state = test_state(fixed_config());
     let response = launcher_app::ops::settings::load_settings(&state).unwrap();
     let live = launcher_core::config::max_ram_mb().to_string();
+    let raw = std::fs::read_to_string(goldens_dir().join("settings_response.json")).unwrap();
+    let expected: serde_json::Value =
+        serde_json::from_str(&raw.replace("\"$MAX_RAM_MB\"", &live)).unwrap();
     assert_eq!(
-        serde_json::to_string(&response).unwrap(),
-        golden("settings_response.json").replace("\"$MAX_RAM_MB\"", &live),
+        serde_json::to_value(&response).unwrap(),
+        expected,
         "settings_response.json",
     );
 }
@@ -263,7 +267,7 @@ fn event_payload_shapes() {
             LauncherEvent::RoomPending | LauncherEvent::AccountExpired => serde_json::Value::Null,
             _ => unreachable!(),
         };
-        assert_eq!(serde_json::to_string(&payload).unwrap(), golden(name));
+        assert_eq!(serde_json::to_value(&payload).unwrap(), golden_value(name));
     }
 }
 
