@@ -11,6 +11,7 @@ export { SelectSearch, MainMotion } from "main-controls.slint";
 export { WindowActivity } from "controls.slint";
 import { MainScreen, MainData, Room } from "main.slint";
 import { SettingsScreen } from "settings.slint";
+import { StatsScreen, StatsRow, StatsRating, StatsMatch, StatsFilter } from "stats.slint";
 import { Tokens } from "tokens.slint";
 import { WindowChrome, Shell } from "shell.slint";
 import { GridBackdrop, TopoBackdrop, CornerTicks, GlowPanel } from "backdrop.slint";
@@ -27,6 +28,44 @@ export component AppWindow inherits Window {
     in-out property <string> room-message;
     in-out property <int> settings-tab: 3;
     in property <[string]> settings-tabs;
+    in-out property <string> stats-mode;
+    in-out property <string> stats-period;
+    in-out property <string> stats-sort;
+    in property <[StatsFilter]> stats-modes;
+    in property <[StatsFilter]> stats-periods;
+    in property <[StatsFilter]> stats-sorts;
+    in property <int> stats-board-state;
+    in property <string> stats-board-error;
+    in property <bool> stats-board-stale;
+    in property <string> stats-board-stale-label;
+    in property <[StatsRow]> stats-rows;
+    in property <int> stats-page;
+    in property <int> stats-pages;
+    in property <int> stats-total;
+    in property <bool> stats-has-prev;
+    in property <bool> stats-has-next;
+    in property <int> stats-self-state;
+    in property <string> stats-self-error;
+    in property <bool> stats-self-stale;
+    in property <string> stats-self-stale-label;
+    in property <string> stats-self-uuid;
+    in property <string> stats-self-name;
+    in property <string> stats-self-rank;
+    in property <string> stats-self-rank-code;
+    in property <string> stats-self-mmr;
+    in property <string> stats-self-battles;
+    in property <string> stats-self-kd;
+    in property <string> stats-self-captures;
+    in property <string> stats-self-campaigns;
+    in property <[StatsRating]> stats-rating;
+    in property <[StatsMatch]> stats-matches;
+    callback stats-set-mode(string);
+    callback stats-set-period(string);
+    callback stats-set-sort(string);
+    callback stats-page-delta(int);
+    callback stats-refresh();
+    callback stats-open-site();
+    callback stats-shown();
     in property <string> settings-title;
     in property <string> settings-subtitle;
     in property <string> skin-path;
@@ -113,8 +152,45 @@ export component AppWindow inherits Window {
                 verify => { root.verify(); }
                 join(id) => { root.join(id); }
             }
-            if root.active == 3: SettingsScreen {
-                // shortcut: preserve u16's logical-pixel layout until settings adopts CSS zoom metrics.
+            if root.active == 2: StatsScreen {
+                modes: root.stats-modes;
+                periods: root.stats-periods;
+                sorts: root.stats-sorts;
+                mode: root.stats-mode;
+                period: root.stats-period;
+                sort: root.stats-sort;
+                board-state: root.stats-board-state;
+                board-error: root.stats-board-error;
+                board-stale: root.stats-board-stale;
+                board-stale-label: root.stats-board-stale-label;
+                rows: root.stats-rows;
+                page: root.stats-page;
+                pages: root.stats-pages;
+                total: root.stats-total;
+                has-prev: root.stats-has-prev;
+                has-next: root.stats-has-next;
+                self-state: root.stats-self-state;
+                self-error: root.stats-self-error;
+                self-stale: root.stats-self-stale;
+                self-stale-label: root.stats-self-stale-label;
+                self-name: root.stats-self-name;
+                self-rank: root.stats-self-rank;
+                self-rank-code: root.stats-self-rank-code;
+                self-mmr: root.stats-self-mmr;
+                self-battles: root.stats-self-battles;
+                self-kd: root.stats-self-kd;
+                self-captures: root.stats-self-captures;
+                self-campaigns: root.stats-self-campaigns;
+                rating: root.stats-rating;
+                matches: root.stats-matches;
+                set-mode(id) => { root.stats-set-mode(id); }
+                set-period(id) => { root.stats-set-period(id); }
+                set-sort(id) => { root.stats-set-sort(id); }
+                page-delta(delta) => { root.stats-page-delta(delta); }
+                refresh => { root.stats-refresh(); }
+                open-site => { root.stats-open-site(); }
+            }
+            if root.active == 3: SettingsScreen {                // shortcut: preserve u16's logical-pixel layout until settings adopts CSS zoom metrics.
                 private property <length> legacy-inset: 1px - 1phx;
                 x: self.legacy-inset; y: self.legacy-inset;
                 width: parent.width - 2 * self.legacy-inset; height: parent.height - Tokens.header-height - Tokens.footer-height - 2 * self.legacy-inset;

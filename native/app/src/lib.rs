@@ -6,6 +6,7 @@ pub mod fixtures;
 pub mod idle_self_check;
 pub mod runtime;
 pub mod skin;
+pub mod stats;
 pub mod window_activity;
 
 pub use skin3d::slint::PreviewHost;
@@ -49,6 +50,9 @@ pub fn wire_app(
         if let Some(app) = weak.upgrade() {
             app.set_active(index);
             skin::sync_visibility(&app, &navigate_host);
+            if index == 2 {
+                app.invoke_stats_shown();
+            }
         }
     });
     let weak = app.as_weak();
@@ -78,6 +82,7 @@ pub fn wire_app(
     });
     app.on_browse_skin(|| eprintln!("POC settings: skin browse is a stub (no backend)"));
     app.on_browse_cape(|| eprintln!("POC settings: cape browse is a stub (no backend)"));
+    stats::wire_fixtures(app);
     app.on_upload_skin(|| eprintln!("POC settings: skin upload is a stub (no backend)"));
     app.on_settings_reset(|| eprintln!("POC settings: reset is a stub (no backend)"));
     app.on_settings_save(|| eprintln!("POC settings: save is a stub (no backend)"));

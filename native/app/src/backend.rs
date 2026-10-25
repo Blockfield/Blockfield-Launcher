@@ -50,7 +50,8 @@ impl Backend {
         });
         let events = bridge::sink(app);
         let weak = app.as_weak();
-        handle.spawn(async move {
+        let task_handle = handle.clone();
+        task_handle.spawn(async move {
             let initialized = tokio::task::spawn_blocking(move || {
                 let state = runtime::build_state(events)?;
                 // SettingsResponse keeps its fields private; serialize the redacted op response.
@@ -76,6 +77,11 @@ impl Backend {
                 }
             };
             (state.events)(LauncherEvent::GameStatus(status_ops::game_status(&state)));
+            let live_handle = handle.clone();
+            let live_state = state.clone();
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                crate::stats::wire_live(&app, live_handle, live_state);
+            });
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_username(settings["username"].as_str().unwrap_or_default().into());
                 app.set_workshop(settings["activeProfile"] == "workshop");

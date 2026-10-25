@@ -1,0 +1,542 @@
+import { Tokens } from "tokens.slint";
+import { ActionArea } from "controls.slint";
+import { GridBackdrop, TopoBackdrop } from "backdrop.slint";
+import { MainMotion } from "main-controls.slint";
+
+export struct StatsRow {
+    rank: string,
+    name: string,
+    mmr: string,
+    score: string,
+    kd: string,
+    captures: string,
+    battles: string,
+    own: bool,
+}
+
+export struct StatsRating {
+    when: string,
+    after: string,
+    delta: string,
+    up: bool,
+}
+
+export struct StatsMatch {
+    when: string,
+    mode: string,
+    outcome: string,
+    good: bool,
+    bad: bool,
+    kd: string,
+}
+
+export struct StatsFilter {
+    id: string,
+    label: string,
+}
+
+// Underline tab exactly like StatsScreen.tsx FilterGroup: h-8, 12px text,
+// 1px bottom rule, amber when current, dim otherwise.
+component StatsFilterButton inherits ActionArea {
+    in property <bool> current;
+    callback chosen();
+    height: 32px;
+    width: Math.max(32px, filter-text.preferred-width);
+    clicked => { root.chosen(); }
+    filter-text := Text {
+        x: 0px;
+        width: parent.width;
+        height: parent.height - 1phx;
+        text: root.label;
+        font-size: 12px;
+        color: root.current ? Tokens.foreground : (root.hovered ? Tokens.foreground : Tokens.secondary-foreground);
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        animate color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+    }
+    Rectangle {
+        x: 0px;
+        y: parent.height - 1phx;
+        width: parent.width;
+        height: 1phx;
+        background: root.current ? Tokens.primary : transparent;
+    }
+}
+
+component StatsRefreshButton inherits ActionArea {
+    in property <bool> loading;
+    callback refresh();
+    width: 32px;
+    height: 32px;
+    clicked => { root.refresh(); }
+    border-width: 1phx;
+    border-color: root.hovered && root.enabled ? Tokens.ring : Tokens.border;
+    icon := Image {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 13px;
+        height: 13px;
+        source: @image-url("../assets/icons/refresh-cw.svg");
+        colorize: root.hovered && root.enabled ? Tokens.foreground : Tokens.secondary-foreground;
+        transform-rotation: root.spin-turn;
+    }
+    property <angle> spin-turn: 0deg;
+    animate spin-turn { duration: (root.loading && MainMotion.enabled) ? 1000ms : 0ms; easing: linear; iteration-count: -1; }
+    init => { spin-turn = 360deg; }
+    changed loading => { spin-turn = root.loading ? 360deg : 0deg; }
+}
+
+component StatsPagerButton inherits ActionArea {
+    height: 32px;
+    width: Math.max(48px, pager-text.preferred-width + 24px);
+    opacity: root.enabled ? 1 : 0.4;
+    border-width: 1phx;
+    border-color: root.hovered && root.enabled ? Tokens.ring : Tokens.border;
+    pager-text := Text {
+        x: 0px;
+        width: parent.width;
+        height: parent.height;
+        text: root.label;
+        font-size: 11px;
+        color: root.hovered && root.enabled ? Tokens.foreground : Tokens.secondary-foreground;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        animate color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+    }
+}
+
+component StatsSiteLink inherits ActionArea {
+    callback opened();
+    height: 15px;
+    clicked => { root.opened(); }
+    Image {
+        x: 0px;
+        y: 2px;
+        width: 11px;
+        height: 11px;
+        source: @image-url("../assets/icons/external-link.svg");
+        colorize: root.hovered ? Tokens.primary : Tokens.secondary-foreground;
+        animate colorize { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+    }
+    Text {
+        x: 17px;
+        height: parent.height;
+        text: root.label;
+        font-size: 11px;
+        color: root.hovered ? Tokens.primary : Tokens.secondary-foreground;
+        vertical-alignment: center;
+        animate color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+    }
+}
+
+component StatsSpin inherits Rectangle {
+    // e2e hook only: exposes loading state to the Slint testing tree, no pixels change.
+    accessible-role: text;
+    accessible-label: "Загрузка статистики";
+    property <angle> spin: 0deg;
+    animate spin { duration: MainMotion.enabled ? 1000ms : 0ms; easing: linear; iteration-count: -1; }
+    init => { spin = 360deg; }
+    Image {
+        x: (parent.width - 20px) / 2;
+        y: (parent.height - 20px) / 2;
+        width: 20px;
+        height: 20px;
+        source: @image-url("../assets/icons/loader-circle.svg");
+        colorize: Tokens.muted-foreground;
+        transform-rotation: root.spin;
+    }
+}
+
+// One dl cell of the self card (12px, grid gap 1px on #18130D like the TSX).
+component StatsCell inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    height: 48px;
+    background: Tokens.card;
+    Text {
+        x: 12px;
+        y: 8px;
+        width: parent.width - 24px;
+        text: root.label;
+        font-size: 9px;
+        letter-spacing: 1.44px;
+        color: Tokens.muted-foreground;
+    }
+    Text {
+        x: 12px;
+        y: 24px;
+        width: parent.width - 24px;
+        text: root.value;
+        font-size: 12px;
+        color: Tokens.foreground;
+        overflow: elide;
+    }
+}
+
+// 1:1 port of StatsScreen.tsx:27-439 (the "ТОП" tab). All strings and colors
+// are byte-identical to the TSX; numbers arrive pre-formatted from Rust
+// (launcher-core fmt + stats.rs) so the tree only renders.
+export component StatsScreen inherits Rectangle {
+    in property <[StatsFilter]> modes;
+    in property <[StatsFilter]> periods;
+    in property <[StatsFilter]> sorts;
+    in property <string> mode;
+    in property <string> period;
+    in property <string> sort;
+    // 0 loading, 1 error, 2 empty, 3 data (board === null / error / no players / table).
+    in property <int> board-state;
+    in property <string> board-error;
+    in property <bool> board-stale;
+    in property <string> board-stale-label;
+    in property <[StatsRow]> rows;
+    in property <int> page;
+    in property <int> pages;
+    in property <int> total;
+    in property <bool> has-prev;
+    in property <bool> has-next;
+    // 0 loading, 1 never-played, 2 error, 3 data.
+    in property <int> self-state;
+    in property <string> self-error;
+    in property <bool> self-stale;
+    in property <string> self-stale-label;
+    in property <string> self-name;
+    in property <string> self-rank;
+    in property <string> self-rank-code;
+    in property <string> self-mmr;
+    in property <string> self-battles;
+    in property <string> self-kd;
+    in property <string> self-captures;
+    in property <string> self-campaigns;
+    in property <[StatsRating]> rating;
+    in property <[StatsMatch]> matches;
+    callback set-mode(string);
+    callback set-period(string);
+    callback set-sort(string);
+    callback page-delta(int);
+    callback refresh();
+    callback open-site();
+
+    TopoBackdrop {}
+    GridBackdrop { intensity: 0.4; }
+
+    VerticalLayout {
+        x: 20px;
+        y: 20px;
+        width: parent.width - 40px;
+        height: parent.height - 40px;
+        spacing: 12px;
+
+        // Title row (StatsScreen.tsx:145-155).
+        title-row := HorizontalLayout {
+            height: 26px;
+            spacing: 12px;
+            Text {
+                text: "ТОП";
+                font-size: 26px;
+                letter-spacing: 1.56px;
+                color: Tokens.neutral-100;
+                vertical-alignment: center;
+            }
+            Text {
+                text: "ТАБЛИЦА ЛИДЕРОВ";
+                font-size: 10px;
+                letter-spacing: 1.8px;
+                color: Tokens.muted-foreground;
+                vertical-alignment: bottom;
+            }
+            if root.board-stale: Text {
+                // e2e hook only, no pixels change.
+                accessible-role: text;
+                accessible-label: root.board-stale-label;
+                text: root.board-stale-label;
+                font-size: 11px;
+                color: Tokens.primary;
+                vertical-alignment: bottom;
+                overflow: elide;
+            }
+        }
+
+        // Filter bar (StatsScreen.tsx:157-185).
+        HorizontalLayout {
+            height: 40px;
+            spacing: 24px;
+            padding-top: 8px;
+            HorizontalLayout {
+                spacing: 12px;
+                for f in root.modes: StatsFilterButton {
+                    label: f.label;
+                    current: f.id == root.mode;
+                    chosen => { root.set-mode(f.id); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                for f in root.periods: StatsFilterButton {
+                    label: f.label;
+                    current: f.id == root.period;
+                    chosen => { root.set-period(f.id); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                for f in root.sorts: StatsFilterButton {
+                    label: f.label;
+                    current: f.id == root.sort;
+                    chosen => { root.set-sort(f.id); }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            StatsRefreshButton {
+                label: "Обновить статистику";
+                loading: root.board-state == 0;
+                enabled: root.board-state != 0;
+                refresh => { root.refresh(); }
+            }
+        }
+        Rectangle { height: 1phx; background: Tokens.border; }
+
+        // Board + self card (StatsScreen.tsx:187-270).
+        Rectangle {
+            vertical-stretch: 1;
+            background: Tokens.secondary;
+            border-width: 1phx;
+            border-color: Tokens.border;
+            clip: true;
+            HorizontalLayout {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                spacing: 1px;
+
+                board := Rectangle {
+                horizontal-stretch: 1;
+                clip: true;
+                background: Tokens.chrome;
+                VerticalLayout {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: parent.height;
+                    if root.board-state == 0: StatsSpin {
+                        vertical-stretch: 1;
+                    }
+                    if root.board-state == 1: Rectangle {
+                        height: board-err-text.preferred-height + 32px;
+                        board-err-text := Text {
+                            x: 16px;
+                            y: 16px;
+                            width: parent.width - 32px;
+                            // e2e hook only, no pixels change.
+                            accessible-role: text;
+                            accessible-label: root.board-error;
+                            text: "Статистика недоступна, попробуйте позже.\n" + root.board-error;
+                            font-size: 12px;
+                            color: Tokens.secondary-foreground;
+                            wrap: word-wrap;
+                        }
+                    }
+                    if root.board-state == 2: Rectangle {
+                        Text {
+                            x: 16px;
+                            y: 16px;
+                            width: parent.width - 32px;
+                            text: "За выбранный период ещё нет результатов";
+                            font-size: 12px;
+                            color: Tokens.muted-foreground;
+                            horizontal-alignment: center;
+                        }
+                    }
+                    if root.board-state == 3: VerticalLayout {
+                        vertical-stretch: 1;
+                        // Header (StatsScreen.tsx:204-213).
+                        header-row := HorizontalLayout {
+                            height: 33px;
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            spacing: 0px;
+                            Text { width: 48px; text: "Место"; font-size: 10px; letter-spacing: 1.4px; color: Tokens.muted-foreground; vertical-alignment: center; }
+                            Text { horizontal-stretch: 1; text: "Игрок"; font-size: 10px; letter-spacing: 1.4px; color: Tokens.muted-foreground; vertical-alignment: center; }
+                            Text { width: 64px; text: "MMR"; font-size: 10px; letter-spacing: 1.4px; color: Tokens.muted-foreground; vertical-alignment: center; horizontal-alignment: right; }
+                            Text { width: 72px; text: "Очки"; font-size: 10px; letter-spacing: 1.4px; color: Tokens.muted-foreground; vertical-alignment: center; horizontal-alignment: right; }
+                            Text { width: 80px; text: "K/D"; font-size: 10px; letter-spacing: 1.4px; color: Tokens.muted-foreground; vertical-alignment: center; horizontal-alignment: right; }
+                            Text { width: 72px; text: "Захваты"; font-size: 10px; letter-spacing: 1.4px; color: Tokens.muted-foreground; vertical-alignment: center; horizontal-alignment: right; }
+                            Text { width: 110px; text: "Бои / победы"; font-size: 10px; letter-spacing: 1.4px; color: Tokens.muted-foreground; vertical-alignment: center; horizontal-alignment: right; }
+                        }
+                        Rectangle { height: 1phx; background: Tokens.border; }
+                        flick := Flickable {
+                            vertical-stretch: 1;
+                            content-height: rows-layout.preferred-height;
+                            rows-layout := VerticalLayout {
+                                width: parent.width;
+                                for row in root.rows: Rectangle {
+                                    height: 31px;
+                                    background: row.own ? Tokens.primary.with-alpha(0.1) : transparent;
+                                    HorizontalLayout {
+                                        x: 12px;
+                                        width: parent.width - 24px;
+                                        height: parent.height;
+                                        spacing: 0px;
+                                        Text { width: 48px; text: row.rank; font-size: 12px; color: Tokens.muted-foreground; vertical-alignment: center; }
+                                        Text { horizontal-stretch: 1; text: row.name; font-size: 12px; color: row.own ? Tokens.foreground : Tokens.neutral-100; vertical-alignment: center; overflow: elide; }
+                                        Text { width: 64px; text: row.mmr; font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; horizontal-alignment: right; }
+                                        Text { width: 72px; text: row.score; font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; horizontal-alignment: right; }
+                                        Text { width: 80px; text: row.kd; font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; horizontal-alignment: right; }
+                                        Text { width: 72px; text: row.captures; font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; horizontal-alignment: right; }
+                                        Text { width: 110px; text: row.battles; font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; horizontal-alignment: right; }
+                                    }
+                                    Rectangle { x: 0px; y: parent.height - 1phx; width: parent.width; height: 1phx; background: Tokens.secondary; }
+                                    if row.own: Rectangle { x: 0px; y: 0px; width: 2px; height: parent.height; background: Tokens.primary; }
+                                }
+                            }
+                        }
+                        // Pager (StatsScreen.tsx:244-266).
+                        if root.total > 0: Rectangle {
+                            height: 37px;
+                            border-width: 0px;
+                            Rectangle { x: 0px; y: 0px; width: parent.width; height: 1phx; background: Tokens.border; }
+                            HorizontalLayout {
+                                x: 12px;
+                                y: 0px;
+                                width: parent.width - 24px;
+                                height: parent.height;
+                                spacing: 12px;
+                                StatsPagerButton {
+                                    y: 2px;
+                                    label: "Назад";
+                                    enabled: root.has-prev;
+                                    clicked => { root.page-delta(-1); }
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: "Стр. " + root.page + " из " + root.pages + " · " + root.total + " игроков";
+                                    font-size: 11px;
+                                    color: Tokens.muted-foreground;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
+                                }
+                                StatsPagerButton {
+                                    y: 2px;
+                                    label: "Далее";
+                                    enabled: root.has-next;
+                                    clicked => { root.page-delta(1); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Self card (StatsScreen.tsx:279-376), fixed 300px like md:300px.
+            self-card := Rectangle {
+                width: 300px;
+                clip: true;
+                background: Tokens.chrome;
+                VerticalLayout {
+                    x: 16px;
+                    y: 16px;
+                    width: parent.width - 32px;
+                    height: parent.height - 32px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        height: 12px;
+                        spacing: 12px;
+                        Rectangle { width: 6px; height: 6px; y: 3px; background: Tokens.primary; }
+                        Text { text: "Вы"; font-size: 10px; letter-spacing: 1.8px; color: Tokens.foreground; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; height: 1px; background: Tokens.secondary; }
+                        Text { text: root.self-rank-code; font-size: 9px; letter-spacing: 2.52px; color: Tokens.faint; vertical-alignment: center; }
+                    }
+                    if root.self-state == 0: StatsSpin { vertical-stretch: 0; height: 96px; }
+                    if root.self-state == 1: Text {
+                        text: "Вы ещё не играли";
+                        font-size: 12px;
+                        color: Tokens.muted-foreground;
+                        horizontal-alignment: center;
+                    }
+                    if root.self-state == 2: Text {
+                        // e2e hook only, no pixels change.
+                        accessible-role: text;
+                        accessible-label: "Ваша статистика недоступна. " + root.self-error;
+                        text: "Ваша статистика недоступна.\n" + root.self-error;
+                        font-size: 12px;
+                        color: Tokens.secondary-foreground;
+                        wrap: word-wrap;
+                    }
+                    if root.self-state == 3: VerticalLayout {
+                        spacing: 8px;
+                        if root.self-stale: Text {
+                            // e2e hook only, no pixels change.
+                            accessible-role: text;
+                            accessible-label: root.self-stale-label;
+                            text: root.self-stale-label;
+                            font-size: 11px;
+                            color: Tokens.primary;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            height: 17px;
+                            spacing: 8px;
+                            Text {
+                                text: root.self-name;
+                                font-size: 13px;
+                                color: Tokens.neutral-100;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        GridLayout {
+                            spacing: 1px;
+                            Row {
+                                StatsCell { label: "Место"; value: root.self-rank-code; }
+                                StatsCell { label: "MMR"; value: root.self-mmr; }
+                            }
+                            Row {
+                                StatsCell { label: "Бои / победы"; value: root.self-battles; }
+                                StatsCell { label: "K/D"; value: root.self-kd; }
+                            }
+                            Row {
+                                StatsCell { label: "Захваты"; value: root.self-captures; }
+                                StatsCell { label: "Кампании / победы"; value: root.self-campaigns; }
+                            }
+                        }
+                        if root.rating.length > 0: VerticalLayout {
+                            spacing: 4px;
+                            Text { text: "Рейтинг"; font-size: 10px; letter-spacing: 1.8px; color: Tokens.muted-foreground; }
+                            for r in root.rating: HorizontalLayout {
+                                height: 15px;
+                                spacing: 8px;
+                                Text { horizontal-stretch: 1; text: r.when; font-size: 11px; color: Tokens.muted-foreground; }
+                                Text { text: r.after; font-size: 11px; color: Tokens.secondary-foreground; }
+                                Text {
+                                    text: r.delta;
+                                    font-size: 11px;
+                                    color: r.up ? Tokens.success : #c98b8b;
+                                }
+                            }
+                        }
+                        if root.matches.length > 0: VerticalLayout {
+                            spacing: 4px;
+                            Text { text: "Последние бои"; font-size: 10px; letter-spacing: 1.8px; color: Tokens.muted-foreground; }
+                            for m in root.matches: GridLayout {
+                                spacing: 8px;
+                                Row {
+                                    Text { horizontal-stretch: 1; text: m.when + " · " + m.mode; font-size: 11px; color: Tokens.muted-foreground; overflow: elide; }
+                                    Text {
+                                        text: m.outcome;
+                                        font-size: 11px;
+                                        color: m.good ? Tokens.success : (m.bad ? #c98b8b : Tokens.muted-foreground);
+                                    }
+                                    Text { text: m.kd; font-size: 11px; color: Tokens.secondary-foreground; }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    StatsSiteLink { width: parent.width; label: "Открыть на сайте"; opened => { root.open-site(); } }
+                }
+            }
+            }
+        }
+    }
+}
