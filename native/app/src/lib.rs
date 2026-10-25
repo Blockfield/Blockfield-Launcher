@@ -1,7 +1,10 @@
+pub mod backend;
+pub mod bridge;
 pub mod capture;
 pub mod e2e;
 pub mod fixtures;
 pub mod idle_self_check;
+pub mod runtime;
 pub mod skin;
 pub mod window_activity;
 
@@ -18,6 +21,7 @@ slint::include_modules!();
 /// as production; only the backend and the event loop differ).
 pub fn wire_app(
     app: &AppWindow,
+    backend: backend::Backend,
 ) -> std::io::Result<(Rc<PreviewHost>, Rc<window_activity::Activity>)> {
     fixtures::apply(app);
     let weak = app.as_weak();
@@ -134,5 +138,6 @@ pub fn wire_app(
             }
         }
     });
+    backend.start(app);
     Ok((skin_host, activity))
 }

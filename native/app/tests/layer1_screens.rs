@@ -33,7 +33,8 @@ fn init_once() {
 fn given_app(state: &str, scenario: &str) -> (AppWindow, Rc<PreviewHost>) {
     init_once();
     let app = AppWindow::new().expect("test window");
-    let (host, _activity) = wire_app(&app).expect("wire test app");
+    let (host, _activity) =
+        wire_app(&app, blockfield_native::backend::Backend::Fixtures).expect("wire test app");
     if state == "settings-skin" {
         fixtures::apply_settings(&app).expect("settings fixtures");
     } else {
