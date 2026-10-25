@@ -2,7 +2,6 @@ mod account;
 mod commands;
 mod config;
 mod dev;
-mod discord_ipc;
 mod download;
 mod game;
 mod host_env;
@@ -119,6 +118,10 @@ pub fn run() {
                         let _ = sink_app.emit("game://status", status);
                     }
                     RoomPending => {
+                        // The rooms bridge showed the window before emitting;
+                        // every core RoomPending (deep link or Discord join)
+                        // restores it here so the shell mapping stays exact.
+                        crate::game::show_launcher(&sink_app);
                         let _ = sink_app.emit("room://pending", ());
                     }
                     AccountExpired => {

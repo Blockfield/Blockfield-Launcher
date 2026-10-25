@@ -46,6 +46,8 @@ pub struct PackState {
 pub use launcher_net::account::GameIdentity;
 
 pub mod ops;
+pub mod presence;
+pub mod rooms;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
