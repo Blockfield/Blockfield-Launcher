@@ -352,10 +352,8 @@ version = "1.0.20"
 dependencies = [
  "ar",
  "base64 0.23.1",
- "blockfield-shared",
  "dotenvy",
  "flate2",
- "fs2",
  "launcher-app",
  "launcher-core",
  "launcher-net",
@@ -375,7 +373,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "windows-sys 0.61.2",
- "zip",
 ]
 
 [[package]]
@@ -2301,12 +2298,15 @@ dependencies = [
 name = "launcher-app"
 version = "0.0.0"
 dependencies = [
+ "blockfield-shared",
+ "fs2",
  "launcher-core",
  "launcher-net",
  "log",
  "serde",
  "serde_json",
  "tokio",
+ "zip",
 ]
 
 [[package]]
