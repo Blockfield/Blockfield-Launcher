@@ -42,8 +42,9 @@ pub struct GameIdentity {
     pub access_token: String,
 }
 
-// Canonical implementation moved to launcher-core with config validation;
-// re-export keeps every `crate::commands::valid_username` call site unchanged.
+// Canonical implementation lives in launcher-core with config validation; no
+// src-tauri call site uses the commands re-export since the account move (u26).
+#[allow(unused_imports)]
 pub use launcher_core::config::valid_username;
 
 #[derive(Clone, Serialize)]

@@ -3,7 +3,7 @@ use crate::commands::{GameIdentity, LauncherAppState};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
-pub use launcher_net::account::{api, client, AccountStatus, SESSION_EXPIRED};
+pub use launcher_net::account::AccountStatus;
 
 async fn skins_base(state: &LauncherAppState) -> Option<String> {
     state
@@ -12,11 +12,6 @@ async fn skins_base(state: &LauncherAppState) -> Option<String> {
         .await
         .as_ref()
         .and_then(|p| p.info.skins.clone())
-}
-
-/// Shell-side `drasl_base`: same https rule, `State` kept out of the core engine.
-pub async fn drasl_base(state: &LauncherAppState) -> Result<String, String> {
-    launcher_net::account::drasl_base(skins_base(state).await.as_deref())
 }
 
 #[tauri::command]

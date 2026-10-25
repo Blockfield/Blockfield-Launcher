@@ -2,7 +2,7 @@
 use crate::commands::LauncherAppState;
 use tauri::State;
 
-pub use launcher_net::skins::{SkinPreview, SkinUploadResult, DEFAULT_SERVER};
+pub use launcher_net::skins::{SkinPreview, SkinUploadResult};
 
 async fn skins_base(state: &LauncherAppState) -> Option<String> {
     state
@@ -39,10 +39,4 @@ pub async fn preview_skin(
 ) -> Result<SkinPreview, String> {
     let base = skins_base(&state).await;
     launcher_net::skins::preview_skin(base, username, skin_path, cape_path, slim).await
-}
-
-pub async fn copy_mojang_skin(state: &LauncherAppState) {
-    let config = state.config.read().await.clone();
-    let base = skins_base(state).await;
-    launcher_net::skins::copy_mojang_skin(&config, base).await;
 }

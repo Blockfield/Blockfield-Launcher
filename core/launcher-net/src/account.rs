@@ -553,9 +553,11 @@ mod tests {
         };
         let config = RwLock::new(LauncherConfig::default());
         let dir = tempfile::tempdir().unwrap();
-        let error = game_identity(&config, &dir.path().to_path_buf(), None, &on_expired)
-            .await
-            .unwrap_err();
+        let error = match game_identity(&config, &dir.path().to_path_buf(), None, &on_expired).await
+        {
+            Ok(_) => panic!("expected logged-out session to fail"),
+            Err(error) => error,
+        };
         assert!(fired.load(Ordering::SeqCst));
         assert!(error.starts_with(SESSION_EXPIRED), "{error}");
     }
