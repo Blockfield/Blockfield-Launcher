@@ -105,6 +105,10 @@ fn scenario_nav_main_to_settings_and_back() {
     // When the operator returns to the skin tab and then home…
     when_click_label(&app, "СКИН");
     assert_eq!(app.get_settings_tab(), 3, "back on skin tab");
+    // DELIBERATE BREAKAGE for the u18 gate proof (reverted immediately
+    // after): wrong expectation, compiled in on Windows only.
+    #[cfg(target_os = "windows")]
+    assert_eq!(app.get_settings_tab(), 99, "u18 gate proof: red on Windows");
     // "ИГРАТЬ" matches both the nav item and the deploy button; the nav item
     // is the slim header row, the deploy button is 230x64.
     let nav = ElementHandle::find_by_accessible_label(&app, "ИГРАТЬ")
