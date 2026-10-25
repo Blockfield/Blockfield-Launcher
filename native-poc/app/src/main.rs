@@ -9,9 +9,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // SAFETY: single-threaded before any thread spawn.
         unsafe { std::env::set_var("SLINT_SKIA_PARTIAL_RENDERING", "1") };
     }
-    slint::BackendSelector::new()
-        .backend_name("winit".into())
-        .select()?;
+    // An explicit SLINT_BACKEND wins (Layer-2 e2e pins winit-software for
+    // bit-stable goldens). Otherwise use Skia: GPU (GL/Metal/D3D) first,
+    // Slint-internal fallback to Skia's CPU raster — never the plain software
+    // renderer, which idles ~3x hotter on GPU-less machines (u33; same pixels
+    // here, u10 AE=0). select() cannot fail over renderers (suspended
+    // creation is infallible); the fallback happens at window resume inside
+    // Slint and is logged there as "Backend: ...".
+    let mut selector = slint::BackendSelector::new().backend_name("winit".into());
+    if std::env::var_os("SLINT_BACKEND").is_none() {
+        selector = selector.renderer_name("skia".into());
+    }
+    selector.select()?;
     let app = AppWindow::new()?;
     let (skin_host, activity) = blockfield_native_poc::wire_app(&app)?;
     let mut state = std::env::var("BLOCKFIELD_CAPTURE_STATE").unwrap_or_else(|_| "main".into());

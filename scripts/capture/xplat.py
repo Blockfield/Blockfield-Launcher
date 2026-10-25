@@ -68,19 +68,24 @@ def validate(evidence, state, motion):
     assert not evidence["errors"] or state == "error", evidence
 
 
-@contextmanager
 def slint_backend(bench):
+    # Captures pin the plain software renderer: bit-stable, matches goldens.
+    # Bench lets the app choose (returns None -> SLINT_BACKEND unset): Skia
+    # GPU first, Skia CPU-raster fallback; the renderer actually used is read
+    # back from Slint's "Backend: ..." line in app.log (see slint_renderer).
     if not bench:
-        # Captures stay on the plain software renderer: bit-stable, matches goldens.
         return "winit-software"
-    # Bench measures the shipped fallback config, not the slowest rasterizer (u33):
-    # Skia CPU raster with partial rendering where no GPU exists; full Skia
-    # (Metal/GL with software fallback) on macOS where Skia works.
-    if sys.platform == "darwin":
-        return "winit-skia"
-    return "winit-skia-software"
+    return None
 
 
+def slint_renderer(directory):
+    """Renderer the app actually used, from Slint's startup line in app.log."""
+    log = (directory / "app.log").read_text(errors="replace")
+    found = re.findall(r"Backend:\s*(.+)", log)
+    return found[-1].strip() if found else "unknown (no Backend line)"
+
+
+@contextmanager
 def launch(app, state, motion, args, directory):
     directory.mkdir(parents=True, exist_ok=True)
     baseline = set()
@@ -91,7 +96,6 @@ def launch(app, state, motion, args, directory):
             pass
     env = dict(
         os.environ,
-        SLINT_BACKEND=slint_backend(motion),
         SLINT_SCALE_FACTOR="1",
         SLINT_SKIA_PARTIAL_RENDERING="1",
         LIBGL_ALWAYS_SOFTWARE="1",
@@ -100,6 +104,14 @@ def launch(app, state, motion, args, directory):
         WEBKIT_DISABLE_DMABUF_RENDERER="1",
         TZ="UTC",
     )
+    # Bench never forces a renderer (the app chooses; recorded per run);
+    # captures pin winit-software. Scrub any ambient SLINT_BACKEND so a
+    # developer export cannot silently re-pin bench runs.
+    requested = slint_backend(motion)
+    if requested is not None:
+        env["SLINT_BACKEND"] = requested
+    else:
+        env.pop("SLINT_BACKEND", None)
     (directory / "baseline-processes.json").write_text(
         json.dumps(dict(captured_at=time.time(), identities=sorted(baseline)), indent=2)
     )
@@ -390,7 +402,7 @@ def main():
             mac_attribution="descendants + WebKit XPC identities absent before app launch; isolated sequential spawn window",
             limits="macOS RSS fallback, not phys_footprint; exited helpers CPU between samples can be missed; no GPU memory",
             renderers=dict(
-                slint="bench: winit-skia-software (winit-skia on macOS); captures: winit-software; skin wgpu adapter in app.log",
+                slint="app default (Skia GPU-first, Skia CPU-raster fallback); per-run renderer in run.renderer",
                 tauri="WebView2/WKWebView/WebKitGTK; WebGL renderer in skin proof.json",
             ),
             runs=[],
@@ -423,9 +435,10 @@ def main():
                                 initial=initial.get("drawCalls"), final=motion
                             )
 
-                    result["runs"].append(
-                        dict(app=app, state=state, repeat=repeat, **run)
-                    )
+                    run_record = dict(app=app, state=state, repeat=repeat, **run)
+                    if app == "slint":
+                        run_record["renderer"] = slint_renderer(directory)
+                    result["runs"].append(run_record)
                     (args.out / "result.json").write_text(json.dumps(result, indent=2))
 
 
