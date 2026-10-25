@@ -11,7 +11,7 @@ mod slint_pacing;
 mod texture;
 
 pub use animation::{OrbitControls, WalkingPose, auto_rotate_yaw, walking_pose};
-pub use renderer::{Frame, RenderSize, Renderer};
+pub use renderer::{Frame, RenderSize, Renderer, software_adapter_only};
 pub use texture::{Cape, Model, Skin};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
