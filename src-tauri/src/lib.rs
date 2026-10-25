@@ -93,8 +93,31 @@ pub fn run() {
             );
 
             // Bootstrap managed state
-            let app_handle = app.handle().clone();
-            let downloader = download::Downloader::new(app_handle);
+            let progress_app = app.handle().clone();
+            let progress_sink: download::ProgressSink =
+                std::sync::Arc::new(move |payload: download::DownloadProgressPayload| {
+                    if let Err(e) = progress_app.emit("download://progress", payload) {
+                        log::error!("Failed to emit progress event: {e}");
+                    }
+                });
+            let retry_app = app.handle().clone();
+            let retry_sink: download::RetrySink =
+                std::sync::Arc::new(move |file_path: String, attempt: u64| {
+                    let _ = retry_app.emit(
+                        "launcher://status",
+                        serde_json::json!({
+                            "phase": "retry",
+                            "message": format!("Retrying {file_path} ({attempt}/3)"),
+                            "cancelable": true,
+                        }),
+                    );
+                });
+            let guard_sink: download::GuardSink = std::sync::Arc::new(|path: &std::path::Path| {
+                let guard = crate::installed_files::Write::new(path);
+                let finish: download::WriteFinish = Box::new(move || guard.finish());
+                finish
+            });
+            let downloader = download::Downloader::new(progress_sink, retry_sink, guard_sink);
             // Share the atomic cancel flag so cancel_download can set it
             // without locking the downloader.
             let cancel_flag = downloader.cancel_flag.clone();

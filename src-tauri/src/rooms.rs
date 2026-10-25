@@ -1,7 +1,8 @@
 // Pure parse/validate fns moved to launcher-core (phase 2, no behaviour change);
 // Tauri state, commands and bridge-file writes stay in the adapter. Re-export
-// keeps every `crate::rooms::…` call site (presence, status) unchanged.
-pub use launcher_core::rooms::{parse_link, parse_secret, valid_id, valid_target};
+// keeps every `crate::rooms::…` call site (presence) unchanged. `valid_id` now
+// lives in launcher-net via launcher-core (used by `crate::status`).
+pub use launcher_core::rooms::{parse_link, parse_secret, valid_target};
 
 use crate::commands::LauncherAppState;
 use std::sync::Mutex;
