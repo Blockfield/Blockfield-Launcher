@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 /// Status notices `(phase, message, cancelable)`; the shell emits each as
 /// today's exact `launcher://status` payload.
-pub type StatusSink = Arc<dyn Fn(&str, &str, bool) + Send + Sync>;
+pub type StatusSink = Arc<dyn Fn(&'static str, &str, bool) + Send + Sync>;
 
 /// No-op [`StatusSink`] for contexts without a shell event bus.
 pub fn noop_status_sink() -> StatusSink {
@@ -286,7 +286,7 @@ pub async fn prepare_download_plan(
         .sum())
 }
 
-fn emit(status: &StatusSink, phase: &str, message: &str, cancelable: bool) {
+fn emit(status: &StatusSink, phase: &'static str, message: &str, cancelable: bool) {
     status(phase, message, cancelable);
 }
 

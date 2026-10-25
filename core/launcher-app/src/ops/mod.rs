@@ -2,6 +2,8 @@
 //! [`super::LauncherAppState`]. Each `src-tauri` wrapper keeps its exact
 //! signature and error strings and forwards here.
 
+pub mod archive;
+pub mod install;
 pub mod java;
 pub mod pack_check;
 pub mod settings;

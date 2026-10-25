@@ -32,15 +32,12 @@ tauri-plugin-process = "2.4.0"
 tauri-plugin-single-instance = { version = "2.5.2", features = ["deep-link"] }
 tauri-plugin-deep-link = "2.6.1"
 base64 = "0.23"
-zip = { version = "9", default-features = false, features = ["deflate"] }
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "time", "macros", "net", "io-util"] }
 dotenvy = "0.15"
-blockfield-shared = { path = "../shared" }
 launcher-core = { path = "../core/launcher-core" }
 launcher-net = { path = "../core/launcher-net" }
 launcher-app = { path = "../core/launcher-app" }
-fs2 = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }
