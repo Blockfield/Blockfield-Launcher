@@ -18,7 +18,8 @@ Two layers gate every merge into `feat/native-slint` (workflow
   (same-OS reruns with `--freeze-motion` sit an order of magnitude under
   these gates; see the u18 report). Renderer: `winit-software` on every OS
   (the one renderer all three runners support; the e2e log records
-  `SLINT_BACKEND`); scale 1x.
+  `SLINT_BACKEND`). An explicit `SLINT_BACKEND` still wins over the app's
+  Skia-first default (u33), so this pin is unaffected by it; scale 1x.
 
 ## Run locally
 

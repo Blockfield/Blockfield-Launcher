@@ -98,6 +98,9 @@ def launch(app, state, motion, args, directory):
         os.environ,
         SLINT_SCALE_FACTOR="1",
         SLINT_SKIA_PARTIAL_RENDERING="1",
+        # Lazy is the default refresh mode (no behaviour change); enables the
+        # 1 Hz FPS log and the "Backend: ..." line slint_renderer() reads back.
+        SLINT_DEBUG_PERFORMANCE="refresh_lazy,console",
         LIBGL_ALWAYS_SOFTWARE="1",
         GDK_SCALE="1",
         GDK_DPI_SCALE="1",
