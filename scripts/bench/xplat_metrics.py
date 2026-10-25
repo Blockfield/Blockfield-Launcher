@@ -8,9 +8,7 @@ def identity(process):
 
 
 def webkit(process):
-    return 'com.apple.WebKit.' in process.name() or any(
-        'com.apple.WebKit.' in arg for arg in process.cmdline()
-    )
+    return process.name().startswith('com.apple.WebKit.')
 
 
 def tree(root, baseline):

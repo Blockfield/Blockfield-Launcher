@@ -31,6 +31,7 @@ class AttributionTests(unittest.TestCase):
         fake.process_iter.return_value = [old, new, unrelated]
         with patch.dict(sys.modules, {'psutil': fake}), patch('xplat_metrics.sys.platform', 'darwin'):
             self.assertEqual([p.pid for p in tree(root, {(3, 10)})], [1, 2, 4])
+        unrelated.cmdline.assert_not_called()
 
 
 if __name__ == '__main__':

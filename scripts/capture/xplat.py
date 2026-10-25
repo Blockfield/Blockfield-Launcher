@@ -68,6 +68,11 @@ def launch(app, state, motion, args, directory):
                WEBKIT_DISABLE_DMABUF_RENDERER='1', TZ='UTC')
     (directory / 'baseline-processes.json').write_text(json.dumps(dict(
         captured_at=time.time(), identities=sorted(baseline)), indent=2))
+    if sys.platform == 'win32':
+        # Hosted Windows can occlude WebView2 even while the app window is visible.
+        env['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = (
+            '--disable-backgrounding-occluded-windows --disable-renderer-backgrounding '
+            '--disable-background-timer-throttling --disable-features=CalculateNativeWinOcclusion')
     config = config_path()
     with tempfile.TemporaryDirectory(prefix='blockfield-xplat-') as temporary:
         if app == 'tauri':
@@ -259,6 +264,17 @@ def main():
                     with launch(app, state, True, args, directory) as (root, baseline, tracked):
                         time.sleep(5)
                         run = benchmark(root, baseline, tracked, 30)
+                        if app == 'tauri':
+                            marker = json.loads(config_path().read_text())['lang']
+                            assert marker.startswith('capture-motion:'), marker
+                            motion = json.loads(marker[len('capture-motion:'):])
+                            initial = json.loads((directory / 'proof.json').read_text())
+                            (directory / 'motion-proof.json').write_text(json.dumps(motion, indent=2))
+                            assert motion['visibility'] == 'visible', motion
+                            if state == 'settings-skin':
+                                assert motion['drawCalls'] > initial['drawCalls'] + 100, motion
+                            run['motion_proof'] = dict(initial=initial.get('drawCalls'), final=motion)
+
                     result['runs'].append(dict(app=app, state=state, repeat=repeat, **run))
                     (args.out / 'result.json').write_text(json.dumps(result, indent=2))
 

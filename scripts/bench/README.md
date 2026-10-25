@@ -137,3 +137,14 @@ counted; CPU from helpers exiting between samples can be missed. These limits
 must remain with the results. No GPU memory metric is inferred. Slint is pinned
 to winit-software; skin adapter and Tauri WebGL renderer evidence stay in logs and
 fixture proofs. Hosted Windows lacks a hardware GPU; this is not real-GPU data.
+
+Animated Tauri runs also retain `motion-proof.json`: the fixture counts actual
+WebGL indexed draw calls and writes one visibility/draw-count witness 25 seconds
+after readiness. Skin runs must add more than 100 draw calls and stay visible;
+missing proof fails the benchmark. This adds one native config write during the
+measurement window. Windows disables WebView2 background/occlusion throttling
+only in this runner harness, so a visible animated skin is compared with Slint's
+visible animation, rather than a browser suspended by the CI desktop. These flags
+are not included in normal app builds or environment. macOS XPC matching uses
+process names only; reading arbitrary process command lines exposed a psutil C
+extension SystemError on a transient unrelated process.
