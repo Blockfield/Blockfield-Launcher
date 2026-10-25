@@ -54,13 +54,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
         with:
           toolchain: 1.99.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: tauri-xplat-${{ matrix.os }}
-          cache-on-failure: true
-          workspaces: |
-            .cache/capture/xplat -> target
-            native-poc/app -> target
       - name: Linux dependencies and isolated display
         if: runner.os == 'Linux'
         timeout-minutes: 8
@@ -112,6 +105,13 @@ jobs:
           python scripts/capture/xplat_prepare.py .cache/capture/xplat
           cd .cache/capture/xplat
           pnpm install --frozen-lockfile
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: tauri-xplat-${{ matrix.os }}
+          cache-on-failure: true
+          workspaces: |
+            .cache/capture/xplat -> target
+            native-poc/app -> target
       - name: Build Tauri capture release (unsigned, no bundle)
         id: tauri_build
         timeout-minutes: 30
