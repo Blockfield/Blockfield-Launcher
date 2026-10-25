@@ -1,3 +1,8 @@
+// Pure parse/validate fns moved to launcher-core (phase 2, no behaviour change);
+// Tauri state, commands and bridge-file writes stay in the adapter. Re-export
+// keeps every `crate::rooms::…` call site (presence, status) unchanged.
+pub use launcher_core::rooms::{parse_link, parse_secret, valid_id, valid_target};
+
 use crate::commands::LauncherAppState;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
@@ -5,50 +10,8 @@ use tauri::{Emitter, Manager, State};
 #[derive(Default)]
 pub struct PendingRoom(pub Mutex<Option<String>>);
 
-pub fn valid_id(id: &str) -> bool {
-    id.len() == 36
-        && id.bytes().enumerate().all(|(i, b)| {
-            if [8, 13, 18, 23].contains(&i) {
-                b == b'-'
-            } else {
-                b.is_ascii_hexdigit() && !b.is_ascii_uppercase()
-            }
-        })
-}
-
-pub fn valid_target(target: &str) -> bool {
-    target == "lobby" || valid_id(target)
-}
-
-pub fn parse_secret(secret: &str) -> Option<String> {
-    let target = secret.strip_prefix("bf1:")?;
-    valid_target(target).then(|| target.to_owned())
-}
-
-pub fn parse_link(link: &str) -> Option<String> {
-    if let Some(target) = link.strip_prefix("blockfield://join/") {
-        return valid_target(target).then(|| target.to_owned());
-    }
-    let url = tauri::Url::parse(link).ok()?;
-    if url.scheme() != format!("discord-{}", crate::presence::application_id())
-        || url.host_str() != Some("join")
-        || !matches!(url.path(), "" | "/")
-        || url.fragment().is_some()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.port().is_some()
-    {
-        return None;
-    }
-    let params: Vec<_> = url.query_pairs().collect();
-    if params.len() != 1 || params[0].0 != "secret" {
-        return None;
-    }
-    parse_secret(&params[0].1)
-}
-
 pub fn receive(app: &tauri::AppHandle, link: &str) {
-    if let Some(target) = parse_link(link) {
+    if let Some(target) = parse_link(link, &crate::presence::application_id()) {
         receive_target(app, &target);
     }
 }
@@ -115,46 +78,4 @@ pub fn join_running_room(id: String, state: State<'_, LauncherAppState>) -> Resu
         return Err("Дождитесь запуска игры".into());
     }
     write_request(&state, &id)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn discord_links_decode_only_the_invite_secret() {
-        assert_eq!(parse_link("blockfield://join/lobby"), Some("lobby".into()));
-        let prefix = format!("discord-{}://join?", crate::presence::application_id());
-        assert_eq!(
-            parse_link(&format!("{prefix}secret=bf1%3Alobby")),
-            Some("lobby".into())
-        );
-        for query in [
-            "secret=bf1:lobby&host=evil",
-            "secret=bf1:lobby&secret=bf1:lobby",
-            "secret=bf2:lobby",
-            "secret=bf1:lobby#evil",
-            "secret=bf1:../../file",
-        ] {
-            assert_eq!(parse_link(&format!("{prefix}{query}")), None);
-        }
-    }
-
-    #[test]
-    fn links_accept_only_room_ids() {
-        let id = "12345678-1234-1234-1234-123456789abc";
-        assert_eq!(
-            parse_link(&format!("blockfield://join/{id}")),
-            Some(id.into())
-        );
-        for suffix in ["?host=evil", "/", "#fragment", "%20", "\n"] {
-            assert!(parse_link(&format!("blockfield://join/{id}{suffix}")).is_none());
-        }
-        for link in [
-            "https://join/1",
-            "blockfield://join/1",
-            "blockfield://join/../../file",
-        ] {
-            assert!(parse_link(link).is_none());
-        }
-    }
 }

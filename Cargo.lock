@@ -358,6 +358,7 @@ dependencies = [
  "flate2",
  "fs2",
  "futures-util",
+ "launcher-core",
  "log",
  "md-5",
  "reqwest",
@@ -2298,6 +2299,19 @@ checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
 dependencies = [
  "bitflags 2.13.2",
  "serde",
+]
+
+[[package]]
+name = "launcher-core"
+version = "1.0.20"
+dependencies = [
+ "directories",
+ "log",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

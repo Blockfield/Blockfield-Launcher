@@ -42,12 +42,9 @@ pub struct GameIdentity {
     pub access_token: String,
 }
 
-pub fn valid_username(name: &str) -> bool {
-    (3..=16).contains(&name.len())
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-}
+// Canonical implementation moved to launcher-core with config validation;
+// re-export keeps every `crate::commands::valid_username` call site unchanged.
+pub use launcher_core::config::valid_username;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
