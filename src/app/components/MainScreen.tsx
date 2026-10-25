@@ -28,6 +28,7 @@ import { listenDownloadProgress, listenLauncherStatus } from '../../lib/events'
 import {
   fetchServerStatus,
   type DownloadProgress,
+  type LauncherConfig,
   type ServerStatus as ServerStatusData,
 } from '../../lib/api'
 import { contentText, localizedContentText, useLauncherContent } from '../../lib/content'
@@ -143,6 +144,16 @@ export function MainScreen({
           }
           if (p.filePath) setLaunchStatus(p.filePath)
         })
+        const { autoUpdate } = await invoke<LauncherConfig>('load_settings')
+        if (autoUpdate) {
+          setLaunchStatus(t('main.checking'))
+          const fresh = await checkModpack(true)
+          // The pack may have changed since the tab's version check; install instead of launching stale files.
+          if (fresh.needsUpdate || !fresh.javaOk || !fresh.loaderOk) {
+            onPlay()
+            return
+          }
+        }
         await launchGame()
         setLaunchStatus(t('main.gameStarted'))
       } catch (e) {
