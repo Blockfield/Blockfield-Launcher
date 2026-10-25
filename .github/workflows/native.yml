@@ -222,7 +222,7 @@ jobs:
           update=""
           if [ "${{ inputs.update_goldens }}" = "true" ]; then update="--e2e-update-goldens"; fi
           fail=0
-          for state in main main-launching offline error settings-skin; do
+          for state in main main-launching offline error settings-skin settings-general settings-runtime settings-commands; do
             dir="$out/$state"
             mkdir -p "$dir"
             echo "=== e2e state=$state ==="
@@ -243,7 +243,7 @@ jobs:
           retention-days: 7
       # Screenshots, diffs and logs for every red Layer 2 run.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: failure()
+        if: failure() || inputs.update_goldens == 'true'
         with:
           name: e2e-${{ runner.os }}-${{ runner.arch }}
           path: native/app/e2e-out

@@ -3,6 +3,7 @@ import { CAPTURE_STATES, FIXED_TIME, fixtureResponse, type CaptureState } from '
 import skin from './skin.png?inline'
 import cape from './cape.png?inline'
 import './capture.css'
+import { driveSettingsScenario, settingsFailure } from './settings'
 
 interface Selection {
   state: CaptureState
@@ -64,7 +65,9 @@ export async function install() {
   })
   const originalError = console.error.bind(console)
   console.error = (...args) => {
-    errors.push(args.map(String).join(' '))
+    const expected = settingsFailure(selection.state, 'save_settings')
+    if (!(expected && args[0] === 'Failed to save settings:' && String(args[1]) === expected))
+      errors.push(args.map(String).join(' '))
     originalError(...args)
   }
   window.addEventListener('error', (event) => errors.push(event.message))
@@ -110,6 +113,8 @@ export async function install() {
       })
       return new Promise(() => {})
     }
+    const expected = settingsFailure(selection.state, command)
+    if (expected) return Promise.reject(expected)
     return fixtureResponse(selection.state, command)
   }) as typeof invoke
   document.documentElement.dataset.captureStatic = String(!selection.motion)
@@ -144,7 +149,7 @@ export async function drive() {
         skin: 'СКИН',
         launcher: 'ЛАУНЧЕР',
       }
-      await until(() => click(tabs[state.slice(9)]!), 'settings tab')
+      await until(() => click(tabs[state.slice(9).split('-')[0]!]!), 'settings tab')
     } else if (state === 'stats') {
       await until(() => click('ТОП', 'nav button'), 'stats navigation')
     } else if (state === 'update-42') {
@@ -153,6 +158,7 @@ export async function drive() {
     } else {
       await until(() => !document.querySelector('#root:empty'), 'root render')
     }
+    await driveSettingsScenario(state, click, until)
     await document.fonts.load('400 16px Inter', 'Capture Привіт')
     await document.fonts.load('400 16px "IBM Plex Mono"', 'Capture Привіт')
     await document.fonts.ready

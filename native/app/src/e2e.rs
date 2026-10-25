@@ -32,6 +32,9 @@ pub fn start(
     golden_dir: PathBuf,
     update: bool,
 ) -> std::io::Result<Timer> {
+    if app.get_active() == 3 && app.get_settings_tab() < 3 {
+        return crate::settings_e2e::start(app, out_dir, golden_dir, update);
+    }
     fs::create_dir_all(&out_dir)?;
     let os = std::env::consts::OS;
     let log_path = out_dir.join("e2e.log");
@@ -209,7 +212,7 @@ fn snapshot_pixels(app: &AppWindow) -> (u32, u32, Vec<u8>) {
 /// Screenshot `name`, compare with `golden_dir/<state-prefix>-<name>.png`
 /// (state is encoded by the caller via out naming), return 0/1 failures.
 /// In update mode the shot is written as the golden candidate instead.
-fn check_shot(
+pub(crate) fn check_shot(
     app: &AppWindow,
     out_dir: &std::path::Path,
     golden_dir: &std::path::Path,

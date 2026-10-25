@@ -33,7 +33,13 @@ pub fn fixtures_requested(args: &[String]) -> bool {
 
 impl Backend {
     pub fn start(self, app: &AppWindow) {
-        let Self::Core(handle) = self else { return };
+        let Self::Core(handle) = self else {
+            crate::settings_fixtures::defaults(app);
+            crate::settings_tabs::wire(app, None);
+            return;
+        };
+        app.global::<crate::SettingsForm>().set_loading(true);
+        app.set_settings_tab(0);
         app.set_show_main(true);
         app.set_dev_build(launcher_core::dev::is_dev_build());
         app.set_update_label("".into());
@@ -76,7 +82,11 @@ impl Backend {
                 }
             };
             (state.events)(LauncherEvent::GameStatus(status_ops::game_status(&state)));
+            let settings_state = state.clone();
+            let settings_handle = Handle::current();
             let _ = weak.upgrade_in_event_loop(move |app| {
+                crate::settings_tabs::apply_response(&app, &settings);
+                crate::settings_tabs::wire(&app, Some((settings_state, settings_handle)));
                 app.set_username(settings["username"].as_str().unwrap_or_default().into());
                 app.set_workshop(settings["activeProfile"] == "workshop");
             });

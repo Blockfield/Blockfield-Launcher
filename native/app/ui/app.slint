@@ -8,8 +8,10 @@ import "../assets/fonts/Inter-600.ttf";
 import "../assets/fonts/Inter-700.ttf";
 import "../assets/fonts/Inter-800.ttf";
 export { SelectSearch, MainMotion } from "main-controls.slint";
+export { SettingsForm, SettingsData } from "settings-model.slint";
 export { WindowActivity } from "controls.slint";
 import { MainScreen, MainData, Room } from "main.slint";
+import { SettingsForm } from "settings-model.slint";
 import { SettingsScreen } from "settings.slint";
 import { Tokens } from "tokens.slint";
 import { WindowChrome, Shell } from "shell.slint";
@@ -22,6 +24,7 @@ export component AppWindow inherits Window {
     in property <[Room]> rooms;
     in property <[string]> room-names;
     in-out property <bool> workshop: false;
+    changed workshop => { SettingsForm.profile(root.workshop); }
     in-out property <int> room-index: 0;
     in-out property <int> details-view: 0;
     in-out property <string> room-message;
@@ -118,6 +121,7 @@ export component AppWindow inherits Window {
                 private property <length> legacy-inset: 1px - 1phx;
                 x: self.legacy-inset; y: self.legacy-inset;
                 width: parent.width - 2 * self.legacy-inset; height: parent.height - Tokens.header-height - Tokens.footer-height - 2 * self.legacy-inset;
+                username: root.username;
                 tabs: root.settings-tabs;
                 tab <=> root.settings-tab;
                 title: root.settings-title;

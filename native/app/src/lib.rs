@@ -5,6 +5,9 @@ pub mod e2e;
 pub mod fixtures;
 pub mod idle_self_check;
 pub mod runtime;
+pub mod settings_e2e;
+pub mod settings_fixtures;
+pub mod settings_tabs;
 pub mod skin;
 pub mod window_activity;
 

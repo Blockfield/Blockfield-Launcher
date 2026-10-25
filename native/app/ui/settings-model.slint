@@ -1,0 +1,32 @@
+export struct SettingsData {
+    game-dir: string, java-path: string, workshop-server: string, workshop: bool,
+    ram: int, max-ram: int, auto-update: bool, discord-presence: bool,
+    hide-while-playing: bool, pre-launch: string, post-exit: string, lang: string,
+}
+
+export global SettingsForm {
+    in-out property <SettingsData> data;
+    in-out property <[int]> presets;
+    in-out property <bool> dirty;
+    in-out property <bool> loading;
+    in-out property <bool> saving;
+    in-out property <bool> saved;
+    in-out property <bool> blocked;
+    in-out property <string> error;
+    in-out property <string> raw-error;
+    in-out property <bool> password-open;
+    in-out property <string> password;
+    in-out property <bool> account-busy;
+    in-out property <string> account-error;
+    in-out property <string> account-raw-error;
+    in-out property <bool> password-changed;
+    callback edited();
+    callback commit-ram(string);
+    callback set-ram(float);
+    callback browse(string);
+    callback profile(bool);
+    callback save();
+    callback reset();
+    callback change-password();
+    callback logout();
+}
