@@ -85,7 +85,7 @@ processes are skipped via their unreadable `/proc` entries.
 
 1. On the GPU machine, idle desktop, charger connected: run the same scenario
    for both builds with identical flags, e.g. `--repeats 5 --duration 20
-   --warmup 5` and the app's real readiness signal.
+--warmup 5` and the app's real readiness signal.
 2. Keep the builds' `git SHA` values from `result.json` for the report.
 3. Compare the pooled `pss_kb` median (target: ≥30% tree-PSS reduction) and
    sustained `cpu_pct`; attach both `summary.md` files to the GO/NO-GO report.

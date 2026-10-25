@@ -1,6 +1,7 @@
 [package]
 name = "launcher-core"
-version = "1.0.20"
+version = "0.0.0"
+publish = false
 edition.workspace = true
 rust-version.workspace = true
 license = "GPL-3.0-only"

@@ -13,35 +13,35 @@ about TypeScript line numbers. Sources can also be retrieved from the versioned
 [skinview-utils package](https://unpkg.com/skinview-utils@0.7.1/build/process.js), and
 [three package](https://unpkg.com/three@0.156.1/examples/jsm/shaders/FXAAShader.js).
 
-| Behaviour | Exact installed source location | Port |
-| --- | --- | --- |
-| Face UV atlas and bottom-face reversal | `skinview3d/libs/model.js:2–37` | `src/model.rs`, `box_vertices` |
-| Box vertex order, normals, triangle winding | `three/src/geometries/BoxGeometry.js:44–49,77–108,128–136` | six planes with the same indexed corners |
-| Opaque inner, transparent double-sided outer, alpha test 1e-5, limb polygon offset 1/1 | `skinview3d/libs/model.js:143–158` | `src/player.wgsl`; separate biased and double-pass pipelines |
-| Head 8³/9³, body 8×12×4/8.5×12.5×4.5 | `skinview3d/libs/model.js:159–183` | `player_parts` |
-| Classic/slim arm widths, offsets and atlas origins | `skinview3d/libs/model.js:184–241` | width 4/3, outer 4.5/3.5, pivot x ±1/±0.5 |
-| Leg pivots and layer sizes | `skinview3d/libs/model.js:242–275` | x ±1.9, y −12, z −0.1, mesh y −6 |
-| Cape size, atlas and mesh offset | `skinview3d/libs/model.js:347–360` | 10×16×1, mesh (0,−8,0.5), atlas 64×32 |
-| Player/skin/cape hierarchy and cape default yaw/pitch | `skinview3d/libs/model.js:485,513–523` | skin y=8; cape (0,8,−2), XYZ rotation (walk pitch,π,0) |
-| Animation speed/progress ordering | `skinview3d/libs/animation.js:70–81` | evaluate at caller's active progress; no dt accumulation |
-| Walking legs, arms, head bob and cape | `skinview3d/libs/animation.js:183–207` | `walking_pose`; natural frequency 8 × speed 0.6 |
-| Ambient 3 and camera point light 0.6 | `skinview3d/libs/viewer.js:74–85,257–262` | no directional light; point position follows orbiting camera |
-| Linear material colors and renderer/composer configuration | `skinview3d/libs/viewer.js:262–300` | raw UNORM textures/target, linear intermediate, transparent clear |
-| Default camera/zoom/FOV | `skinview3d/libs/viewer.js:343–345,647–657` | FOV=50, distance=(4.5+16.5/tan(FOV/2)/0.85), clamp 10..256 |
-| Camera near/far defaults | `three/src/cameras/PerspectiveCamera.js:6–18` | 0.1/2000, right-handed projection with wgpu depth 0..1 |
-| Nearest skin/cape filters | `skinview3d/libs/viewer.js:395–412` | nearest sampler, no mipmaps |
-| Auto-rotate pause/resume during pointer/touch rotation | `skinview3d/libs/viewer.js:370–386,552–555` | explicit press/move/release controls; pause only rotation |
-| OrbitControls defaults and pointer scaling | `three/examples/jsm/controls/OrbitControls.js:64–74,197–206,226–239,664–680` | yaw and polar drag by 2π×delta/height, no damping or zoom |
-| Pause stops requestAnimationFrame | `skinview3d/libs/viewer.js:597–618` | no internal scheduling; README requires caller to stop requesting hidden frames |
-| Legacy limb mirroring and opaque background cleanup | `skinview-utils/build/process.js:16–115` | `src/texture.rs`; same face copy rectangles and clear areas |
-| Cape input layouts | `skinview-utils/build/process.js:117–140` | same atlas padding for integer scales |
-| Automatic slim inference | `skinview-utils/build/process.js:172–229` | four unused regions; transparent OR all black OR all white |
-| MeshStandard defaults | `three/src/materials/MeshStandardMaterial.js:18–20` | roughness 1, metalness 0; dielectric F0 .04 |
-| Inverse-square point falloff | `three/src/renderers/shaders/ShaderChunk/lights_pars_begin.glsl.js:51–79` | .6/max(distance²,.01), no cutoff, current nonlegacy lights |
-| Lambert ambient/direct and GGX direct specular | `three/src/renderers/shaders/ShaderChunk/lights_physical_pars_fragment.glsl.js:66–85,145–190,476–505` | `player.wgsl`; GGX simplifies because roughness=1 and camera/light coincide |
-| Schlick approximation | `three/src/renderers/shaders/ShaderChunk/common.glsl.js:131–140` | dotVH=1, same exp2 approximation |
-| Double-sided transparent drawing | `three/src/renderers/WebGLRenderer.js:1456–1466` | back faces then front faces; alpha blending and depth writes |
-| FXAA, alpha-aware contrast, 5 samples, threshold .2 | `three/examples/jsm/shaders/FXAAShader.js:95–317` | `src/fxaa.wgsl`, same branches and increasing sample distances |
+| Behaviour                                                                              | Exact installed source location                                                                       | Port                                                                            |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Face UV atlas and bottom-face reversal                                                 | `skinview3d/libs/model.js:2–37`                                                                       | `src/model.rs`, `box_vertices`                                                  |
+| Box vertex order, normals, triangle winding                                            | `three/src/geometries/BoxGeometry.js:44–49,77–108,128–136`                                            | six planes with the same indexed corners                                        |
+| Opaque inner, transparent double-sided outer, alpha test 1e-5, limb polygon offset 1/1 | `skinview3d/libs/model.js:143–158`                                                                    | `src/player.wgsl`; separate biased and double-pass pipelines                    |
+| Head 8³/9³, body 8×12×4/8.5×12.5×4.5                                                   | `skinview3d/libs/model.js:159–183`                                                                    | `player_parts`                                                                  |
+| Classic/slim arm widths, offsets and atlas origins                                     | `skinview3d/libs/model.js:184–241`                                                                    | width 4/3, outer 4.5/3.5, pivot x ±1/±0.5                                       |
+| Leg pivots and layer sizes                                                             | `skinview3d/libs/model.js:242–275`                                                                    | x ±1.9, y −12, z −0.1, mesh y −6                                                |
+| Cape size, atlas and mesh offset                                                       | `skinview3d/libs/model.js:347–360`                                                                    | 10×16×1, mesh (0,−8,0.5), atlas 64×32                                           |
+| Player/skin/cape hierarchy and cape default yaw/pitch                                  | `skinview3d/libs/model.js:485,513–523`                                                                | skin y=8; cape (0,8,−2), XYZ rotation (walk pitch,π,0)                          |
+| Animation speed/progress ordering                                                      | `skinview3d/libs/animation.js:70–81`                                                                  | evaluate at caller's active progress; no dt accumulation                        |
+| Walking legs, arms, head bob and cape                                                  | `skinview3d/libs/animation.js:183–207`                                                                | `walking_pose`; natural frequency 8 × speed 0.6                                 |
+| Ambient 3 and camera point light 0.6                                                   | `skinview3d/libs/viewer.js:74–85,257–262`                                                             | no directional light; point position follows orbiting camera                    |
+| Linear material colors and renderer/composer configuration                             | `skinview3d/libs/viewer.js:262–300`                                                                   | raw UNORM textures/target, linear intermediate, transparent clear               |
+| Default camera/zoom/FOV                                                                | `skinview3d/libs/viewer.js:343–345,647–657`                                                           | FOV=50, distance=(4.5+16.5/tan(FOV/2)/0.85), clamp 10..256                      |
+| Camera near/far defaults                                                               | `three/src/cameras/PerspectiveCamera.js:6–18`                                                         | 0.1/2000, right-handed projection with wgpu depth 0..1                          |
+| Nearest skin/cape filters                                                              | `skinview3d/libs/viewer.js:395–412`                                                                   | nearest sampler, no mipmaps                                                     |
+| Auto-rotate pause/resume during pointer/touch rotation                                 | `skinview3d/libs/viewer.js:370–386,552–555`                                                           | explicit press/move/release controls; pause only rotation                       |
+| OrbitControls defaults and pointer scaling                                             | `three/examples/jsm/controls/OrbitControls.js:64–74,197–206,226–239,664–680`                          | yaw and polar drag by 2π×delta/height, no damping or zoom                       |
+| Pause stops requestAnimationFrame                                                      | `skinview3d/libs/viewer.js:597–618`                                                                   | no internal scheduling; README requires caller to stop requesting hidden frames |
+| Legacy limb mirroring and opaque background cleanup                                    | `skinview-utils/build/process.js:16–115`                                                              | `src/texture.rs`; same face copy rectangles and clear areas                     |
+| Cape input layouts                                                                     | `skinview-utils/build/process.js:117–140`                                                             | same atlas padding for integer scales                                           |
+| Automatic slim inference                                                               | `skinview-utils/build/process.js:172–229`                                                             | four unused regions; transparent OR all black OR all white                      |
+| MeshStandard defaults                                                                  | `three/src/materials/MeshStandardMaterial.js:18–20`                                                   | roughness 1, metalness 0; dielectric F0 .04                                     |
+| Inverse-square point falloff                                                           | `three/src/renderers/shaders/ShaderChunk/lights_pars_begin.glsl.js:51–79`                             | .6/max(distance²,.01), no cutoff, current nonlegacy lights                      |
+| Lambert ambient/direct and GGX direct specular                                         | `three/src/renderers/shaders/ShaderChunk/lights_physical_pars_fragment.glsl.js:66–85,145–190,476–505` | `player.wgsl`; GGX simplifies because roughness=1 and camera/light coincide     |
+| Schlick approximation                                                                  | `three/src/renderers/shaders/ShaderChunk/common.glsl.js:131–140`                                      | dotVH=1, same exp2 approximation                                                |
+| Double-sided transparent drawing                                                       | `three/src/renderers/WebGLRenderer.js:1456–1466`                                                      | back faces then front faces; alpha blending and depth writes                    |
+| FXAA, alpha-aware contrast, 5 samples, threshold .2                                    | `three/examples/jsm/shaders/FXAAShader.js:95–317`                                                     | `src/fxaa.wgsl`, same branches and increasing sample distances                  |
 
 Antialiasing is deliberately **one sample + FXAA**, matching upstream's
 WebGLRenderer default (`antialias=false`) and EffectComposer FXAA pass, rather than

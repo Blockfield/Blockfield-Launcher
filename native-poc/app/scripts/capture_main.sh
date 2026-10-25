@@ -2,7 +2,11 @@
 set -eu
 app_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 out=${1:?Usage: capture_main.sh ABSOLUTE_REPORT_DIRECTORY}
-case "$out" in /*) ;; *) echo 'Report path must be absolute' >&2; exit 2 ;; esac
+case "$out" in /*) ;; *)
+    echo 'Report path must be absolute' >&2
+    exit 2
+    ;;
+esac
 for scale in 1 1.25 1.5; do
     for state in main main-launching offline error; do
         "$app_dir/scripts/headless.sh" "$out/$state/${scale}x" "$scale" capture "$state"

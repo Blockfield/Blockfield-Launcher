@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       update_goldens:
-        description: "Write golden candidates instead of comparing (bootstrap only, never gates)"
+        description: 'Write golden candidates instead of comparing (bootstrap only, never gates)'
         required: false
-        default: "false"
+        default: 'false'
 
 permissions:
   contents: read

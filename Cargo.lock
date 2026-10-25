@@ -2303,7 +2303,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-core"
-version = "1.0.20"
+version = "0.0.0"
 dependencies = [
  "directories",
  "log",

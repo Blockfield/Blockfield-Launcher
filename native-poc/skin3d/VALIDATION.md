@@ -35,17 +35,17 @@ GPU scene + FXAA, synchronized readback, row unpacking and straight-alpha conver
 PNG encoding and file writes are excluded. These are POC timings, not a Tauri/Slint
 resource comparison or a GO decision.
 
-| Fixture | Scale / pixels | Mean ms | Median ms | p95 ms | Max ms |
-| --- | --- | ---: | ---: | ---: | ---: |
-| classic | 1.00× / 220x300 | 1.130 | 1.116 | 1.286 | 1.592 |
-| classic | 1.25× / 275x375 | 1.530 | 1.501 | 1.764 | 2.263 |
-| classic | 1.50× / 330x450 | 2.100 | 2.076 | 2.442 | 2.845 |
-| slim | 1.00× / 220x300 | 1.118 | 1.108 | 1.273 | 1.415 |
-| slim | 1.25× / 275x375 | 1.513 | 1.482 | 1.787 | 1.949 |
-| slim | 1.50× / 330x450 | 2.100 | 2.026 | 2.573 | 2.949 |
-| legacy | 1.00× / 220x300 | 1.200 | 1.184 | 1.384 | 1.735 |
-| legacy | 1.25× / 275x375 | 1.453 | 1.417 | 1.734 | 2.992 |
-| legacy | 1.50× / 330x450 | 1.906 | 1.872 | 2.187 | 2.434 |
+| Fixture | Scale / pixels  | Mean ms | Median ms | p95 ms | Max ms |
+| ------- | --------------- | ------: | --------: | -----: | -----: |
+| classic | 1.00× / 220x300 |   1.130 |     1.116 |  1.286 |  1.592 |
+| classic | 1.25× / 275x375 |   1.530 |     1.501 |  1.764 |  2.263 |
+| classic | 1.50× / 330x450 |   2.100 |     2.076 |  2.442 |  2.845 |
+| slim    | 1.00× / 220x300 |   1.118 |     1.108 |  1.273 |  1.415 |
+| slim    | 1.25× / 275x375 |   1.513 |     1.482 |  1.787 |  1.949 |
+| slim    | 1.50× / 330x450 |   2.100 |     2.026 |  2.573 |  2.949 |
+| legacy  | 1.00× / 220x300 |   1.200 |     1.184 |  1.384 |  1.735 |
+| legacy  | 1.25× / 275x375 |   1.453 |     1.417 |  1.734 |  2.992 |
+| legacy  | 1.50× / 330x450 |   1.906 |     1.872 |  2.187 |  2.434 |
 
 ## Evidence and remaining work
 

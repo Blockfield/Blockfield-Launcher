@@ -7,7 +7,6 @@ whole process tree for --duration seconds after --warmup, via /bench.py."""
 import json
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 from urllib.parse import urlencode
@@ -237,9 +236,7 @@ def main():
                         )
                 except OSError:
                     evidence["containerCpus"] = None
-                evidence["bench"] = json.loads(
-                    Path("/capture/bench.json").read_text()
-                )
+                evidence["bench"] = json.loads(Path("/capture/bench.json").read_text())
                 return evidence
     finally:
         for process in reversed(children):
