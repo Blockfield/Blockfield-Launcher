@@ -9,5 +9,29 @@ class MetricsTests(unittest.TestCase):
         self.assertEqual(cpu_delta(before, after), 3)
 
 
+
+class AttributionTests(unittest.TestCase):
+    def test_macos_adds_only_new_webkit_identities(self):
+        import sys
+        from unittest.mock import Mock, patch
+        from xplat_metrics import tree
+        def process(pid, name):
+            p = Mock(pid=pid)
+            p.create_time.return_value = 10
+            p.name.return_value = name
+            p.cmdline.return_value = [name]
+            return p
+        root = process(1, 'app')
+        child = process(2, 'child')
+        root.children.return_value = [child]
+        old = process(3, 'com.apple.WebKit.WebContent')
+        new = process(4, 'com.apple.WebKit.Networking')
+        unrelated = process(5, 'other')
+        fake = Mock()
+        fake.process_iter.return_value = [old, new, unrelated]
+        with patch.dict(sys.modules, {'psutil': fake}), patch('xplat_metrics.sys.platform', 'darwin'):
+            self.assertEqual([p.pid for p in tree(root, {(3, 10)})], [1, 2, 4])
+
+
 if __name__ == '__main__':
     unittest.main()

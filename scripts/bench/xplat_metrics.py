@@ -1,7 +1,6 @@
 """Runner-only process accounting. Requires psutil; raw process identities are retained."""
 import sys
 
-import psutil
 
 
 def identity(process):
@@ -15,9 +14,13 @@ def webkit(process):
 
 
 def tree(root, baseline):
+    import psutil
     processes = {root.pid: root}
-    for process in root.children(recursive=True):
-        processes[process.pid] = process
+    try:
+        for process in root.children(recursive=True):
+            processes[process.pid] = process
+    except psutil.NoSuchProcess:
+        pass
     if sys.platform == 'darwin':
         # XPC WebKit services are launchd children, not descendants of the Tauri PID.
         for process in psutil.process_iter():
@@ -30,6 +33,7 @@ def tree(root, baseline):
 
 
 def sample(root, baseline):
+    import psutil
     rows = []
     for process in tree(root, baseline):
         try:

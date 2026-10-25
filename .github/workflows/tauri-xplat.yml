@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CARGO_BUILD_JOBS: 4
+  PYTHONUTF8: '1'
 
 jobs:
   baseline:
@@ -55,8 +56,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: tauri-xplat-${{ matrix.os }}
+          cache-on-failure: true
           workspaces: |
-            .cache/capture/xplat/src-tauri -> target
+            .cache/capture/xplat -> target
             native-poc/app -> target
       - name: Linux dependencies and isolated display
         if: runner.os == 'Linux'
@@ -132,7 +134,7 @@ jobs:
         timeout-minutes: 10
         run: |
           set -euo pipefail
-          exe=.cache/capture/xplat/src-tauri/target/release/blockfield-launcher
+          exe=.cache/capture/xplat/target/release/blockfield-launcher
           if [ "$RUNNER_OS" = Windows ]; then exe=$exe.exe; fi
           if [ "$RUNNER_OS" = Linux ]; then
             xvfb-run -a -s '-screen 0 1920x1080x24 -dpi 96' python scripts/capture/xplat.py --mode capture --tauri "$exe" --slint unused --out xplat-out/captures
@@ -142,7 +144,7 @@ jobs:
       - name: Build Slint release from same commit
         id: slint_build
         timeout-minutes: 30
-        if: success() || failure()
+        if: always() && steps.tauri_build.outcome == 'success'
         working-directory: native-poc/app
         run: cargo build --locked --release
       - name: Matched resource benchmark
@@ -150,7 +152,7 @@ jobs:
         timeout-minutes: 12
         run: |
           set -euo pipefail
-          tauri=.cache/capture/xplat/src-tauri/target/release/blockfield-launcher
+          tauri=.cache/capture/xplat/target/release/blockfield-launcher
           slint=native-poc/app/target/release/blockfield-native-poc
           if [ "$RUNNER_OS" = Windows ]; then tauri=$tauri.exe; slint=$slint.exe; fi
           if [ "$RUNNER_OS" = Linux ]; then
@@ -165,6 +167,17 @@ jobs:
           python scripts/capture/xplat_report.py --out xplat-out --goldens native-poc/app/tests/golden/${{ matrix.platform }} | tee -a "$GITHUB_STEP_SUMMARY"
           cp .cache/capture/fonts/sources.json xplat-out/font-sources.json
           git rev-parse HEAD > xplat-out/commit.txt
+          python - <<'PY'
+          import hashlib, json, os, platform, subprocess
+          from pathlib import Path
+          binaries = [*Path('.cache/capture/xplat/target/release').glob('blockfield-launcher*'),
+                      *Path('native-poc/app/target/release').glob('blockfield-native-poc*')]
+          info = dict(os=platform.platform(), cpu_count=os.cpu_count(), processor=platform.processor(),
+                      rustc=subprocess.check_output(['rustc', '-vV'], text=True),
+                      python=platform.python_version(), node=subprocess.check_output(['node', '--version'], text=True),
+                      binaries={str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in binaries if p.is_file() and p.suffix in ('', '.exe')})
+          Path('xplat-out/environment.json').write_text(json.dumps(info, indent=2))
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:

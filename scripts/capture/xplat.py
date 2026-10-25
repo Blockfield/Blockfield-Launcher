@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import statistics
 import subprocess
 import sys
@@ -60,11 +61,13 @@ def launch(app, state, motion, args, directory):
     for p in psutil.process_iter():
         try:
             baseline.add(identity(p))
-        except psutil.NoSuchProcess:
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
     env = dict(os.environ, SLINT_BACKEND='winit-software', SLINT_SCALE_FACTOR='1',
                LIBGL_ALWAYS_SOFTWARE='1', GDK_SCALE='1', GDK_DPI_SCALE='1',
                WEBKIT_DISABLE_DMABUF_RENDERER='1', TZ='UTC')
+    (directory / 'baseline-processes.json').write_text(json.dumps(dict(
+        captured_at=time.time(), identities=sorted(baseline)), indent=2))
     config = config_path()
     with tempfile.TemporaryDirectory(prefix='blockfield-xplat-') as temporary:
         if app == 'tauri':
@@ -84,7 +87,8 @@ def launch(app, state, motion, args, directory):
             try:
                 def ready():
                     if app == 'slint':
-                        return 'READY pid=' in (directory / 'app.log').read_text(errors='replace')
+                        text = (directory / 'app.log').read_text(errors='replace')
+                        return bool(re.search(r'^READY pid=\d+ time=', text, re.MULTILINE)) if state == 'settings-skin' else 'READY pid=' in text
                     try:
                         lang = json.loads(config.read_text()).get('lang', '')
                     except (ValueError, FileNotFoundError):
@@ -100,9 +104,11 @@ def launch(app, state, motion, args, directory):
                     (directory / 'proof.json').write_text(json.dumps(evidence, indent=2))
                 yield root, baseline, tracked
             finally:
-                if process.poll() is None:
-                    for child in tree(root, baseline):
+                for child in tree(root, baseline):
+                    try:
                         tracked[identity(child)] = child
+                    except psutil.NoSuchProcess:
+                        pass
                 # Only launch-owned identities, including newly spawned WebKit XPC helpers.
                 for key, child in reversed(list(tracked.items())):
                     try:
