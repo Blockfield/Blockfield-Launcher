@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { CAPTURE_STATES, FIXED_TIME, fixtureResponse, type CaptureState } from './data'
 import skin from './skin.png?inline'
 import cape from './cape.png?inline'
+import './capture.css'
 
 interface Selection {
   state: CaptureState
@@ -19,6 +20,7 @@ const events = new Map<number, string>()
 const errors: string[] = []
 let selection: Selection
 let nativeConfig: Record<string, unknown>
+let drawCalls = 0
 
 function emit(event: string, payload: unknown) {
   for (const [handler, name] of events) {
@@ -36,9 +38,22 @@ export async function install() {
         scale: Number(params.get('scale') ?? 1),
         motion: params.get('motion') === '1',
       }
-    : (JSON.parse(String(nativeConfig.username)) as Selection)
+    : (JSON.parse(
+        String(nativeConfig.lang).startsWith('capture-selection:')
+          ? String(nativeConfig.lang).slice('capture-selection:'.length)
+          : String(nativeConfig.username),
+      ) as Selection)
   if (!CAPTURE_STATES.includes(selection.state)) throw new Error('Unknown capture state')
   await nativeInvoke('plugin:webview|set_webview_zoom', { label: 'main', value: selection.scale })
+  if (selection.motion) {
+    for (const prototype of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
+      const draw = prototype.drawElements
+      prototype.drawElements = function (...args: Parameters<typeof draw>) {
+        drawCalls++
+        return draw.apply(this, args)
+      }
+    }
+  }
   if (!selection.motion)
     Object.defineProperty(performance, 'now', { configurable: true, value: () => 1000 })
   localStorage.clear()
@@ -97,14 +112,7 @@ export async function install() {
     }
     return fixtureResponse(selection.state, command)
   }) as typeof invoke
-  const style = document.createElement('style')
-  style.textContent = `* {caret-color: transparent !important;}${
-    selection.motion
-      ? ''
-      : '* {animation-play-state: paused !important; transition: none !important;}'
-  }
-    `
-  document.head.append(style)
+  document.documentElement.dataset.captureStatic = String(!selection.motion)
 }
 
 async function until(check: () => boolean, label: string) {
@@ -184,6 +192,8 @@ export async function drive() {
             effectiveLanguage: 'ru',
             scale: selection.scale,
             motion: selection.motion,
+            drawCalls,
+            visibility: document.visibilityState,
             viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
             fonts: {
               inter: document.fonts.check('400 16px Inter', 'Capture Привіт'),
@@ -203,6 +213,18 @@ export async function drive() {
           }),
       },
     })
+    if (selection.motion) {
+      setTimeout(() => {
+        void nativeInvoke('save_settings', {
+          config: {
+            ...nativeConfig,
+            lang:
+              'capture-motion:' +
+              JSON.stringify({ drawCalls, visibility: document.visibilityState }),
+          },
+        })
+      }, 25_000)
+    }
   } catch (error) {
     await nativeInvoke('save_settings', {
       config: { ...nativeConfig, lang: 'capture-failed:' + String(error) },

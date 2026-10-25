@@ -1,0 +1,9 @@
+/* External capture CSS survives native CSP without relaxing the shipped policy. */
+* {
+  caret-color: transparent !important;
+}
+
+html[data-capture-static='true'] * {
+  animation-play-state: paused !important;
+  transition: none !important;
+}
