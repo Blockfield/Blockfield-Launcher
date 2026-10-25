@@ -4,13 +4,17 @@ use crate::pack::{self, JavaInfo};
 use crate::status::ServerStatus;
 // Moved to launcher-app (phase 2, no behaviour change); re-export keeps every
 // `crate::commands::…` call site unchanged.
+use launcher_app::ops::java::{
+    find_bin_java, java_runtime_ready, resolved_java_path, system_java_available,
+};
+use launcher_app::ops::pack_check::{pack_base_url, INSTALLED_VERSION_FILE};
+pub use launcher_app::ops::settings::SettingsResponse;
 use launcher_app::EventSink;
-pub use launcher_app::{GameIdentity, LauncherAppState, PackState, VersionCheckResult};
+pub use launcher_app::{GameIdentity, LauncherAppState, VersionCheckResult};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-const INSTALLED_VERSION_FILE: &str = ".blockfield-pack-version";
 const INSTALLER_JAR: &str = "packwiz-installer.jar";
 const BOOTSTRAP_JAR: &str = "packwiz-installer-bootstrap.jar";
 
@@ -23,139 +27,11 @@ fn emit_status(
     events(LauncherAppState::status_event(phase, message, cancelable));
 }
 
-fn java_exe_name() -> &'static str {
-    if cfg!(windows) {
-        "javaw.exe"
-    } else {
-        "java"
-    }
-}
-
-fn bundled_java_path(game_dir: impl AsRef<Path>) -> Option<PathBuf> {
-    let java_dir = game_dir.as_ref().join("java");
-    let direct = java_dir.join("bin").join(java_exe_name());
-    if direct.exists() {
-        return Some(direct);
-    }
-
-    find_bin_java(&java_dir)
-}
-
-fn find_bin_java(dir: &Path) -> Option<PathBuf> {
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if is_bin_java(&path) {
-                return Some(path);
-            }
-        }
-    }
-    None
-}
-
-fn is_bin_java(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case(java_exe_name()))
-        && path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("bin"))
-}
-
-fn java_runtime_ready(game_dir: &Path, version: &str) -> bool {
-    let java_ver_path = game_dir.join("java").join(".version");
-    matches!(std::fs::read_to_string(&java_ver_path), Ok(v) if v.trim() == version)
-        && bundled_java_path(game_dir).is_some()
-}
-
-fn resolved_java_path(config: &LauncherConfig) -> String {
-    let configured = config.java_path.trim();
-    if !configured.is_empty() {
-        let mut path = PathBuf::from(configured);
-        if !path.exists() {
-            // User pointed at java.exe — try javaw.exe next to it
-            if let Some(javaw) = try_javaw(&path) {
-                path = javaw;
-            }
-        }
-        if path.exists() {
-            return path.to_string_lossy().to_string();
-        }
-    }
-
-    bundled_java_path(&config.game_dir)
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_else(|| java_exe_name().to_string())
-}
-
-/// If `path` ends with `java.exe`, return `javaw.exe` in the same directory.
-fn try_javaw(path: &Path) -> Option<PathBuf> {
-    if cfg!(windows)
-        && path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.eq_ignore_ascii_case("java.exe"))
-    {
-        let javaw = path.with_file_name("javaw.exe");
-        if javaw.exists() {
-            return Some(javaw);
-        }
-    }
-    None
-}
-
-fn system_java_available() -> bool {
-    crate::host_env::command("java")
-        .arg("-version")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok()
-}
-
 // ── Settings commands ──────────────────────────────────────────
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SettingsResponse {
-    #[serde(flatten)]
-    config: LauncherConfig,
-    max_ram_mb: u32,
-}
 
 #[tauri::command]
 pub fn load_settings(state: State<'_, LauncherAppState>) -> Result<SettingsResponse, String> {
-    Ok(settings_response(state.config.blocking_read().active()))
-}
-
-fn settings_response(mut config: LauncherConfig) -> SettingsResponse {
-    for secret in [
-        &mut config.access_token,
-        &mut config.client_token,
-        &mut config.api_token,
-        &mut config.skin_password,
-    ] {
-        secret.clear();
-    }
-    // Auto-detect bundled Java if path is empty
-    if config.java_path.is_empty() {
-        if let Some(bundled) = bundled_java_path(&config.game_dir) {
-            config.java_path = bundled.to_string_lossy().to_string();
-        }
-    }
-    SettingsResponse {
-        config,
-        max_ram_mb: crate::config::max_ram_mb(),
-    }
+    launcher_app::ops::settings::load_settings(&state)
 }
 
 #[tauri::command]
@@ -163,19 +39,7 @@ pub async fn select_profile(
     profile: ClientProfile,
     state: State<'_, LauncherAppState>,
 ) -> Result<SettingsResponse, String> {
-    let _operation = state
-        .operation
-        .try_lock()
-        .map_err(|_| "Дождитесь завершения текущей операции.")?;
-    if state.game.is_busy() {
-        return Err("Закройте игру перед сменой профиля.".into());
-    }
-    let mut current = state.config.write().await;
-    let mut updated = current.clone();
-    updated.active_profile = profile;
-    crate::config::save_config(&state.app_data_dir, &updated)?;
-    *current = updated;
-    Ok(settings_response(current.active()))
+    launcher_app::ops::settings::select_profile(&state, profile).await
 }
 
 #[tauri::command]
@@ -184,120 +48,34 @@ pub fn save_settings(
     state: State<'_, LauncherAppState>,
     config: LauncherConfig,
 ) -> Result<(), String> {
-    let _operation = state
-        .operation
-        .try_lock()
-        .map_err(|_| "Дождитесь завершения текущей операции.")?;
-    if state.game.is_busy() {
-        return Err("Закройте игру перед изменением настроек.".into());
-    }
     let app_data_dir = app_handle
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
-    let mut current = state.config.blocking_write();
-    if config.active_profile != current.active_profile {
-        return Err("Профиль изменился. Откройте настройки заново.".into());
-    }
-    let directory = config.game_dir.clone();
-    let java = config.java_path.clone();
-    if java.trim() != current.active().java_path.trim()
-        && !java.trim().is_empty()
-        && !Path::new(java.trim()).is_file()
-    {
-        return Err("Selected Java executable does not exist".to_string());
-    }
-    // The settings form does not own the account.
-    let mut config = LauncherConfig {
-        workshop_server: config.workshop_server,
-        ram_mb: config.ram_mb,
-        auto_update: config.auto_update,
-        lang: config.lang,
-        pre_launch_command: config.pre_launch_command,
-        post_exit_command: config.post_exit_command,
-        hide_while_playing: config.hide_while_playing,
-        discord_presence: config.discord_presence,
-        ..current.clone()
-    };
-    config.set_active_paths(directory, java);
-    crate::config::save_config(&app_data_dir, &config)?;
-    *current = config;
-    Ok(())
+    launcher_app::ops::settings::save_settings(&state, &app_data_dir, config)
 }
 
 // ── Modpack commands ───────────────────────────────────────────
-
-/// The marker holds the installed `[index] hash`, then the pack version for display.
-/// Older markers hold only the version, so they mismatch once and trigger one update.
-fn installed_pack(game_dir: &Path) -> (String, String) {
-    let marker = std::fs::read_to_string(game_dir.join(INSTALLED_VERSION_FILE)).unwrap_or_default();
-    let mut lines = marker.lines().map(str::trim).filter(|l| !l.is_empty());
-    let hash = lines.next().unwrap_or("none").to_string();
-    let version = lines.next().map_or_else(|| hash.clone(), String::from);
-    (hash, version)
-}
 
 #[tauri::command]
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
 ) -> Result<VersionCheckResult, String> {
-    let base = pack_base_url()?;
-    let info = pack::fetch_launcher_info(&base).await?;
-    let meta = pack::fetch_pack_meta(&info.pack).await?;
-
-    // No operation lock across the network fetches above: holding it there
-    // starves select_profile/save_settings (and the UI retry that waits on a
-    // busy->idle game transition) whenever a probe is in flight. The lock only
-    // guards the pack-state write below.
-    let _operation = state
-        .operation
-        .try_lock()
-        .map_err(|_| "Дождитесь завершения текущей операции.")?;
-    let config = state.config.read().await.active();
-    let game_dir = PathBuf::from(&config.game_dir);
-    let (installed_hash, installed) = installed_pack(&game_dir);
-    // A frozen dev pack must not turn "Играть" into "Обновить": the developer manages these files.
-    let needs_update = installed_hash != meta.index_hash && !crate::dev::freeze_pack();
-    log::info!(
-        "[check_modpack_version] pack={} remote={} installed={} needs_update={needs_update}",
-        info.pack,
-        meta.version,
-        installed
-    );
-
-    let java = info.java_for_this_platform();
-    let java_ok = java
-        .as_ref()
-        .is_none_or(|java| java_runtime_ready(&game_dir, &java.version));
-
-    let loader_ok = match &meta.loader {
-        Some(loader) => {
-            let id = crate::minecraft::loader_version_id(&meta.minecraft, loader);
-            crate::minecraft::loader_profile_exists(&game_dir, &id)
-                && crate::minecraft::has_launch_dependencies(&game_dir, &meta.minecraft, Some(&id))
+    launcher_app::ops::pack_check::check_modpack_version(&state, |game_dir, meta| {
+        match &meta.loader {
+            Some(loader) => {
+                let id = crate::minecraft::loader_version_id(&meta.minecraft, loader);
+                crate::minecraft::loader_profile_exists(game_dir, &id)
+                    && crate::minecraft::has_launch_dependencies(
+                        game_dir,
+                        &meta.minecraft,
+                        Some(&id),
+                    )
+            }
+            None => crate::minecraft::has_launch_dependencies(game_dir, &meta.minecraft, None),
         }
-        None => crate::minecraft::has_launch_dependencies(&game_dir, &meta.minecraft, None),
-    };
-
-    let result = VersionCheckResult {
-        needs_update,
-        remote_version: meta.version.clone(),
-        // Same files as published = same client version. The marker keeps the version seen at the last
-        // install, and a pack reinstalled while a server-only release was live carried that release's number.
-        installed_version: if installed_hash == meta.index_hash {
-            meta.version.clone()
-        } else {
-            installed
-        },
-        mirror: base,
-        file_count: 0,
-        total_size: 0,
-        java,
-        java_ok,
-        loader_ok,
-    };
-    *state.pack.write().await = Some(PackState { info, meta });
-    Ok(result)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -975,20 +753,6 @@ pub fn dev_status() -> Option<crate::dev::DevStatus> {
 
 // ── Helpers ────────────────────────────────────────────────────
 
-/// Base URL of the hosted packwiz pack (directory containing pack.toml and launcher.json).
-fn pack_base_url() -> Result<String, String> {
-    let url = std::env::var("VITE_BLOCKFIELD_PACK_URL")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| option_env!("VITE_BLOCKFIELD_PACK_URL").map(String::from))
-        .ok_or_else(|| "VITE_BLOCKFIELD_PACK_URL is required".to_string())?;
-    let url = url.trim().trim_end_matches('/').to_string();
-    if !url.starts_with("https://") && !(cfg!(debug_assertions) && url.starts_with("http://")) {
-        return Err("VITE_BLOCKFIELD_PACK_URL must use https".to_string());
-    }
-    Ok(url)
-}
-
 fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
     if value.is_empty() || value.starts_with(['/', '\\']) || value.contains('\\') {
         return Err("path must be a non-empty relative path using '/' separators".to_string());
@@ -1262,6 +1026,7 @@ fn archive_limits() -> blockfield_shared::ArchiveLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use launcher_app::ops::java::java_exe_name;
     use std::io::Write;
 
     #[test]
@@ -1309,28 +1074,6 @@ mod tests {
             .unwrap();
         writer.write_all(contents).unwrap();
         writer.finish().unwrap();
-    }
-
-    #[test]
-    fn bundled_java_path_finds_nested_bin_java() {
-        let id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("blockfield-java-test-{}-{id}", std::process::id()));
-        let exe = root
-            .join("java")
-            .join("jdk-21")
-            .join("bin")
-            .join(java_exe_name());
-
-        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
-        std::fs::write(&exe, b"").unwrap();
-
-        assert_eq!(bundled_java_path(&root), Some(exe));
-
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
