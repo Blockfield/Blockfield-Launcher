@@ -2,6 +2,13 @@ use blockfield_native_poc::{AppWindow, fixtures, idle_self_check, skin};
 use slint::ComponentHandle;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Partial rendering is opt-in upstream but pixel-identical here (u10: AE=0 on
+    // captures; real-GPU run with the flag); default it on so GPU-less GL/llvmpipe
+    // setups do not repaint the whole window every animation frame.
+    if std::env::var_os("SLINT_SKIA_PARTIAL_RENDERING").is_none() {
+        // SAFETY: single-threaded before any thread spawn.
+        unsafe { std::env::set_var("SLINT_SKIA_PARTIAL_RENDERING", "1") };
+    }
     slint::BackendSelector::new()
         .backend_name("winit".into())
         .select()?;

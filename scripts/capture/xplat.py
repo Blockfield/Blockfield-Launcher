@@ -69,6 +69,18 @@ def validate(evidence, state, motion):
 
 
 @contextmanager
+def slint_backend(bench):
+    if not bench:
+        # Captures stay on the plain software renderer: bit-stable, matches goldens.
+        return "winit-software"
+    # Bench measures the shipped fallback config, not the slowest rasterizer (u33):
+    # Skia CPU raster with partial rendering where no GPU exists; full Skia
+    # (Metal/GL with software fallback) on macOS where Skia works.
+    if sys.platform == "darwin":
+        return "winit-skia"
+    return "winit-skia-software"
+
+
 def launch(app, state, motion, args, directory):
     directory.mkdir(parents=True, exist_ok=True)
     baseline = set()
@@ -79,8 +91,9 @@ def launch(app, state, motion, args, directory):
             pass
     env = dict(
         os.environ,
-        SLINT_BACKEND="winit-software",
+        SLINT_BACKEND=slint_backend(motion),
         SLINT_SCALE_FACTOR="1",
+        SLINT_SKIA_PARTIAL_RENDERING="1",
         LIBGL_ALWAYS_SOFTWARE="1",
         GDK_SCALE="1",
         GDK_DPI_SCALE="1",
@@ -377,7 +390,7 @@ def main():
             mac_attribution="descendants + WebKit XPC identities absent before app launch; isolated sequential spawn window",
             limits="macOS RSS fallback, not phys_footprint; exited helpers CPU between samples can be missed; no GPU memory",
             renderers=dict(
-                slint="winit-software; skin wgpu adapter in app.log",
+                slint="bench: winit-skia-software (winit-skia on macOS); captures: winit-software; skin wgpu adapter in app.log",
                 tauri="WebView2/WKWebView/WebKitGTK; WebGL renderer in skin proof.json",
             ),
             runs=[],
