@@ -1,4 +1,4 @@
-use blockfield_native::{AppWindow, fixtures, idle_self_check, skin};
+use blockfield_native::{AppWindow, backend, fixtures, idle_self_check, runtime, skin};
 use slint::ComponentHandle;
 
 // Resident set size in KiB (Linux only; None elsewhere) for the RENDERER_PROBE cost line.
@@ -15,7 +15,47 @@ fn rss_kb() -> Option<u64> {
     None
 }
 
+fn probe_renderer() -> Result<bool, Box<dyn std::error::Error>> {
+    use std::{
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    let mut child = launcher_core::host_env::command(std::env::current_exe()?)
+        .arg("--renderer-probe")
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while child.try_wait()?.is_none() {
+        if Instant::now() >= deadline {
+            child.kill()?;
+            child.wait()?;
+            return Err("Renderer probe timed out".into());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        return Err("Renderer probe failed".into());
+    }
+    match std::str::from_utf8(&output.stdout)?.trim() {
+        "software" => Ok(true),
+        "hardware" => Ok(false),
+        _ => Err("Invalid renderer probe response".into()),
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--renderer-probe") {
+        println!(
+            "{}",
+            if skin3d::software_adapter_only() {
+                "software"
+            } else {
+                "hardware"
+            }
+        );
+        return Ok(());
+    }
     // Partial rendering is opt-in upstream but pixel-identical here (u10: AE=0 on
     // captures; real-GPU run with the flag); default it on so GPU-less GL/llvmpipe
     // setups do not repaint the whole window every animation frame.
@@ -28,12 +68,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (llvmpipe, WARP) Skia GL rasters on the CPU behind a per-frame texture
     // upload (u33: settings-skin +30% vs plain software), so ask for Skia CPU
     // raster directly; real GPUs keep Skia GL/Metal/D3D. Probe objects are
-    // dropped before the UI is created; cost is logged as RENDERER_PROBE.
+    // confined to a child process; cost is logged as RENDERER_PROBE.
     let mut selector = slint::BackendSelector::new().backend_name("winit".into());
     if std::env::var_os("SLINT_BACKEND").is_none() {
         let probe_start = std::time::Instant::now();
         let rss_before = rss_kb();
-        let software = skin3d::software_adapter_only();
+        let software = probe_renderer().unwrap_or_else(|error| {
+            eprintln!("{error}; using software renderer");
+            true
+        });
         let rss_after = rss_kb();
         eprintln!(
             "RENDERER_PROBE software_only={software} elapsed_ms={} rss_delta_kb={}",
@@ -46,7 +89,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     selector.select()?;
     let app = AppWindow::new()?;
-    let (skin_host, activity) = blockfield_native::wire_app(&app)?;
     let mut state = std::env::var("BLOCKFIELD_CAPTURE_STATE").unwrap_or_else(|_| "main".into());
     let mut scenario = "default".to_string();
     let mut capture_dir = None;
@@ -54,9 +96,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut e2e_golden = None;
     let mut e2e_update = false;
     let mut idle_seconds = None;
+    let mut dev = false;
     let mut self_check = false;
     let mut idle_self_check_flag = false;
-    let mut args = std::env::args().skip(1);
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let use_fixtures = backend::fixtures_requested(&args);
+    let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--capture-dir" => capture_dir = Some(args.next().ok_or("--capture-dir needs a path")?),
@@ -77,14 +122,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .set_enabled(false),
             "--self-check" => self_check = true,
             "--idle-self-check" => idle_self_check_flag = true,
-            "--dev" => app.set_dev_build(true),
+            "--dev" => dev = true,
             _ => return Err(format!("Unknown argument: {arg}").into()),
         }
     }
-    if state == "settings-skin" {
-        fixtures::apply_settings(&app)?;
-    } else {
-        fixtures::apply_main(&app, &state, &scenario)?;
+    let runtime = (!use_fixtures).then(runtime::new).transpose()?;
+    let backend = match &runtime {
+        Some(runtime) => backend::Backend::Core(runtime.handle().clone()),
+        None => backend::Backend::Fixtures,
+    };
+    let (skin_host, activity) = blockfield_native::wire_app(&app, backend)?;
+    if dev {
+        app.set_dev_build(true);
+    }
+    if use_fixtures {
+        if state == "settings-skin" {
+            fixtures::apply_settings(&app)?;
+        } else {
+            fixtures::apply_main(&app, &state, &scenario)?;
+        }
     }
     if self_check {
         skin::arm_self_check(&app, &skin_host);
@@ -114,6 +170,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.show()?;
     skin::sync_visibility(&app, &skin_host);
     println!("READY pid={}", std::process::id());
-    app.run()?;
+    let result = app.run();
+    if let Some(runtime) = runtime {
+        runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+    }
+    result?;
     Ok(())
 }
