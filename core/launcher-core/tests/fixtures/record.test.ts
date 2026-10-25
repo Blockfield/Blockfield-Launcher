@@ -22,9 +22,9 @@ vi.mock('@tauri-apps/api/path', async () => {
   return { join: (...parts: string[]) => Promise.resolve(posix.join(...parts)) }
 })
 
-import { friendlyError } from '../../../../../src/lib/errors'
-import { selectedGameDirectory } from '../../../../../src/lib/game-directory'
-import { clampRamGb, ramLimitGb } from '../../../../../src/lib/ram'
+import { friendlyError } from '@/lib/errors'
+import { selectedGameDirectory } from '@/lib/game-directory'
+import { clampRamGb, ramLimitGb } from '@/lib/ram'
 import {
   displayRank,
   formatBattles,
@@ -32,9 +32,9 @@ import {
   formatMmr,
   formatMmrRange,
   formatScore,
-} from '../../../../../src/lib/stats'
-import { isValidUsername, USERNAME_HINT } from '../../../../../src/lib/username'
-import { hasWorkshopAccess, WORKSHOP_ROLES } from '../../../../../src/lib/workshop'
+} from '@/lib/stats'
+import { isValidUsername, USERNAME_HINT } from '@/lib/username'
+import { hasWorkshopAccess, WORKSHOP_ROLES } from '@/lib/workshop'
 
 const OUT = dirname(fileURLToPath(import.meta.url))
 const BASE = 'b4583ca'
