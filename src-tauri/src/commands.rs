@@ -27,6 +27,22 @@ fn emit_status(
     events(LauncherAppState::status_event(phase, message, cancelable));
 }
 
+/// Status sink for the core minecraft runtime: produces exactly today's
+/// `launcher://status` payload (`{"phase", "message", "cancelable"}`).
+fn minecraft_status_sink(app_handle: &AppHandle) -> crate::minecraft::StatusSink {
+    let app_handle = app_handle.clone();
+    std::sync::Arc::new(move |phase: &str, message: &str, cancelable: bool| {
+        let _ = app_handle.emit(
+            "launcher://status",
+            serde_json::json!({
+                "phase": phase,
+                "message": message,
+                "cancelable": cancelable,
+            }),
+        );
+    })
+}
+
 // ── Settings commands ──────────────────────────────────────────
 
 #[tauri::command]
@@ -187,9 +203,10 @@ pub async fn download_modpack(
     )
     .await?;
     state.downloader.set_grand_total(runtime_bytes);
+    let runtime_status = minecraft_status_sink(&app_handle);
     crate::minecraft::ensure_launch_dependencies(
         &state.downloader,
-        &app_handle,
+        &runtime_status,
         &game_dir,
         &pack.meta.minecraft,
         loader_version_id.as_deref(),
@@ -619,9 +636,10 @@ pub async fn launch_game(
         // Floor so the frontend always has a non-zero denominator for progress.
         state.downloader.set_grand_total(16 * 1024 * 1024);
         emit_status(&state.events, "launch", "Проверка компонентов игры", false);
+        let launch_status = minecraft_status_sink(&app_handle);
         crate::minecraft::ensure_launch_dependencies(
             &state.downloader,
-            &app_handle,
+            &launch_status,
             &game_dir_path,
             &minecraft_version,
             loader_version_id.as_deref(),
@@ -641,6 +659,8 @@ pub async fn launch_game(
         loader_version_id.as_deref(),
         &identity,
         quick_play.as_deref(),
+        // Launcher crate version, not launcher-net's internal 0.0.0.
+        env!("CARGO_PKG_VERSION"),
     )?;
 
     if !config.pre_launch_command.trim().is_empty() {

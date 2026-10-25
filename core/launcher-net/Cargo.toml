@@ -5,7 +5,7 @@ publish = false
 edition.workspace = true
 rust-version.workspace = true
 license = "GPL-3.0-only"
-description = "Tauri-independent network layer of the Blockfield Launcher (status, pack, download, account and skin engine)"
+description = "Tauri-independent network layer of the Blockfield Launcher (status, pack, download, account, skin, minecraft runtime and install-tracking engine)"
 
 [dependencies]
 launcher-core = { path = "../launcher-core" }
@@ -16,8 +16,14 @@ log = "0.4"
 reqwest = { version = "0.13", features = ["gzip", "json", "query", "stream"] }
 tokio = { version = "1", features = ["sync", "time", "macros", "net", "io-util", "rt"] }
 futures-util = "0.3"
+sha1 = "0.11"
+md-5 = "0.11"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 sha2 = "0.11"
 thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+directories = "6"
 
 [dev-dependencies]
 tempfile = "3"
