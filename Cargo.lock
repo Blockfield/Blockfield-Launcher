@@ -358,6 +358,7 @@ dependencies = [
  "flate2",
  "fs2",
  "futures-util",
+ "launcher-app",
  "launcher-core",
  "launcher-net",
  "log",
@@ -2300,6 +2301,17 @@ checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
 dependencies = [
  "bitflags 2.13.2",
  "serde",
+]
+
+[[package]]
+name = "launcher-app"
+version = "0.0.0"
+dependencies = [
+ "launcher-core",
+ "launcher-net",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

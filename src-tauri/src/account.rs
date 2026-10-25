@@ -68,9 +68,4 @@ pub async fn game_identity(
         Arc::new(move || _ = app.emit("account://expired", ()));
     launcher_net::account::game_identity(&state.config, &state.app_data_dir, base, &on_expired)
         .await
-        .map(|identity| GameIdentity {
-            username: identity.username,
-            uuid: identity.uuid,
-            access_token: identity.access_token,
-        })
 }

@@ -1,0 +1,17 @@
+[package]
+name = "launcher-app"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license = "GPL-3.0-only"
+description = "Tauri-independent shared state, event seam and operation gate of the Blockfield Launcher"
+
+[dependencies]
+launcher-core = { path = "../launcher-core" }
+launcher-net = { path = "../launcher-net" }
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+serde_json = "1.0"
