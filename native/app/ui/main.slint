@@ -1,7 +1,7 @@
 import { Tokens } from "tokens.slint";
 import { ActionArea, StatusDot } from "controls.slint";
 import { GridBackdrop, TopoBackdrop, GlowPanel } from "backdrop.slint";
-import { MainButton, MainSelect, Spinner, MainMotion } from "main-controls.slint";
+import { MainButton, MainSelect, Spinner, MainMotion, MainText } from "main-controls.slint";
 
 export struct Room {id: string, name: string, description: string, players: int, ready: string, join: string, joinable: bool }
 export struct MainData {
@@ -80,7 +80,7 @@ export component MainScreen inherits Rectangle {
     private property <string> state-text: root.data.checking ? "ПРОВЕРКА..." : root.data.check-error != "" ? "НЕ ПРОВЕРЕН" : root.data.needs-setup ? (root.data.needs-update ? "ДОСТУПНО ОБНОВЛЕНИЕ" : "ТРЕБУЕТСЯ ПОДГОТОВКА") : "АКТУАЛЕН";
     private property <color> state-color: root.data.checking ? Tokens.secondary-foreground : root.data.check-error != "" || root.data.needs-setup ? Tokens.primary : Tokens.success;
     private property <string> launch-label: root.game-busy ? (root.data.phase == "running" ? "В ИГРЕ" : root.data.phase == "finishing" ? "ЗАВЕРШЕНИЕ" : root.data.phase == "unknown" ? "ПРОВЕРКА…" : "ЗАПУСК") : root.data.launching ? "ЗАПУСК" : root.data.launch-error != "" ? "ПОВТОРИТЬ" : !root.data.checked ? "..." : root.data.needs-setup ? (root.data.needs-update ? "ОБНОВИТЬ" : "ПОДГОТОВИТЬ") : "ИГРАТЬ";
-    private property <string> launch-sub: root.data.phase == "running" ? "Игра запущена" : root.data.phase == "finishing" ? "Команды после выхода" : root.data.launching ? ((root.data.launch-status != "" ? root.data.launch-status : "ЗАПУСК") + (root.data.progress < 0 ? "" : " · " + root.data.progress + "%")) : root.data.launch-error != "" ? "Подробности ниже" : !root.data.checked ? "ПРОВЕРКА..." : root.data.needs-setup ? (root.data.needs-update ? "ДОСТУПНО ОБНОВЛЕНИЕ" : "ТРЕБУЕТСЯ ПОДГОТОВКА") : "ПОДКЛЮЧЕНИЕ К СЕРВЕРУ";
+    private property <string> launch-sub: root.data.phase == "running" ? "Игра запущена" : root.data.phase == "finishing" ? "Команды после выхода" : root.data.launching ? MainText.launch-sub(root.data.launch-status, root.data.progress) : root.data.launch-error != "" ? "Подробности ниже" : !root.data.checked ? "ПРОВЕРКА..." : root.data.needs-setup ? (root.data.needs-update ? "ДОСТУПНО ОБНОВЛЕНИЕ" : "ТРЕБУЕТСЯ ПОДГОТОВКА") : "ПОДКЛЮЧЕНИЕ К СЕРВЕРУ";
     background: Tokens.background;
     TopoBackdrop { x: 0px; y: 0px;}
     GridBackdrop { x: 0px; y: 0px;intensity: 0.5; }
@@ -135,7 +135,7 @@ export component MainScreen inherits Rectangle {
                     drop-shadow-color: root.disabled ? transparent : Tokens.primary.with-alpha(0.45);
                 }
                 deploy := ActionArea { x: 0px; y: 0px;
-                    width: 230px; height: 64px; clip: true; label: root.launch-label; enabled: !root.disabled;
+                    width: 230px; height: 64px; label: root.launch-label; enabled: !root.disabled;
                     opacity: root.disabled && root.data.phase != "running" ? 0.5 : 1;
                     animate opacity { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
                     background: root.disabled || root.data.phase == "running" ? Tokens.chrome : @linear-gradient(180deg, #2a2116, #11100d);
@@ -143,6 +143,7 @@ export component MainScreen inherits Rectangle {
                     border-color: root.data.phase == "running" ? Tokens.success.with-alpha(0.4) : root.disabled ? Tokens.border : self.hovered ? Tokens.primary : Tokens.primary.with-alpha(0.5);
                     animate border-color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
                     clicked => { if !root.disabled { root.deploy(); } }
+                    Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; clip: true;
                     if !root.disabled: Rectangle { x: 1phx; y: 1phx; width: parent.width - 2phx; height: parent.height - 2phx; border-width: 1phx; border-color: Tokens.primary.with-alpha(0.1); }
                     for corner in 4: Rectangle {
                         x: Math.mod(corner, 2) == 0 ? 1px : parent.width - 13px; y: corner < 2 ? 1px : parent.height - 13px; width: 12px; height: 12px;
@@ -162,6 +163,7 @@ export component MainScreen inherits Rectangle {
                             Text { text: root.launch-label; color: Tokens.foreground; font-size: 17px; font-weight: Tokens.weight-medium; letter-spacing: 4.42px; height: 17px; }
                             Text { text: root.launch-sub; color: Tokens.secondary-foreground; font-size: 9px; font-weight: Tokens.weight-medium; letter-spacing: 1.44px; height: 9px; }
                         }
+                    }
                     }
                 }
                 Rectangle {
@@ -210,7 +212,7 @@ export component MainScreen inherits Rectangle {
                     if root.details-view == 0 && !root.workshop: Rectangle { x: 0px; y: 0px;
                         if root.rooms.length > 0: Rectangle { x: 0px; y: 0px;
                             MainSelect { x: 0px; y: 0px;width: parent.width - join-button.width - 12px; label: "Выбрать матч"; options: root.room-names; selected <=> root.room-index; }
-                            join-button := MainButton { y: 0px;x: parent.width - self.width; label: root.room.join; selected: true; enabled: !root.room-disabled && !root.data.updating && root.room.joinable; clicked => { if self.enabled { root.join(root.room.id); } } }
+                            join-button := MainButton { y: 0px;x: parent.width - self.width; label: root.room.join + ": " + root.room.name; text: root.room.join; selected: true; enabled: !root.room-disabled && !root.data.updating && root.room.joinable; clicked => { if self.enabled { root.join(root.room.id); } } }
                             Text { x: 0px;y: 40px; height: 18px; width: parent.width; text: root.room.description; color: Tokens.secondary-foreground; font-size: 12px; overflow: elide; }
                             HorizontalLayout { x: 0px;y: 66px; height: 18px; alignment: start; spacing: 20px;
                                 Text { text: "Игроков: " + root.room.players; color: Tokens.secondary-foreground; font-size: 12px; }
@@ -223,7 +225,7 @@ export component MainScreen inherits Rectangle {
                         }
                         Rectangle { x: 0px;y: parent.height - 41px; height: 1px; background: Tokens.border; }
                         if root.rooms.length > 0: HorizontalLayout { x: 0px;
-                            y: parent.height - 32px; height: 32px; width: 157px; alignment: start; spacing: 8px;
+                            y: parent.height - 32px; height: 32px; width: self.preferred-width; alignment: start; spacing: 8px;
                             MainButton { label: "Предыдущий матч"; text: ""; icon: @image-url("../assets/icons/chevron-left.svg"); enabled: root.room-index > 0; clicked => { if self.enabled { root.room-index -= 1; } } }
                             Text { text: (root.room-index + 1) + " / " + root.rooms.length; color: Tokens.secondary-foreground; font-size: 12px; vertical-alignment: center; }
                             MainButton { label: "Следующий матч"; text: ""; icon: @image-url("../assets/icons/chevron-right.svg"); enabled: root.room-index + 1 < root.rooms.length; clicked => { if self.enabled { root.room-index += 1; } } }
@@ -268,8 +270,7 @@ export component MainScreen inherits Rectangle {
                         }
                         if root.error-details: Text { x: 0px;y: Tokens.line-height(17.875px, 1phx) + Tokens.line-height(16.25px, 1phx) + 8px; width: parent.width; text: root.data.check-error != "" ? root.data.check-error : root.data.launch-error; font-family: Tokens.mono; font-size: 10px; color: Tokens.muted-foreground; wrap: word-wrap; }
                     }
-                    verify := MainButton { x: 0px;y: parent.height - 32px; width: parent.width; label: root.data.checking ? "ПРОВЕРКА..." : "ПРОВЕРИТЬ ФАЙЛЫ"; icon: root.data.checking ? @image-url("") : @image-url("../assets/icons/refresh-cw.svg"); icon-size: 12px; text-size: 10px; tracking: 1.6px; enabled: !root.data.checking && !root.game-busy; clicked => { if self.enabled { root.verify(); } } }
-                    if root.data.checking: Spinner { x: (parent.width - 132px) / 2 - 20px; y: parent.height - 22px; width: 12px; height: 12px; }
+                    verify := MainButton { x: 0px;y: parent.height - 32px; width: parent.width; label: root.data.checking ? "ПРОВЕРКА..." : "ПРОВЕРИТЬ ФАЙЛЫ"; icon: @image-url("../assets/icons/refresh-cw.svg"); spinning: root.data.checking; icon-size: 12px; text-size: 10px; tracking: 1.6px; enabled: !root.data.checking && !root.game-busy; clicked => { if self.enabled { root.verify(); } } }
                 }
             }
         }

@@ -33,7 +33,10 @@ pub fn fixtures_requested(args: &[String]) -> bool {
 
 impl Backend {
     pub fn start(self, app: &AppWindow) {
-        let Self::Core(handle) = self else { return };
+        let Self::Core(handle) = self else {
+            crate::main_ops::attach_fixtures(app);
+            return;
+        };
         app.set_show_main(true);
         app.set_dev_build(launcher_core::dev::is_dev_build());
         app.set_update_label("".into());
@@ -75,6 +78,11 @@ impl Backend {
                     return;
                 }
             };
+            let callbacks_state = state.clone();
+            let callbacks_handle = tokio::runtime::Handle::current();
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                crate::main_ops::attach(&app, callbacks_state, callbacks_handle);
+            });
             (state.events)(LauncherEvent::GameStatus(status_ops::game_status(&state)));
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_username(settings["username"].as_str().unwrap_or_default().into());

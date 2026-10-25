@@ -1,11 +1,23 @@
 import { Tokens } from "tokens.slint";
 import { ActionArea, WindowActivity } from "controls.slint";
 
+export global MainText { pure callback launch-sub(string, int) -> string; }
+
 export global MainMotion { in-out property <bool> enabled: true; }
+
+export component Spinner inherits Rectangle {
+    private property <angle> turn: 0deg;
+    private property <bool> running: MainMotion.enabled && WindowActivity.live;
+    Image { x: 0px; y: 0px; width: parent.width; height: parent.height; source: @image-url("../assets/icons/loader-circle.svg"); colorize: Tokens.foreground; transform-rotation: root.turn; }
+    init => { if root.running && root.turn == 0deg { root.turn = 360deg; } }
+    changed running => { root.turn = root.running ? 360deg : 0deg; }
+    animate turn { duration: root.running ? 1000ms : 0ms; easing: linear; iteration-count: -1; }
+}
 
 export component MainButton inherits ActionArea {
     in property <string> text: root.label;
     in property <image> icon;
+    in property <bool> spinning: false;
     in property <length> icon-size: 14px;
     in property <length> text-size: 12px;
     in property <length> tracking: 0px;
@@ -22,7 +34,8 @@ export component MainButton inherits ActionArea {
         padding-left: 12px; padding-right: 12px; spacing: root.text != "" ? 8px : 0px; alignment: center;
         if root.icon.width > 0: Rectangle {
             width: root.icon-size; height: 32px;
-            Image { x: 0px; y: (parent.height - self.height) / 2; width: root.icon-size; height: root.icon-size; source: root.icon; colorize: Tokens.secondary-foreground; }
+            if root.spinning: Spinner { x: 0px; y: (parent.height - self.height) / 2; width: root.icon-size; height: root.icon-size; }
+            if !root.spinning: Image { x: 0px; y: (parent.height - self.height) / 2; width: root.icon-size; height: root.icon-size; source: root.icon; colorize: Tokens.secondary-foreground; }
         }
         caption := Text {
             text: root.text; font-weight: Tokens.weight-medium; color: root.visually-hovered || root.selected ? Tokens.foreground : Tokens.secondary-foreground;
@@ -31,15 +44,6 @@ export component MainButton inherits ActionArea {
             animate color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
         }
     }
-}
-
-export component Spinner inherits Rectangle {
-    private property <angle> turn: 0deg;
-    private property <bool> running: MainMotion.enabled && WindowActivity.live;
-    Image { x: 0px; y: 0px; width: parent.width; height: parent.height; source: @image-url("../assets/icons/loader-circle.svg"); colorize: Tokens.foreground; transform-rotation: root.turn; }
-    init => { if root.running && root.turn == 0deg { root.turn = 360deg; } }
-    changed running => { root.turn = root.running ? 360deg : 0deg; }
-    animate turn { duration: root.running ? 1000ms : 0ms; easing: linear; iteration-count: -1; }
 }
 
 export global SelectSearch {callback find([string], string) -> int; }

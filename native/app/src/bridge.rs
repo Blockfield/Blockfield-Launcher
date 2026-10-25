@@ -41,6 +41,9 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
                 ProgressUnit::Files => (progress.file_index as u64, progress.file_count as u64),
             };
             data.progress = percent(done, total);
+            if !progress.file_path.is_empty() {
+                data.launch_status = progress.file_path.into();
+            }
         }
         LauncherEvent::RoomPending => data.pending_room = true,
         event => {
