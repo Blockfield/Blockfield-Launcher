@@ -34,5 +34,19 @@ class AttributionTests(unittest.TestCase):
         unrelated.cmdline.assert_not_called()
 
 
+class LifetimeTests(unittest.TestCase):
+    def test_exited_app_is_not_replaced_by_surviving_xpc_helpers(self):
+        import sys
+        from unittest.mock import Mock, patch
+        from xplat_metrics import sample
+        root = Mock()
+        root.is_running.return_value = True
+        root.status.return_value = 'zombie'
+        fake = Mock(STATUS_ZOMBIE='zombie')
+        with patch.dict(sys.modules, {'psutil': fake}):
+            with self.assertRaisesRegex(RuntimeError, 'App exited'):
+                sample(root, set())
+
+
 if __name__ == '__main__':
     unittest.main()

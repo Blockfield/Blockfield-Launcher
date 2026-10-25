@@ -32,6 +32,8 @@ def tree(root, baseline):
 
 def sample(root, baseline):
     import psutil
+    if not root.is_running() or root.status() == psutil.STATUS_ZOMBIE:
+        raise RuntimeError('App exited during benchmark')
     rows = []
     for process in tree(root, baseline):
         try:
