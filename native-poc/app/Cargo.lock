@@ -400,6 +400,8 @@ dependencies = [
 name = "blockfield-native-poc"
 version = "0.1.0"
 dependencies = [
+ "i-slint-backend-testing",
+ "image",
  "skin3d",
  "slint",
  "slint-build",

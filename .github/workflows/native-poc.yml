@@ -1,11 +1,21 @@
-name: Native POC xplat
+name: Native e2e
 
-# u17: build, test and capture the Slint POC on Windows/macOS (ubuntu as
-# control). No secrets, no signing, no releases — artifacts only.
+# u18: cross-OS end-to-end screen tests for the Slint POC (Windows, macOS,
+# Ubuntu) as a merge/release gate. Layer 1 = in-process testing-tree
+# scenarios (`cargo test`, needs SLINT_EMIT_DEBUG_INFO=1 below). Layer 2 =
+# real-window acceptance walk with per-OS golden screenshots (`--e2e`).
+# No secrets, no signing, no releases — artifacts only.
 on:
   push:
-    branches: [native/xplat]
+    branches: [native/**]
+  pull_request:
+    branches: [feat/native-slint]
   workflow_dispatch:
+    inputs:
+      update_goldens:
+        description: "Write golden candidates instead of comparing (bootstrap only, never gates)"
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -14,21 +24,29 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Layer 1 drives the Slint testing tree, which needs debug info in the
+  # generated code. Metadata only; no pixels change (u18 verified AE=0).
+  SLINT_EMIT_DEBUG_INFO: 1
+
 jobs:
-  poc:
-    name: POC (${{ matrix.name }})
+  e2e:
+    name: e2e (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: windows-x86_64
             os: windows-latest
+            golden_os: windows
           - name: macos-arm64
             os: macos-latest
+            golden_os: macos
           - name: ubuntu-x86_64
             os: ubuntu-24.04
+            golden_os: linux
     defaults:
       run:
         shell: bash
@@ -44,7 +62,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: native-poc-${{ matrix.os }}
+          key: native-e2e-${{ matrix.os }}
           workspaces: |
             native-poc/app -> native-poc/app/target
       # Ubuntu runners have no display server and no Vulkan ICD: Xvfb for the
@@ -68,7 +86,8 @@ jobs:
         run: |
           cd native-poc/app
           cargo clippy --locked --release --all-targets -- -D warnings
-      - name: Tests
+      # Layer 1: headless testing-tree scenarios, no display needed.
+      - name: Tests (Layer 1)
         timeout-minutes: 20
         run: |
           cd native-poc/app
@@ -117,7 +136,7 @@ jobs:
           PYEOF
           # No empty bash arrays (/bin/bash on macOS is 3.2 and treats them
           # as unbound under `set -u`), so branch instead of wrapping.
-          run_capture() {
+          run_guarded() {
             if [ "$RUNNER_OS" = Linux ]; then
               xvfb-run -a -s "-screen 0 1920x1080x24" python3 "$RUNNER_TEMP/runguarded.py" "$@"
             else
@@ -135,7 +154,7 @@ jobs:
                 echo "=== $renderer scale=$scale state=$state ==="
                 status=0
                 SLINT_BACKEND=${SLINT_BACKEND-} SLINT_SCALE_FACTOR=$scale \
-                  run_capture "$dir/app.log" \
+                  run_guarded "$dir/app.log" \
                   "./$exe" --state "$state" --freeze-motion --capture-dir "$dir" || status=$?
                 echo "exit=$status (capture asserts panic nonzero on failure)"
                 if [ "$status" != 0 ]; then fail=1; tail -c 3000 "$dir/app.log"; fi
@@ -170,9 +189,58 @@ jobs:
           PYEOF
           find "$out" -type f | sort
           [ "$fail" = 0 ]
+      # Layer 2: real-window acceptance walk against per-OS goldens at 1x.
+      # Renderer is pinned to software on every OS: it is the one renderer
+      # all three runners support (u17: Win/Mac Skia-GL has no GPU and falls
+      # back anyway; Ubuntu Skia-GL fails under Xvfb), so one golden set per
+      # OS suffices. The e2e log records the backend. Any mismatch, missing
+      # element, crash or hang exits non-zero and turns the gate red.
+      - name: E2E walk (Layer 2)
+        timeout-minutes: 20
+        env:
+          CARGO_BUILD_JOBS: 4
+          SLINT_BACKEND: winit-software
+        run: |
+          set -euo pipefail
+          cd native-poc/app
+          exe=target/release/blockfield-native-poc
+          if [ "$RUNNER_OS" = Windows ]; then exe=$exe.exe; fi
+          out=e2e-out
+          rm -rf "$out"
+          mkdir -p "$out"
+          run_guarded() {
+            if [ "$RUNNER_OS" = Linux ]; then
+              xvfb-run -a -s "-screen 0 1920x1080x24" python3 "$RUNNER_TEMP/runguarded.py" "$@"
+            else
+              python3 "$RUNNER_TEMP/runguarded.py" "$@"
+            fi
+          }
+          update=""
+          if [ "${{ inputs.update_goldens }}" = "true" ]; then update="--e2e-update-goldens"; fi
+          fail=0
+          for state in main main-launching offline error settings-skin; do
+            dir="$out/$state"
+            mkdir -p "$dir"
+            echo "=== e2e state=$state ==="
+            status=0
+            BLOCKFIELD_E2E_STATE="$state" run_guarded "$dir/app.log" \
+              "./$exe" --state "$state" --freeze-motion \
+              --e2e "$dir" --e2e-golden "tests/golden/${{ matrix.golden_os }}" $update || status=$?
+            echo "exit=$status"
+            if [ "$status" != 0 ]; then fail=1; tail -c 3000 "$dir/app.log"; fi
+          done
+          find "$out" -type f | sort
+          [ "$fail" = 0 ]
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: poc-${{ runner.os }}-${{ runner.arch }}
           path: native-poc/app/xplat-captures
+          retention-days: 7
+      # Screenshots, diffs and logs for every red Layer 2 run.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: e2e-${{ runner.os }}-${{ runner.arch }}
+          path: native-poc/app/e2e-out
           retention-days: 7

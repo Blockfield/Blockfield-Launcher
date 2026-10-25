@@ -7,6 +7,10 @@ component SettingsTabButton inherits Rectangle {
     in property <string> label;
     in property <bool> current;
     callback chosen();
+    // e2e hook only: exposes the tab to the Slint testing tree, no pixels change.
+    accessible-role: tab;
+    accessible-label: root.label;
+    accessible-action-default => { root.chosen(); }
     height: 44px;
     background: root.current ? Tokens.secondary : (press-touch.has-hover ? Tokens.card : transparent);
     tab-text := Text {
@@ -169,6 +173,11 @@ component SettingsToggle inherits Rectangle {
     in property <string> on-label;
     in property <string> off-label;
     callback toggled(bool);
+    // e2e hook only: exposes the toggle to the Slint testing tree, no pixels change.
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checked: root.on;
+    accessible-action-default => { root.toggled(!root.on); }
     width: 64px;
     height: 28px;
     track := TouchArea {
@@ -216,6 +225,11 @@ component SettingsButton inherits Rectangle {
     in property <bool> enabled: true;
     in property <length> horizontal-padding: 24px;
     callback clicked();
+    // e2e hook only: exposes the button to the Slint testing tree, no pixels change.
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { root.clicked(); }
     height: 40px;
     width: measure.preferred-width + (root.icon.width > 0 ? 25px : 0px) + root.horizontal-padding * 2;
     opacity: root.enabled ? 1 : 0.5;

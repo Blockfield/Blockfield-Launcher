@@ -11,6 +11,12 @@ build = "build.rs"
 [dependencies]
 slint = { version = "~1.18", default-features = false, features = ["std", "backend-winit", "renderer-skia-opengl", "renderer-software", "compat-1-2"] }
 skin3d = { path = "../skin3d", features = ["slint"] }
+# e2e golden PNG decode/encode. Same spec as skin3d's: no new code to compile.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+# Headless Slint testing backend for Layer 1 (ElementHandle tree driving).
+i-slint-backend-testing = "1.18.1"
 
 [build-dependencies]
 slint-build = "~1.18"
