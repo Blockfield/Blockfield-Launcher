@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { CAPTURE_STATES, FIXED_TIME, fixtureResponse, type CaptureState } from './data'
 import skin from './skin.png?inline'
 import cape from './cape.png?inline'
+import './capture.css'
 
 interface Selection {
   state: CaptureState
@@ -36,7 +37,11 @@ export async function install() {
         scale: Number(params.get('scale') ?? 1),
         motion: params.get('motion') === '1',
       }
-    : (JSON.parse(String(nativeConfig.username)) as Selection)
+    : (JSON.parse(
+        String(nativeConfig.lang).startsWith('capture-selection:')
+          ? String(nativeConfig.lang).slice('capture-selection:'.length)
+          : String(nativeConfig.username),
+      ) as Selection)
   if (!CAPTURE_STATES.includes(selection.state)) throw new Error('Unknown capture state')
   await nativeInvoke('plugin:webview|set_webview_zoom', { label: 'main', value: selection.scale })
   if (!selection.motion)
@@ -97,14 +102,7 @@ export async function install() {
     }
     return fixtureResponse(selection.state, command)
   }) as typeof invoke
-  const style = document.createElement('style')
-  style.textContent = `* {caret-color: transparent !important;}${
-    selection.motion
-      ? ''
-      : '* {animation-play-state: paused !important; transition: none !important;}'
-  }
-    `
-  document.head.append(style)
+  document.documentElement.dataset.captureStatic = String(!selection.motion)
 }
 
 async function until(check: () => boolean, label: string) {

@@ -1,0 +1,173 @@
+name: Tauri cross-platform baseline
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [native/tauri-xplat]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-xplat-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_BUILD_JOBS: 4
+
+jobs:
+  baseline:
+    name: baseline (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 65
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-24.04
+            platform: linux
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          cache: pnpm
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
+        with:
+          toolchain: 1.99.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: tauri-xplat-${{ matrix.os }}
+          workspaces: |
+            .cache/capture/xplat/src-tauri -> target
+            native-poc/app -> target
+      - name: Linux dependencies and isolated display
+        if: runner.os == 'Linux'
+        timeout-minutes: 8
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb xdotool mesa-vulkan-drivers libgl1 libfontconfig-dev libxkbcommon-x11-0 imagemagick
+          # Ubuntu 24.04 ships ImageMagick 6; expose the v7 command used by the harness.
+          if ! command -v magick; then
+            mkdir -p "$RUNNER_TEMP/bin"
+            printf '#!/bin/sh\nexec "$@"\n' > "$RUNNER_TEMP/bin/magick"
+            chmod +x "$RUNNER_TEMP/bin/magick"
+            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Runner-only capture dependencies
+        run: |
+          python -m pip install psutil==7.2.2 Pillow==12.1.0
+          if [ "$RUNNER_OS" = macOS ]; then
+            python -m pip install pyobjc-framework-Quartz==12.1
+            command -v magick || brew install imagemagick
+          fi
+          if [ "$RUNNER_OS" = Windows ]; then
+            command -v magick || choco install imagemagick -y --no-progress
+          fi
+      - name: Tests and default build fixture exclusion
+        timeout-minutes: 8
+        env:
+          VITE_BLOCKFIELD_PACK_URL: https://capture.invalid
+        run: |
+          pnpm install --frozen-lockfile
+          python -m unittest discover -s scripts/capture -p 'test_*.py'
+          if [ "$RUNNER_OS" = Linux ]; then
+            python -m unittest discover -s scripts/bench -p 'test_*.py'
+          else
+            python -m unittest discover -s scripts/bench -p 'test_xplat*.py'
+          fi
+          pnpm build
+          python - <<'PY'
+          from pathlib import Path
+          markers = ('Capture fixture', 'CaptureOperator', 'capture-ready:', '__BLOCKFIELD_CAPTURE_INVOKE__', 'capture-selection:')
+          for path in Path('dist').rglob('*'):
+              if path.suffix in ('.js', '.css'):
+                  text = path.read_text()
+                  assert not any(marker in text for marker in markers), path
+          PY
+      - name: Stage capture-only local fonts and identity
+        timeout-minutes: 5
+        run: |
+          python scripts/capture/prepare-fonts.py
+          python scripts/capture/xplat_prepare.py .cache/capture/xplat
+          cd .cache/capture/xplat
+          pnpm install --frozen-lockfile
+      - name: Build Tauri capture release (unsigned, no bundle)
+        id: tauri_build
+        timeout-minutes: 30
+        working-directory: .cache/capture/xplat
+        env:
+          VITE_CAPTURE_FIXTURES: '1'
+          VITE_BLOCKFIELD_PACK_URL: https://capture.invalid
+        run: |
+          pnpm build
+          python - <<'PY'
+          from pathlib import Path
+          js = '\n'.join(p.read_text() for p in Path('dist').rglob('*.js'))
+          css = '\n'.join(p.read_text() for p in Path('dist').rglob('*.css'))
+          assert 'capture-ready:' in js and 'capture.invalid' in js
+          assert 'capture-fonts/' in css
+          assert 'fonts.googleapis.com' not in css and 'fonts.gstatic.com' not in css
+          PY
+          cd src-tauri
+          cargo build --release --locked --features tauri/custom-protocol
+      - name: Tauri fixture screenshots
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          exe=.cache/capture/xplat/src-tauri/target/release/blockfield-launcher
+          if [ "$RUNNER_OS" = Windows ]; then exe=$exe.exe; fi
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s '-screen 0 1920x1080x24 -dpi 96' python scripts/capture/xplat.py --mode capture --tauri "$exe" --slint unused --out xplat-out/captures
+          else
+            python scripts/capture/xplat.py --mode capture --tauri "$exe" --slint unused --out xplat-out/captures
+          fi
+      - name: Build Slint release from same commit
+        id: slint_build
+        timeout-minutes: 30
+        if: success() || failure()
+        working-directory: native-poc/app
+        run: cargo build --locked --release
+      - name: Matched resource benchmark
+        if: always() && steps.tauri_build.outcome == 'success' && steps.slint_build.outcome == 'success'
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          tauri=.cache/capture/xplat/src-tauri/target/release/blockfield-launcher
+          slint=native-poc/app/target/release/blockfield-native-poc
+          if [ "$RUNNER_OS" = Windows ]; then tauri=$tauri.exe; slint=$slint.exe; fi
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s '-screen 0 1920x1080x24 -dpi 96' python scripts/capture/xplat.py --mode bench --tauri "$tauri" --slint "$slint" --out xplat-out/bench
+          else
+            python scripts/capture/xplat.py --mode bench --tauri "$tauri" --slint "$slint" --out xplat-out/bench
+          fi
+      - name: Diff and report
+        if: always()
+        run: |
+          mkdir -p xplat-out
+          python scripts/capture/xplat_report.py --out xplat-out --goldens native-poc/app/tests/golden/${{ matrix.platform }} | tee -a "$GITHUB_STEP_SUMMARY"
+          cp .cache/capture/fonts/sources.json xplat-out/font-sources.json
+          git rev-parse HEAD > xplat-out/commit.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: tauri-xplat-${{ matrix.platform }}
+          path: xplat-out
+          retention-days: 7

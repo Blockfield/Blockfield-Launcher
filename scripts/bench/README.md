@@ -113,3 +113,26 @@ each animation is tested independently, on both renderers.
 The app exits on success; the container requires its success marker and zero exit
 status within 30 s. `--variant` can also select just the Slint variants for a
 `--scenario skin-minimized --smoke --duration 30` regression run.
+
+## Matched cross-platform CI
+
+The `tauri-xplat` workflow builds both apps from the same commit, then interleaves
+Tauri/Slint for main idle and animated settings-skin: three launches per app/state,
+5 seconds warmup after readiness, 30 seconds sampling at 1 second intervals.
+Screenshots run separately, with motion frozen; measured apps keep real animation.
+Raw samples retain process PID/birth time/name, memory and cumulative CPU time.
+The report gives per-run means, their mean/sample standard deviation and savings
+only when all three matched pairs exist. CPU 100% means one fully occupied core.
+
+`xplat_metrics.py` uses psutil's private resident working set (USS via
+QueryWorkingSet) on Windows, including WebView2 descendants; Linux uses PSS.
+macOS uses an explicitly labeled RSS fallback, **not phys_footprint**. WebKit XPC
+services are attributed by the launch window: identities absent before launch
+and named `com.apple.WebKit.*`, plus all ordinary app descendants. Runs are
+sequential on disposable CI VMs; unrelated new WebKit services would contaminate
+this fallback, and reused preexisting services could be missed. Before-launch
+identities are excluded and must never be stopped. Shared RSS may be double
+counted; CPU from helpers exiting between samples can be missed. These limits
+must remain with the results. No GPU memory metric is inferred. Slint is pinned
+to winit-software; skin adapter and Tauri WebGL renderer evidence stay in logs and
+fixture proofs. Hosted Windows lacks a hardware GPU; this is not real-GPU data.

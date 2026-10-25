@@ -130,3 +130,23 @@ in 118 RGBA8 pixels; 17/18 matrix pairs are exactly identical. Preserve and quan
 such residuals; do not silently apply a tolerance. Match image/font/bundle hashes
 and renderer when comparing with a native POC. WebGL can expose vendor strings
 that disagree with GLX; retain both, and use GLX to identify this software runtime.
+
+## Cross-platform CI reference
+
+`.github/workflows/tauri-xplat.yml` runs only on manual dispatch or pushes to
+`native/tauri-xplat`. It stages tracked source with `xplat_prepare.py`, reuses
+`prepare-fonts.py`, and builds one unsigned, unbundled Tauri release with capture
+fixtures and a separate `com.blockfield.capture` identity. No Rust hooks or normal
+build changes are needed: fixtures also accept `capture-selection:<JSON>` in the
+disposable native config's language field. The old Linux query path is preserved.
+`capture.css` freezes static captures without a CSP-blocked inline stylesheet.
+
+`xplat.py` refuses to run outside GitHub Actions. It captures nine matched states
+at 1280×720, verifies fixture state, viewport and loaded Inter faces, and records
+WebGL renderer evidence for skin. Native screenshots use client bounds (Windows),
+window-only `screencapture` (macOS), or Xvfb window geometry (Linux). Wrong scale or
+size fails, rather than silently resizing the evidence. Capture errors and app
+logs are artifacts even on failure. `xplat_report.py` compares committed per-OS
+native goldens using ImageMagick RMSE and AE with fuzz 2%, writing JSON, diff PNGs
+and Markdown. Differences are evidence, not an automatic visual-parity approval.
+The workflow keeps artifacts for seven days and never signs or uploads releases.
