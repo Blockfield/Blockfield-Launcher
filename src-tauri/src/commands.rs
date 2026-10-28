@@ -602,6 +602,47 @@ fn installer_mirror(line: &str) -> Option<(String, Option<String>)> {
     Some((name.to_string(), None))
 }
 
+/// "[blockfield-file] a.jar 123/456 Mirror" → (name, received bytes, total bytes, source).
+fn installer_file(line: &str) -> Option<(String, u64, Option<u64>, Option<String>)> {
+    let rest = line.strip_prefix("[blockfield-file] ")?.trim();
+    let (name, rest) = rest.split_once(' ')?;
+    if name.is_empty() {
+        return None;
+    }
+    let (counts, source) = match rest.split_once(' ') {
+        Some((counts, source)) => (counts, Some(source.trim())),
+        None => (rest, None),
+    };
+    let (received, total) = counts.split_once('/')?;
+    let received = received.parse().ok()?;
+    let total = if total == "?" {
+        None
+    } else {
+        Some(total.parse().ok()?)
+    };
+    let source = source
+        .filter(|source| !source.is_empty())
+        .map(str::to_string);
+    Some((name.to_string(), received, total, source))
+}
+
+/// What the update screen shows as the current file while a large jar is still downloading.
+fn installer_file_display(
+    name: &str,
+    received: u64,
+    total: Option<u64>,
+    source: Option<&str>,
+) -> String {
+    let bytes = match total {
+        Some(total) => format!("{:.1}/{:.1} MB", received as f64 / 1e6, total as f64 / 1e6),
+        None => format!("{:.1} MB", received as f64 / 1e6),
+    };
+    match source {
+        Some(source) => format!("{name} ({bytes}, {source})"),
+        None => format!("{name} ({bytes})"),
+    }
+}
+
 /// Runs packwiz-installer (client side, via its bootstrap) in the game dir; it downloads, verifies and prunes the
 /// pack contents itself. Output lines are forwarded to the UI as status/progress events.
 fn run_packwiz_installer(
@@ -676,6 +717,7 @@ fn run_packwiz_installer(
     drop(tx);
 
     let mut tail = std::collections::VecDeque::with_capacity(20);
+    let mut last_files: Option<(usize, usize)> = None;
     let mut handle_line = |line: String| {
         log::info!("[packwiz-installer] {line}");
         if let Some((name, speed)) = installer_mirror(&line) {
@@ -684,9 +726,21 @@ fn run_packwiz_installer(
                 serde_json::json!({ "name": name, "speed": speed }),
             );
         } else if let Some((done, total)) = installer_progress(&line) {
+            last_files = Some((done, total));
             let _ = app_handle.emit(
                 "download://progress",
                 crate::download::DownloadProgressPayload::files(line.clone(), done, total),
+            );
+        } else if let Some((name, received, total, source)) = installer_file(&line) {
+            // A large file is still downloading: keep the last file count, show the live file.
+            let (done, total_files) = last_files.unwrap_or((0, 0));
+            let _ = app_handle.emit(
+                "download://progress",
+                crate::download::DownloadProgressPayload::files(
+                    installer_file_display(&name, received, total, source.as_deref()),
+                    done,
+                    total_files,
+                ),
             );
         } else {
             emit_status(app_handle, "modpack", line.clone(), true);
@@ -1608,6 +1662,10 @@ mod tests {
             installer_progress("[blockfield-mirror] Gcore CDN 12.3 MB/s"),
             None
         );
+        assert_eq!(
+            installer_progress("[blockfield-file] a.jar 1/2 Mirror"),
+            None
+        );
     }
 
     #[test]
@@ -1637,6 +1695,40 @@ mod tests {
             "Mirror GitHub failed; the rest of this run skips it",
         ] {
             assert_eq!(installer_mirror(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn installer_file_lines_are_parsed() {
+        assert_eq!(
+            installer_file("[blockfield-file] create.jar 131072/22105900 Gcore CDN"),
+            Some((
+                "create.jar".to_string(),
+                131072,
+                Some(22105900),
+                Some("Gcore CDN".to_string())
+            )),
+            "in-flight file with bytes and source"
+        );
+        assert_eq!(
+            installer_file("[blockfield-file] create.jar 0/? pack host"),
+            Some((
+                "create.jar".to_string(),
+                0,
+                None,
+                Some("pack host".to_string())
+            )),
+            "unknown total"
+        );
+        for line in [
+            "[blockfield-file] ",
+            "[blockfield-file] create.jar",
+            "[blockfield-file] create.jar 12x/34 Gcore",
+            "Finished successfully!",
+            "(12/137) Downloaded Create",
+            "[blockfield-mirror] Gcore CDN 12.3 MB/s",
+        ] {
+            assert_eq!(installer_file(line), None, "{line}");
         }
     }
 }
