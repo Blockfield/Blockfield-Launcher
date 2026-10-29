@@ -85,7 +85,7 @@ const ru = {
   'update.completion': 'ПРОГРЕСС',
   'update.filesProcessed': 'ОБРАБОТАНО ФАЙЛОВ',
   'update.fileProgressHint':
-    'Крупные файлы скачиваются дольше. Счётчик изменится после обработки следующего файла.',
+    'Крупные файлы скачиваются дольше. Текущий файл, объём и зеркало показаны ниже.',
   'update.currentFile': 'ТЕКУЩИЙ ФАЙЛ',
   'update.transferred': 'ЗАГРУЖЕНО',
   'update.remaining': 'ОСТАЛОСЬ',

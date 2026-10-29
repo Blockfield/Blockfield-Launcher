@@ -602,6 +602,56 @@ fn installer_mirror(line: &str) -> Option<(String, Option<String>)> {
     Some((name.to_string(), None))
 }
 
+/// "[blockfield-file] {"name":"a.jar","received":123,"total":456,"source":"Mirror"}"
+/// → (name, received bytes, total bytes, source). JSON so spaces, quotes and Unicode survive.
+#[derive(Debug, serde::Deserialize)]
+struct InstallerFileLine {
+    name: String,
+    received: u64,
+    total: Option<u64>,
+    source: Option<String>,
+}
+
+fn installer_file(line: &str) -> Option<(String, u64, Option<u64>, Option<String>)> {
+    let payload = line.strip_prefix("[blockfield-file] ")?.trim();
+    if payload.is_empty() {
+        return None;
+    }
+    let parsed: InstallerFileLine = serde_json::from_str(payload).ok()?;
+    if parsed.name.is_empty() {
+        return None;
+    }
+    Some((
+        parsed.name,
+        parsed.received,
+        parsed.total,
+        parsed.source.filter(|source| !source.is_empty()),
+    ))
+}
+
+/// What the update screen shows as the current file while a large jar is still downloading.
+/// Bytes lead so progress stays visible when the stats cell truncates a long jar name.
+fn installer_file_display(
+    name: &str,
+    received: u64,
+    total: Option<u64>,
+    source: Option<&str>,
+) -> String {
+    let bytes = match total {
+        Some(total) => format!("{:.1}/{:.1} MB", received as f64 / 1e6, total as f64 / 1e6),
+        None => format!("{:.1} MB", received as f64 / 1e6),
+    };
+    let short = if name.chars().count() > 44 {
+        format!("{}…", name.chars().take(43).collect::<String>())
+    } else {
+        name.to_string()
+    };
+    match source {
+        Some(source) => format!("{bytes} - {short} - {source}"),
+        None => format!("{bytes} - {short}"),
+    }
+}
+
 /// Runs packwiz-installer (client side, via its bootstrap) in the game dir; it downloads, verifies and prunes the
 /// pack contents itself. Output lines are forwarded to the UI as status/progress events.
 fn run_packwiz_installer(
@@ -676,6 +726,7 @@ fn run_packwiz_installer(
     drop(tx);
 
     let mut tail = std::collections::VecDeque::with_capacity(20);
+    let mut last_files: Option<(usize, usize)> = None;
     let mut handle_line = |line: String| {
         log::info!("[packwiz-installer] {line}");
         if let Some((name, speed)) = installer_mirror(&line) {
@@ -684,9 +735,21 @@ fn run_packwiz_installer(
                 serde_json::json!({ "name": name, "speed": speed }),
             );
         } else if let Some((done, total)) = installer_progress(&line) {
+            last_files = Some((done, total));
             let _ = app_handle.emit(
                 "download://progress",
                 crate::download::DownloadProgressPayload::files(line.clone(), done, total),
+            );
+        } else if let Some((name, received, total, source)) = installer_file(&line) {
+            // A large file is still downloading: keep the last file count, show the live file.
+            let (done, total_files) = last_files.unwrap_or((0, 0));
+            let _ = app_handle.emit(
+                "download://progress",
+                crate::download::DownloadProgressPayload::files(
+                    installer_file_display(&name, received, total, source.as_deref()),
+                    done,
+                    total_files,
+                ),
             );
         } else {
             emit_status(app_handle, "modpack", line.clone(), true);
@@ -1608,6 +1671,10 @@ mod tests {
             installer_progress("[blockfield-mirror] Gcore CDN 12.3 MB/s"),
             None
         );
+        assert_eq!(
+            installer_progress("[blockfield-file] {\"name\":\"a.jar\"}"),
+            None
+        );
     }
 
     #[test]
@@ -1632,11 +1699,98 @@ mod tests {
             "[blockfield-mirror] ",
             "Finished successfully!",
             "(12/137) Downloaded Create",
+            "[blockfield-file] {\"name\":\"a.jar\",\"received\":1,\"total\":2}",
             "Mirror probe: Gcore CDN 12.3 MB/s",
             "mod.jar from Gcore CDN failed (timeout); trying the next source",
             "Mirror GitHub failed; the rest of this run skips it",
         ] {
             assert_eq!(installer_mirror(line), None, "{line}");
         }
+    }
+
+    #[test]
+    fn installer_file_lines_are_parsed() {
+        for (line, expected) in [
+            (
+                "[blockfield-file] {\"name\":\"create.jar\",\"received\":131072,\"total\":22105900,\"source\":\"Gcore CDN\"}",
+                Some((
+                    "create.jar".to_string(),
+                    131072,
+                    Some(22105900),
+                    Some("Gcore CDN".to_string()),
+                )),
+            ),
+            (
+                // Spaces, quotes and delimiter-like text survive the JSON format.
+                "[blockfield-file] {\"name\":\"My \\\"Mod\\\" 1/2.jar\",\"received\":0,\"total\":null,\"source\":\"pack host\"}",
+                Some((
+                    "My \"Mod\" 1/2.jar".to_string(),
+                    0,
+                    None,
+                    Some("pack host".to_string()),
+                )),
+            ),
+            (
+                "[blockfield-file] {\"name\":\"Мод.jar\",\"received\":1,\"total\":2,\"source\":\"Cloudflare R2\"}",
+                Some((
+                    "Мод.jar".to_string(),
+                    1,
+                    Some(2),
+                    Some("Cloudflare R2".to_string()),
+                )),
+            ),
+            (
+                "[blockfield-file] {\"name\":\"a.jar\",\"received\":1,\"total\":2}",
+                Some(("a.jar".to_string(), 1, Some(2), None)),
+            ),
+        ] {
+            assert_eq!(installer_file(line), expected, "{line}");
+        }
+        for line in [
+            "[blockfield-file] ",
+            "[blockfield-file] not json",
+            "[blockfield-file] {\"name\":\"\",\"received\":1,\"total\":2}",
+            "[blockfield-file] {\"name\":\"a.jar\",\"received\":\"x\",\"total\":2}",
+            // The previous space-separated format is no longer produced; it must not parse.
+            "[blockfield-file] create.jar 131072/22105900 Gcore CDN",
+            "Finished successfully!",
+            "(12/137) Downloaded Create",
+            "[blockfield-mirror] Gcore CDN 12.3 MB/s",
+        ] {
+            assert_eq!(installer_file(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn installer_file_display_keeps_bytes_visible() {
+        // Bytes lead so a truncated stats cell still shows progress.
+        assert_eq!(
+            installer_file_display(
+                "blockfield-client-1.56.0+mc1.21.1.jar",
+                12300000,
+                Some(40088921),
+                Some("Gcore CDN")
+            ),
+            "12.3/40.1 MB - blockfield-client-1.56.0+mc1.21.1.jar - Gcore CDN"
+        );
+        assert_eq!(
+            installer_file_display(
+                "create-fabric-6.0.0.0+mc1.21.1-bf6.jar",
+                0,
+                Some(22105900),
+                Some("pack host")
+            ),
+            "0.0/22.1 MB - create-fabric-6.0.0.0+mc1.21.1-bf6.jar - pack host"
+        );
+        // Long names truncate; the byte count stays at the front.
+        let long = installer_file_display(
+            "a-quite-long-mod-name-that-keeps-going-forever.jar",
+            1000000,
+            None,
+            None,
+        );
+        assert!(long.starts_with("1.0 MB - "), "{long}");
+        assert!(long.ends_with("…"), "{long}");
+        assert_eq!(long.chars().count(), "1.0 MB - ".len() + 44);
     }
 }
