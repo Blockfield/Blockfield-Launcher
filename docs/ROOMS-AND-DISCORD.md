@@ -1,6 +1,6 @@
 # Комнаты и Discord Rich Presence
 
-Репозитории и общие контракты описаны в [карте архитектуры](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/ARCHITECTURE.md).
+Репозитории и общие контракты описаны в [карте архитектуры](https://github.com/Blockfield/blockfield-workspace-private/blob/main/docs/ARCHITECTURE.md).
 
 ## Приложение Blockfield
 
@@ -64,7 +64,7 @@ Application ID: `1548300877125779456`. Он встроен в лаунчер; д
 
 Выбор сохраняется в памяти лаунчера при переходе к установке/обновлению. После завершения подготовки нажмите «Играть» на экране обновления: клиент подключится к серверу и передаст обычное действие входа в комнату или возврата в лобби. Если игра уже работает, запрос передаётся ей; сервер сохраняет обычные правила входа и показывает меню, если комната закрылась. Запрос действует 10 минут и обрабатывается только на сервере из настроек сборки. Закрытие лаунчера отменяет неисполненный выбор.
 
-Лаунчер атомарно записывает `room-request.json` с полями `room` и `createdAt` в свой каталог данных. Клиент получает путь через `BLOCKFIELD_BRIDGE_DIR` и разрешённый адрес через `BLOCKFIELD_SERVER`; `LauncherBridge` отправляет серверу `join:<UUID>` или `leave`. Статус для Rich Presence возвращается через `game-presence.json`. Клиент, запущенный напрямую для разработки, управляется средствами [workspace](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/DEVELOPING.md).
+Лаунчер атомарно записывает `room-request.json` с полями `room` и `createdAt` в свой каталог данных. Клиент получает путь через `BLOCKFIELD_BRIDGE_DIR` и разрешённый адрес через `BLOCKFIELD_SERVER`; `LauncherBridge` отправляет серверу `join:<UUID>` или `leave`. Статус для Rich Presence возвращается через `game-presence.json`. Клиент, запущенный напрямую для разработки, управляется средствами [workspace](https://github.com/Blockfield/blockfield-workspace-private/blob/main/docs/DEVELOPING.md).
 
 ## Выпуск изменений
 
