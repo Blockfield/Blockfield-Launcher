@@ -1,6 +1,6 @@
 # Launcher development
 
-The [shared architecture map](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/ARCHITECTURE.md)
+The [shared architecture map](https://github.com/Blockfield/blockfield-workspace-private/blob/main/docs/ARCHITECTURE.md)
 describes the repositories and their contracts. The launcher installs the public client pack from
 `VITE_BLOCKFIELD_PACK_URL` (currently https://blockfield.pro). Its static files are built by
 [blockfield-client](https://github.com/Blockfield/blockfield-client):
@@ -182,7 +182,7 @@ a Drasl account; the frontend mocks do not.
 
 On Linux, `scripts/install-tauri-deps.sh` installs the build dependencies;
 `scripts/rust-env.sh` can use the existing local container-builder fallback.
-For game or mod development, use [blockfield-workspace](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/DEVELOPING.md).
+For game or mod development, use [blockfield-workspace](https://github.com/Blockfield/blockfield-workspace-private/blob/main/docs/DEVELOPING.md).
 It owns the isolated server, direct Minecraft launch and testbot on Linux and Windows. The old
 integration-profile dev-launcher releases are retired. The older integration-profile code in `src-tauri/src/dev.rs`
 remains in the source tree while that cleanup is completed.
