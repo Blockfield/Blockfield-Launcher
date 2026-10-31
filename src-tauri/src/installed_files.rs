@@ -198,6 +198,96 @@ fn pack_files(root: &Path) -> Vec<(String, serde_json::Value)> {
         .unwrap_or_default()
 }
 
+const PACK_HASH_CACHE: &str = ".blockfield-pack-hash-cache.json";
+
+/// Verified-good pack files, so repeat checks are stats only: relative path
+/// inside the game dir -> (mtime nanos, size) at verification time.
+#[derive(Default, Serialize, Deserialize)]
+struct PackHashCache {
+    dirs: BTreeMap<PathBuf, PackDirCache>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct PackDirCache {
+    packwiz_mtime_ns: u128,
+    files: BTreeMap<String, PackStat>,
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+struct PackStat {
+    mtime_ns: u128,
+    size: u64,
+}
+
+fn file_stat(path: &Path) -> Option<PackStat> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let mtime_ns = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some(PackStat {
+        mtime_ns,
+        size: metadata.len(),
+    })
+}
+
+/// Real hash check of the installed pack files against the installer's index
+/// (packwiz.json): a same-size corruption is detected, while unchanged files
+/// (mtime+size match the cache) are not re-hashed. False when there is
+/// nothing to verify (fresh dir) or a file is missing or mismatched.
+pub fn pack_files_valid(root: &Path, app_data: &Path) -> bool {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let files = pack_files(&root);
+    if files.is_empty() {
+        return false;
+    }
+    let packwiz_mtime = file_stat(&root.join("packwiz.json"))
+        .map(|stat| stat.mtime_ns)
+        .unwrap_or(0);
+    let cache_path = app_data.join(PACK_HASH_CACHE);
+    let mut cache: PackHashCache = fs::read(&cache_path)
+        .ok()
+        .and_then(|data| serde_json::from_slice(&data).ok())
+        .unwrap_or_default();
+    let dir = cache.dirs.entry(root.clone()).or_default();
+    if dir.packwiz_mtime_ns != packwiz_mtime {
+        dir.files.clear();
+        dir.packwiz_mtime_ns = packwiz_mtime;
+    }
+    let mut ok = true;
+    for (relative, expected) in &files {
+        let entry_ok = match safe_file(&root, relative) {
+            Some(path) => match file_stat(&path) {
+                Some(stat) if dir.files.get(relative) == Some(&stat) => true,
+                Some(stat) if pack_hash_matches(&path, expected) => {
+                    dir.files.insert(relative.clone(), stat);
+                    true
+                }
+                _ => {
+                    dir.files.remove(relative);
+                    false
+                }
+            },
+            None => {
+                dir.files.remove(relative);
+                false
+            }
+        };
+        if !entry_ok {
+            ok = false;
+        }
+    }
+    if fs::create_dir_all(app_data).is_ok() {
+        let _ = fs::write(&cache_path, serde_json::to_vec(&cache).unwrap());
+    }
+    ok
+}
+
 fn record_file(root: &Path, relative: &str) {
     let Some(path) = safe_file(root, relative) else {
         return;
@@ -576,6 +666,39 @@ mod tests {
         assert!(modified.is_file());
         assert!(root.join("mods/mismatch.jar").is_file());
         assert!(root.join("manual.part").is_file());
+    }
+
+    #[test]
+    fn same_size_corrupted_mod_fails_pack_check_until_healed() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        let good = root.join("mods/mod.jar");
+        fs::write(&good, b"correct-bytes!").unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/mod.pw.toml": {
+                    "cachedLocation": "mods/mod.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&good).unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(pack_files_valid(&root, &data));
+        // Same byte size, different bytes: no size probe can catch this.
+        fs::write(&good, b"corrupt-bytes!").unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        // The installer rewrites the file: the next launch check passes again.
+        fs::write(&good, b"correct-bytes!").unwrap();
+        assert!(pack_files_valid(&root, &data));
+        // A fresh dir with no installer cache is never "valid".
+        assert!(!pack_files_valid(&temp.path().join("empty"), &data));
     }
 
     #[test]

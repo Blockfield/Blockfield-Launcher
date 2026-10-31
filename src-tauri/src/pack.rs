@@ -104,15 +104,28 @@ fn client() -> reqwest::Client {
 }
 
 async fn fetch_text(url: &str) -> Result<String, String> {
-    client()
-        .get(url)
-        .send()
-        .await
-        .and_then(|response| response.error_for_status())
-        .map_err(|e| format!("{url}: {e}"))?
-        .text()
-        .await
-        .map_err(|e| format!("{url}: {e}"))
+    // The update check is a single user click: one lost packet must not fail it.
+    let mut last_error = String::new();
+    for attempt in 1..=3 {
+        let result = client()
+            .get(url)
+            .send()
+            .await
+            .and_then(|response| response.error_for_status())
+            .map_err(|e| format!("{url}: {e}"));
+        match result {
+            Ok(response) => {
+                return response.text().await.map_err(|e| format!("{url}: {e}"));
+            }
+            Err(error) => {
+                last_error = error;
+                if attempt < 3 {
+                    tokio::time::sleep(std::time::Duration::from_millis(250 * attempt)).await;
+                }
+            }
+        }
+    }
+    Err(format!("{last_error} (after 3 attempts)"))
 }
 
 pub async fn fetch_launcher_info(base: &str) -> Result<LauncherInfo, String> {
