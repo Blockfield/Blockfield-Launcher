@@ -389,6 +389,15 @@ impl Downloader {
         std::io::copy(&mut file, &mut HashWriter(&mut hasher))?;
         Ok(hex_digest(&hasher.finalize()))
     }
+
+    /// Compute the SHA-1 hex digest of a file (Mojang version metadata pins SHA-1).
+    pub fn sha1_file(path: &Path) -> Result<String, DownloadError> {
+        use sha1::Digest;
+        let mut file = std::fs::File::open(path)?;
+        let mut hasher = sha1::Sha1::new();
+        std::io::copy(&mut file, &mut Sha1Writer(&mut hasher))?;
+        Ok(hex_digest(&hasher.finalize()))
+    }
 }
 
 pub(crate) fn hex_digest(bytes: &[u8]) -> String {
@@ -431,6 +440,20 @@ struct HashWriter<'a>(&'a mut sha2::Sha256);
 impl std::io::Write for HashWriter<'_> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         use sha2::Digest;
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct Sha1Writer<'a>(&'a mut sha1::Sha1);
+
+impl std::io::Write for Sha1Writer<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        use sha1::Digest;
         self.0.update(bytes);
         Ok(bytes.len())
     }

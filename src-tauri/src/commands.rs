@@ -301,6 +301,13 @@ fn installed_pack(game_dir: &Path) -> (String, String) {
     (hash, version)
 }
 
+/// The pack phase already completed for this index hash: a retry after a
+/// runtime-phase failure must resume at the runtime phase, not replay the
+/// whole packwiz install before failing at the same spot again.
+fn pack_install_current(game_dir: &Path, index_hash: &str) -> bool {
+    installed_pack(game_dir).0 == index_hash
+}
+
 #[tauri::command]
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
@@ -444,23 +451,32 @@ pub async fn download_modpack(
     };
 
     emit_status(&app_handle, "modpack", "Обновление файлов модпака", true);
-    ensure_jar(&state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
-    ensure_jar(&state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
-    let cancel = state.cancel_flag.clone();
-    let app = app_handle.clone();
-    let (java_for_installer, dir, pack_url) =
-        (java.clone(), game_dir.clone(), pack.info.pack.clone());
-    tokio::task::spawn_blocking(move || {
-        run_packwiz_installer(&app, &cancel, &java_for_installer, &dir, &pack_url)
-    })
-    .await
-    .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
-    crate::installed_files::write(
-        &game_dir.join(INSTALLED_VERSION_FILE),
-        format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
-    )
-    .map_err(|e| format!("Failed to record installed version: {e}"))?;
-    emit_status(&app_handle, "modpack", "Файлы модпака готовы", false);
+    if pack_install_current(&game_dir, &pack.meta.index_hash) {
+        emit_status(
+            &app_handle,
+            "modpack",
+            "Файлы модпака уже установлены",
+            false,
+        );
+    } else {
+        ensure_jar(&state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
+        ensure_jar(&state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
+        let cancel = state.cancel_flag.clone();
+        let app = app_handle.clone();
+        let (java_for_installer, dir, pack_url) =
+            (java.clone(), game_dir.clone(), pack.info.pack.clone());
+        tokio::task::spawn_blocking(move || {
+            run_packwiz_installer(&app, &cancel, &java_for_installer, &dir, &pack_url)
+        })
+        .await
+        .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
+        crate::installed_files::write(
+            &game_dir.join(INSTALLED_VERSION_FILE),
+            format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
+        )
+        .map_err(|e| format!("Failed to record installed version: {e}"))?;
+        emit_status(&app_handle, "modpack", "Файлы модпака готовы", false);
+    }
 
     emit_status(
         &app_handle,
@@ -822,12 +838,47 @@ pub async fn verify_files(
     ensure_jar(&state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
     state.downloader.reset_cancel();
     let cancel = state.cancel_flag.clone();
+    let app = app_handle.clone();
+    let dir = game_dir.clone();
     tokio::task::spawn_blocking(move || {
-        run_packwiz_installer(&app_handle, &cancel, &java, &game_dir, &pack.info.pack)
+        run_packwiz_installer(&app, &cancel, &java, &dir, &pack.info.pack)
     })
     .await
     .map_err(|e| format!("Verification task failed: {e}"))??;
-    Ok(Vec::new())
+    // Runtime files were never re-checked: a same-size corrupt jar passed every
+    // size probe while the game crashed at launch. Delete the corrupt files so
+    // the dependency pass below re-downloads them against the metadata hashes.
+    let loader = pack.meta.loader.clone();
+    if let Some(loader) = &loader {
+        crate::minecraft::ensure_loader_profile(&game_dir, &pack.meta.minecraft, loader).await?;
+    }
+    let loader_id = loader
+        .as_ref()
+        .map(|loader| crate::minecraft::loader_version_id(&pack.meta.minecraft, loader));
+    let loader_id = loader_id
+        .as_deref()
+        .filter(|id| crate::minecraft::loader_profile_exists(&game_dir, id));
+    let corrupt =
+        crate::minecraft::find_corrupt_runtime_files(&game_dir, &pack.meta.minecraft, loader_id)?;
+    for path in &corrupt {
+        let _ = std::fs::remove_file(path);
+    }
+    if !corrupt.is_empty()
+        || !crate::minecraft::has_launch_dependencies(&game_dir, &pack.meta.minecraft, loader_id)
+    {
+        crate::minecraft::ensure_launch_dependencies(
+            &state.downloader,
+            &app_handle,
+            &game_dir,
+            &pack.meta.minecraft,
+            loader_id,
+        )
+        .await?;
+    }
+    Ok(corrupt
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect())
 }
 
 #[tauri::command]
@@ -1487,6 +1538,15 @@ mod tests {
             .unwrap();
         writer.write_all(contents).unwrap();
         writer.finish().unwrap();
+    }
+
+    #[test]
+    fn pack_install_resumes_when_marker_is_current() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!pack_install_current(dir.path(), "abc"));
+        std::fs::write(dir.path().join(INSTALLED_VERSION_FILE), "abc\n1.0\n").unwrap();
+        assert!(pack_install_current(dir.path(), "abc"));
+        assert!(!pack_install_current(dir.path(), "other"));
     }
 
     #[test]
