@@ -301,11 +301,15 @@ fn installed_pack(game_dir: &Path) -> (String, String) {
     (hash, version)
 }
 
-/// The pack phase already completed for this index hash: a retry after a
-/// runtime-phase failure must resume at the runtime phase, not replay the
-/// whole packwiz install before failing at the same spot again.
-fn pack_install_current(game_dir: &Path, index_hash: &str) -> bool {
+/// The pack phase already completed for this index hash AND every file the
+/// installer cached is still on disk: a retry after a runtime-phase failure
+/// resumes at the runtime phase instead of replaying the whole packwiz
+/// install before failing at the same spot again. A deleted mod fails the
+/// cheap cache check and forces a full installer run, so it heals without a
+/// manual verify.
+fn pack_phase_complete(game_dir: &Path, index_hash: &str) -> bool {
     installed_pack(game_dir).0 == index_hash
+        && crate::installed_files::pack_cache_complete(game_dir)
 }
 
 #[tauri::command]
@@ -451,7 +455,7 @@ pub async fn download_modpack(
     };
 
     emit_status(&app_handle, "modpack", "Обновление файлов модпака", true);
-    if pack_install_current(&game_dir, &pack.meta.index_hash) {
+    if pack_phase_complete(&game_dir, &pack.meta.index_hash) {
         emit_status(
             &app_handle,
             "modpack",
@@ -846,23 +850,29 @@ pub async fn verify_files(
     .await
     .map_err(|e| format!("Verification task failed: {e}"))??;
     // Runtime files were never re-checked: a same-size corrupt jar passed every
-    // size probe while the game crashed at launch. Delete the corrupt files so
+    // size probe while the game crashed at launch. Heal the manifests first so
+    // the hash checks trust fresh metadata, then delete the corrupt files so
     // the dependency pass below re-downloads them against the metadata hashes.
+    // The hash scan is blocking file IO: it runs on the blocking pool.
     let loader = pack.meta.loader.clone();
     if let Some(loader) = &loader {
         crate::minecraft::ensure_loader_profile(&game_dir, &pack.meta.minecraft, loader).await?;
     }
+    crate::minecraft::heal_runtime_manifests(&game_dir, &pack.meta.minecraft).await?;
     let loader_id = loader
         .as_ref()
         .map(|loader| crate::minecraft::loader_version_id(&pack.meta.minecraft, loader));
     let loader_id = loader_id
         .as_deref()
         .filter(|id| crate::minecraft::loader_profile_exists(&game_dir, id));
-    let corrupt =
-        crate::minecraft::find_corrupt_runtime_files(&game_dir, &pack.meta.minecraft, loader_id)?;
-    for path in &corrupt {
-        let _ = std::fs::remove_file(path);
-    }
+    let minecraft = pack.meta.minecraft.clone();
+    let loader_id_owned = loader_id.map(String::from);
+    let dir = game_dir.clone();
+    let corrupt = tokio::task::spawn_blocking(move || {
+        crate::minecraft::heal_corrupt_runtime_files(&dir, &minecraft, loader_id_owned.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Verification task failed: {e}"))??;
     if !corrupt.is_empty()
         || !crate::minecraft::has_launch_dependencies(&game_dir, &pack.meta.minecraft, loader_id)
     {
@@ -1541,12 +1551,30 @@ mod tests {
     }
 
     #[test]
-    fn pack_install_resumes_when_marker_is_current() {
+    fn pack_phase_skips_only_when_marker_current_and_cache_complete() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(!pack_install_current(dir.path(), "abc"));
-        std::fs::write(dir.path().join(INSTALLED_VERSION_FILE), "abc\n1.0\n").unwrap();
-        assert!(pack_install_current(dir.path(), "abc"));
-        assert!(!pack_install_current(dir.path(), "other"));
+        let root = dir.path();
+        // No marker: full installer run.
+        assert!(!pack_phase_complete(root, "abc"));
+        std::fs::write(root.join(INSTALLED_VERSION_FILE), "abc\n1.0\n").unwrap();
+        // Marker current but no installer cache: full run.
+        assert!(!pack_phase_complete(root, "abc"));
+        // A deleted mod forces a full run so it heals without a manual verify.
+        std::fs::write(
+            root.join("packwiz.json"),
+            r#"{"cachedFiles": {
+                "a": {"cachedLocation": "mods/a.jar", "hash": {"type": "sha256", "value": "x"}},
+                "b": {"cachedLocation": "mods/b.jar", "hash": {"type": "sha256", "value": "y"}}
+            }}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("mods")).unwrap();
+        std::fs::write(root.join("mods/a.jar"), b"a").unwrap();
+        assert!(!pack_phase_complete(root, "abc"));
+        std::fs::write(root.join("mods/b.jar"), b"b").unwrap();
+        assert!(pack_phase_complete(root, "abc"));
+        // Stale marker: full run even with a complete cache.
+        assert!(!pack_phase_complete(root, "other"));
     }
 
     #[test]

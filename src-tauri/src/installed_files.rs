@@ -198,6 +198,16 @@ fn pack_files(root: &Path) -> Vec<(String, serde_json::Value)> {
         .unwrap_or_default()
 }
 
+/// Every file the last installer run cached is still on disk (cheap, no
+/// hashing): a deleted mod forces a full installer run instead of a skip.
+pub fn pack_cache_complete(root: &Path) -> bool {
+    let files = pack_files(root);
+    !files.is_empty()
+        && files
+            .iter()
+            .all(|(relative, _)| safe_file(root, relative).is_some())
+}
+
 fn record_file(root: &Path, relative: &str) {
     let Some(path) = safe_file(root, relative) else {
         return;

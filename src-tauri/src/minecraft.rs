@@ -489,6 +489,63 @@ async fn download_text_to(url: &str, path: &Path) -> Result<(), String> {
         .map_err(|e| format!("Failed to activate {}: {e}", path.display()))
 }
 
+/// Re-download the version json and asset index when their bytes no longer
+/// match the manifest pins, so per-file hash checks trust fresh metadata.
+/// A corrupt manifest file heals here instead of aborting the verify.
+pub async fn heal_runtime_manifests(
+    game_dir: &Path,
+    minecraft_version: &str,
+) -> Result<(), String> {
+    let manifest = fetch_json(&version_manifest_url()).await?;
+    let entry = manifest["versions"]
+        .as_array()
+        .and_then(|versions| {
+            versions
+                .iter()
+                .find(|version| version["id"].as_str() == Some(minecraft_version))
+        })
+        .ok_or_else(|| format!("Minecraft version not found: {minecraft_version}"))?;
+    let url = entry["url"]
+        .as_str()
+        .ok_or_else(|| format!("Minecraft version has no URL: {minecraft_version}"))?;
+    let path = version_json_path(game_dir, minecraft_version);
+    let fresh = entry["sha1"]
+        .as_str()
+        .is_none_or(|sha1| file_matches_sha1(&path, sha1));
+    if !fresh {
+        download_text_to(url, &path).await?;
+    }
+    let vanilla = read_json_file(&path)?;
+    let asset_index = &vanilla["assetIndex"];
+    if let (Some(id), Some(url), Some(sha1)) = (
+        asset_index["id"].as_str(),
+        asset_index["url"].as_str(),
+        asset_index["sha1"].as_str(),
+    ) {
+        let index_path = game_dir
+            .join("assets")
+            .join("indexes")
+            .join(format!("{id}.json"));
+        if !file_matches_sha1(&index_path, sha1) {
+            download_text_to(url, &index_path).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Blocking hash scan plus deletion, designed for `spawn_blocking`: removes
+/// every same-size-corrupt runtime file and returns what was removed.
+pub fn heal_corrupt_runtime_files(
+    game_dir: &Path,
+    minecraft_version: &str,
+    loader_version_id: Option<&str>,
+) -> Result<Vec<PathBuf>, String> {
+    let corrupt = find_corrupt_runtime_files(game_dir, minecraft_version, loader_version_id)?;
+    for path in &corrupt {
+        let _ = std::fs::remove_file(path);
+    }
+    Ok(corrupt)
+}
 /// Version metadata, loader profiles and the asset index are each fetched with
 /// a single attempt elsewhere; bulk file downloads retry 3x. One lost packet
 /// must not fail the whole update, so metadata gets the same 3 attempts.
@@ -762,14 +819,15 @@ fn artifact_from_library(library: &Value) -> Option<Artifact> {
         return Some(artifact);
     }
     // Fabric lists libraries as maven coordinates plus a repository base, with no `downloads` block.
+    // The live profile ships per-library hashes (sha1/md5/sha256/sha512); only
+    // entries without one (e.g. intermediary) fall back to size/existence.
     let path = maven_path(library["name"].as_str()?)?;
     let base = library["url"].as_str()?.trim_end_matches('/');
     Some(Artifact {
         url: format!("{base}/{path}"),
         path,
         size: library["size"].as_u64().unwrap_or(0),
-        // No checksum in the profile: the size check is all there is for these.
-        sha1: None,
+        sha1: library["sha1"].as_str().map(String::from),
     })
 }
 
@@ -1317,6 +1375,129 @@ mod tests {
 
         assert!(has_launch_dependencies(&root, version, None));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fabric_library_hashes_are_used_when_present() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let json = serde_json::json!({"libraries": [
+            {"name": "org.ow2.asm:asm:9.10.1", "url": "https://maven.fabricmc.net/",
+             "size": 7, "sha1": hex(b"correct")},
+            {"name": "net.fabricmc:intermediary:1.21.1", "url": "https://maven.fabricmc.net/"}
+        ]});
+
+        let (libraries, _) = collect_library_artifacts(&json);
+        assert_eq!(libraries.len(), 2);
+        assert_eq!(libraries[0].sha1.as_deref(), Some(hex(b"correct").as_str()));
+        // The intermediary entry ships no hash: size/existence is all there is.
+        assert_eq!(libraries[1].sha1, None);
+
+        // Executed loader code with a same-size corruption must not verify.
+        let dir = tempfile::tempdir().unwrap();
+        let partial = dir.path().join("asm-9.10.1.jar.part");
+        std::fs::write(&partial, b"corrupt").unwrap();
+        assert!(verify_downloaded_hash(&partial, &libraries[0], "asm").is_err());
+    }
+
+    #[test]
+    fn heal_corrupt_runtime_files_removes_mismatches() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let version = "1.20.1";
+        let version_dir = root.join("versions").join(version);
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(
+            version_dir.join(format!("{version}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "downloads": { "client": {
+                    "url": "https://example.invalid/client.jar",
+                    "size": 7,
+                    "sha1": hex(b"correct")
+                }},
+                "libraries": [],
+                "assetIndex": { "id": "test", "url": "https://example.invalid/assets.json" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let jar = version_dir.join(format!("{version}.jar"));
+        std::fs::write(&jar, b"corrupt").unwrap();
+        let healed = heal_corrupt_runtime_files(root, version, None).unwrap();
+        assert_eq!(healed, vec![jar.clone()]);
+        assert!(!jar.exists());
+        assert!(heal_corrupt_runtime_files(root, version, None)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn corrupt_runtime_manifests_heal_by_redownload() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        // Bind first so the version json can point at the real index URL.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let index_json = br#"{"objects":{}}"#.to_vec();
+        let version_json = serde_json::to_vec(&serde_json::json!({
+            "downloads": { "client": {
+                "url": "https://example.invalid/client.jar", "size": 1 }},
+            "libraries": [],
+            "assetIndex": {
+                "id": "test",
+                "url": format!("http://{address}/index.json"),
+                "sha1": hex(&index_json)
+            }
+        }))
+        .unwrap();
+        let manifest = format!(
+            r#"{{"versions":[{{"id":"1.20.1","url":"http://{address}/v.json","sha1":"{}"}}]}}"#,
+            hex(&version_json)
+        )
+        .into_bytes();
+        let bodies = vec![manifest, version_json.clone(), index_json.clone()];
+        std::thread::spawn(move || {
+            for (body, mut stream) in bodies
+                .into_iter()
+                .zip(listener.incoming().take(3).flatten())
+            {
+                use std::io::{Read, Write};
+                let mut buffer = [0u8; 4096];
+                let _ = stream.read(&mut buffer);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(&body);
+            }
+        });
+        unsafe {
+            std::env::set_var(
+                "BLOCKFIELD_MOJANG_MANIFEST_URL",
+                format!("http://{address}/manifest.json"),
+            );
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let version_dir = root.join("versions").join("1.20.1");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(version_dir.join("1.20.1.json"), b"truncated{").unwrap();
+        let index_path = root.join("assets").join("indexes").join("test.json");
+        std::fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+        std::fs::write(&index_path, b"stale{}").unwrap();
+
+        heal_runtime_manifests(root, "1.20.1").await.unwrap();
+        unsafe {
+            std::env::remove_var("BLOCKFIELD_MOJANG_MANIFEST_URL");
+        }
+        assert_eq!(
+            std::fs::read(version_dir.join("1.20.1.json")).unwrap(),
+            version_json
+        );
+        assert_eq!(std::fs::read(&index_path).unwrap(), index_json);
     }
 
     #[test]
