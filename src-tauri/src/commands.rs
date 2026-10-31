@@ -301,15 +301,30 @@ fn installed_pack(game_dir: &Path) -> (String, String) {
     (hash, version)
 }
 
-/// The pack phase already completed for this index hash AND every file the
-/// installer cached is still on disk: a retry after a runtime-phase failure
-/// resumes at the runtime phase instead of replaying the whole packwiz
-/// install before failing at the same spot again. A deleted mod fails the
-/// cheap cache check and forces a full installer run, so it heals without a
-/// manual verify.
-fn pack_phase_complete(game_dir: &Path, index_hash: &str) -> bool {
+/// The pack phase already completed for this index hash AND a real hash check
+/// of the installed files passes: a retry after a runtime-phase failure
+/// resumes at the runtime phase. A missing or same-size-corrupted mod fails
+/// the check and forces a full installer run, so it heals without a manual
+/// verify. Unchanged files are not re-hashed (mtime+size cache).
+fn pack_phase_complete(app_data: &Path, game_dir: &Path, index_hash: &str) -> bool {
     installed_pack(game_dir).0 == index_hash
-        && crate::installed_files::pack_cache_complete(game_dir)
+        && crate::installed_files::pack_files_valid(game_dir, app_data)
+}
+
+/// Blocking pack hash check, designed for `spawn_blocking`: a corrupt pack
+/// must not survive a launch, so the check runs off the async worker.
+async fn pack_phase_done(app_data: PathBuf, game_dir: PathBuf, index_hash: String) -> bool {
+    tokio::task::spawn_blocking(move || pack_phase_complete(&app_data, &game_dir, &index_hash))
+        .await
+        .unwrap_or(false)
+}
+
+async fn pack_files_valid_blocking(app_data: PathBuf, game_dir: PathBuf) -> bool {
+    tokio::task::spawn_blocking(move || {
+        crate::installed_files::pack_files_valid(&game_dir, &app_data)
+    })
+    .await
+    .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -332,7 +347,16 @@ pub async fn check_modpack_version(
     let game_dir = PathBuf::from(&config.game_dir);
     let (installed_hash, installed) = installed_pack(&game_dir);
     // A frozen dev pack must not turn "Играть" into "Обновить": the developer manages these files.
-    let needs_update = installed_hash != meta.index_hash && !crate::dev::freeze_pack();
+    // A same-size-corrupted pack must not look current either: the hash check
+    // (cached, stats only for unchanged files) forces the update screen.
+    let pack_done = pack_phase_done(
+        state.app_data_dir.clone(),
+        game_dir.clone(),
+        meta.index_hash.clone(),
+    )
+    .await;
+    let needs_update =
+        (installed_hash != meta.index_hash || !pack_done) && !crate::dev::freeze_pack();
     log::info!(
         "[check_modpack_version] pack={} remote={} installed={} needs_update={needs_update}",
         info.pack,
@@ -455,7 +479,13 @@ pub async fn download_modpack(
     };
 
     emit_status(&app_handle, "modpack", "Обновление файлов модпака", true);
-    if pack_phase_complete(&game_dir, &pack.meta.index_hash) {
+    if pack_phase_done(
+        state.app_data_dir.clone(),
+        game_dir.clone(),
+        pack.meta.index_hash.clone(),
+    )
+    .await
+    {
         emit_status(
             &app_handle,
             "modpack",
@@ -1033,6 +1063,29 @@ pub async fn launch_game(
     let game_dir_path = PathBuf::from(&game_dir);
     std::fs::create_dir_all(&game_dir_path).map_err(|e| e.to_string())?;
     let _tracking = crate::installed_files::begin(&state.app_data_dir, &game_dir_path)?;
+    // A same-size-corrupted pack must not survive a launch: refuse and point
+    // at Updates, where the installer heals it. Skipped for frozen dev packs.
+    if !crate::dev::freeze_pack() {
+        let pack_ok = match &pack {
+            Some(pack) => {
+                pack_phase_done(
+                    state.app_data_dir.clone(),
+                    game_dir_path.clone(),
+                    pack.meta.index_hash.clone(),
+                )
+                .await
+            }
+            None => {
+                pack_files_valid_blocking(state.app_data_dir.clone(), game_dir_path.clone()).await
+            }
+        };
+        if !pack_ok {
+            return Err(
+                "Pack files changed or are missing. Open Updates to repair them, then launch again."
+                    .to_string(),
+            );
+        }
+    }
 
     let loader_version_id = pack
         .as_ref()
@@ -1551,30 +1604,39 @@ mod tests {
     }
 
     #[test]
-    fn pack_phase_skips_only_when_marker_current_and_cache_complete() {
+    fn pack_phase_skips_only_when_marker_current_and_files_verify() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
+        let data = dir.path().join("app-data");
         // No marker: full installer run.
-        assert!(!pack_phase_complete(root, "abc"));
+        assert!(!pack_phase_complete(&data, root, "abc"));
         std::fs::write(root.join(INSTALLED_VERSION_FILE), "abc\n1.0\n").unwrap();
         // Marker current but no installer cache: full run.
-        assert!(!pack_phase_complete(root, "abc"));
-        // A deleted mod forces a full run so it heals without a manual verify.
+        assert!(!pack_phase_complete(&data, root, "abc"));
+        let good = root.join("mods/a.jar");
+        std::fs::create_dir_all(root.join("mods")).unwrap();
+        std::fs::write(&good, b"correct-bytes!").unwrap();
         std::fs::write(
             root.join("packwiz.json"),
-            r#"{"cachedFiles": {
-                "a": {"cachedLocation": "mods/a.jar", "hash": {"type": "sha256", "value": "x"}},
-                "b": {"cachedLocation": "mods/b.jar", "hash": {"type": "sha256", "value": "y"}}
-            }}"#,
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "a": {
+                    "cachedLocation": "mods/a.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": crate::download::Downloader::sha256_file(&good).unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
         )
         .unwrap();
-        std::fs::create_dir_all(root.join("mods")).unwrap();
-        std::fs::write(root.join("mods/a.jar"), b"a").unwrap();
-        assert!(!pack_phase_complete(root, "abc"));
-        std::fs::write(root.join("mods/b.jar"), b"b").unwrap();
-        assert!(pack_phase_complete(root, "abc"));
-        // Stale marker: full run even with a complete cache.
-        assert!(!pack_phase_complete(root, "other"));
+        assert!(pack_phase_complete(&data, root, "abc"));
+        // A same-size corrupted mod forces a full run so it heals.
+        std::fs::write(&good, b"corrupt-bytes!").unwrap();
+        assert!(!pack_phase_complete(&data, root, "abc"));
+        // Stale marker: full run even with verified files.
+        std::fs::write(&good, b"correct-bytes!").unwrap();
+        assert!(!pack_phase_complete(&data, root, "other"));
     }
 
     #[test]
