@@ -31,6 +31,7 @@ import type {
 } from '../../lib/api'
 import { localizedContentText, useLauncherContent } from '../../lib/content'
 import { friendlyError, type ErrorContext } from '../../lib/errors'
+import { shouldAutoLaunchAfterSync } from '../../lib/auto-launch'
 
 type StepStatus = 'done' | 'active' | 'pending'
 type Phase =
@@ -85,7 +86,13 @@ const INITIAL_STEPS: Array<{ label: TKey; status: StepStatus }> = [
 
 const freshSteps = () => INITIAL_STEPS.map((step) => ({ ...step }))
 
-export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
+export function UpdateScreen({
+  updateRequest,
+  autoLaunchRequest,
+}: {
+  updateRequest: number
+  autoLaunchRequest: number
+}) {
   const { lang, t } = useI18n()
   const game = useGameState()
   const gameBusy = game.phase !== 'idle'
@@ -113,6 +120,9 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
   const [launching, setLaunching] = useState(false)
   const [steps, setSteps] = useState<Array<{ label: TKey; status: StepStatus }>>(freshSteps)
   const [runToken, setRunToken] = useState(0)
+  // Newest Play-triggered routing seen; consumed once the game starts itself.
+  // Manual visits never bump the prop, so plain updates stay put.
+  const lastAutoLaunchRef = useRef(0)
 
   const unlistenRef = useRef<UnlistenFn | null>(null)
   const unlistenMirrorRef = useRef<UnlistenFn | null>(null)
@@ -494,6 +504,23 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     setStep,
     t,
   ])
+
+  // Continue a Play press that routed here: launch once the sync is done.
+  useEffect(() => {
+    if (
+      !shouldAutoLaunchAfterSync({
+        phase,
+        playTriggered: autoLaunchRequest !== lastAutoLaunchRef.current,
+        launching,
+        gameBusy,
+      })
+    )
+      return
+    // One-shot: consume before launching so a mid-launch PACK_STALE re-sync
+    // ends on the done screen instead of looping.
+    lastAutoLaunchRef.current = autoLaunchRequest
+    void handleLaunch()
+  }, [phase, autoLaunchRequest, launching, gameBusy, handleLaunch])
 
   const statusText = () => {
     if (gameBusy) return gameStateLabel(game.phase)

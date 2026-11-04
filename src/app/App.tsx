@@ -86,6 +86,9 @@ export default function App() {
 
   const [updatesVisited, setUpdatesVisited] = useState(false)
   const [updateRequest, setUpdateRequest] = useState(0)
+  // Play-triggered routings to Updates: the update flow launches on its own
+  // after the sync, so a forced update never costs the player a second press.
+  const [autoLaunchRequest, setAutoLaunchRequest] = useState(0)
   const [commandError, setCommandError] = useState<string | null>(null)
   // First run: never signed in on this install. Holding the loaded config here (instead of
   // just a boolean) lets the setup screen show real defaults (game dir/Java/RAM).
@@ -376,13 +379,14 @@ export default function App() {
               onPlay={() => {
                 if (profileBlocked) return
                 setUpdateRequest((value) => value + 1)
+                setAutoLaunchRequest((value) => value + 1)
                 navigate('update')
               }}
             />
           )}
           {updatesVisited && (
             <div hidden={screen !== 'update'} className="h-full min-h-0">
-              <UpdateScreen updateRequest={updateRequest} />
+              <UpdateScreen updateRequest={updateRequest} autoLaunchRequest={autoLaunchRequest} />
             </div>
           )}
           {screen === 'stats' && <StatsScreen uuid={account.uuid} />}
