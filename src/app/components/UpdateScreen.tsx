@@ -462,6 +462,13 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
       setStep(3, 'done')
       setPhase('complete')
     } catch (e) {
+      // A newer pack published mid-download: re-run the sync instead of dying
+      // on a stale launch.
+      if (String(e).includes('PACK_STALE')) {
+        addLog('A newer pack appeared — re-syncing.', 'info')
+        handleRetry()
+        return
+      }
       addLog(`ERROR: Launch failed — ${String(e)}`, 'warn')
       setPhase('error')
       setErrorContext('launch')
@@ -480,6 +487,7 @@ export function UpdateScreen({ updateRequest }: { updateRequest: number }) {
     applyBackendStatus,
     applyMirror,
     applyProgress,
+    handleRetry,
     launching,
     gameBusy,
     resetSpeed,

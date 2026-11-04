@@ -57,3 +57,13 @@ describe('settings validation errors', () => {
     expect(friendlyError('Unexpected failure', 'settings-save').message).not.toContain('доступ')
   })
 })
+
+describe('stale pack', () => {
+  it('points a stale pack at Updates instead of a generic launch failure', () => {
+    const result = friendlyError(
+      'PACK_STALE: installed pack is outdated (remote 2.80.0). Open Updates to install it, then launch again.',
+      'launch',
+    )
+    expect(result.message).toContain('Обновления')
+  })
+})

@@ -92,6 +92,12 @@ export function friendlyError(raw: unknown, context: ErrorContext): FriendlyErro
   if (text.includes(SESSION_EXPIRED)) {
     return { message: 'Сессия истекла — войдите снова.', raw: text }
   }
+  if (text.includes('PACK_STALE')) {
+    return {
+      message: 'Пак устарел — откройте «Обновления», чтобы скачать свежую сборку.',
+      raw: text,
+    }
+  }
   if (text.includes('Drasl account server unavailable')) {
     return { message: 'Сервер аккаунтов недоступен, попробуйте позже.', raw: text }
   }

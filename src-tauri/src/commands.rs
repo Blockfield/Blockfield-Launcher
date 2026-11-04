@@ -327,6 +327,29 @@ async fn pack_files_valid_blocking(app_data: PathBuf, game_dir: PathBuf) -> bool
     .unwrap_or(false)
 }
 
+/// Launch-time staleness verdict: `Some(PACK_STALE …)` when the installed pack
+/// is positively older than the published manifest. Any client change (a new
+/// mod JAR carrying a protocol bump included) changes the pack `[index]` hash,
+/// so the hash comparison covers protocol updates without parsing them; the
+/// server gate stays the protocol authority and only kicks as a last resort.
+/// The UI routes this to the update screen, which installs the pack itself
+/// before joining — no manual step.
+fn stale_pack_message(installed_hash: &str, meta: &PackMeta) -> Option<String> {
+    (installed_hash != meta.index_hash).then(|| {
+        format!(
+            "PACK_STALE: installed pack is outdated (remote {}). Open Updates to install it, then launch again.",
+            meta.version
+        )
+    })
+}
+
+async fn fresh_pack_state() -> Result<PackState, String> {
+    let base = pack_base_url()?;
+    let info = pack::fetch_launcher_info(&base).await?;
+    let meta = pack::fetch_pack_meta(&info.pack).await?;
+    Ok(PackState { info, meta })
+}
+
 #[tauri::command]
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
@@ -1049,6 +1072,30 @@ pub async fn launch_game(
     let config = state.config.read().await.validated_active()?;
     let identity = crate::account::game_identity(&app_handle, &state).await?;
     let pack = state.pack.read().await.clone();
+
+    // A cached (or missing) version check may predate a release: launching the
+    // stale pack would only die at the server gate with a manual "close the
+    // game and update" step. Re-check the published manifest here so the UI
+    // routes to the update screen instead. An unreachable manifest is fail-open
+    // (offline launch keeps working); a positive mismatch fails closed.
+    let pack = if !crate::dev::freeze_pack() {
+        match fresh_pack_state().await {
+            Ok(fresh) => {
+                let installed_hash = installed_pack(&PathBuf::from(&config.game_dir)).0;
+                if let Some(stale) = stale_pack_message(&installed_hash, &fresh.meta) {
+                    return Err(stale);
+                }
+                *state.pack.write().await = Some(fresh.clone());
+                Some(fresh)
+            }
+            Err(error) => {
+                log::warn!("launch: pack manifest unreachable, using cached state: {error}");
+                pack
+            }
+        }
+    } else {
+        pack
+    };
 
     let java = resolved_java_path(&config);
     if java == "java" && !system_java_available() {
@@ -1942,5 +1989,19 @@ mod tests {
         assert!(long.starts_with("1.0 MB - "), "{long}");
         assert!(long.ends_with("…"), "{long}");
         assert_eq!(long.chars().count(), "1.0 MB - ".len() + 44);
+    }
+
+    #[test]
+    fn stale_pack_message_fires_only_on_index_mismatch() {
+        let meta = PackMeta {
+            version: "2.80.0".into(),
+            index_hash: "new-hash".into(),
+            minecraft: "1.21.1".into(),
+            loader: None,
+        };
+        assert!(stale_pack_message("new-hash", &meta).is_none());
+        let stale = stale_pack_message("old-hash", &meta).expect("stale pack must refuse launch");
+        assert!(stale.starts_with("PACK_STALE"), "{stale}");
+        assert!(stale.contains("2.80.0"), "{stale}");
     }
 }
