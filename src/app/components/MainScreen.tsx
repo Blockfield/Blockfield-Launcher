@@ -158,6 +158,13 @@ export function MainScreen({
         setLaunchStatus(t('main.gameStarted'))
       } catch (e) {
         console.error('Launch failed:', e)
+        // The backend re-checks the manifest at launch: a pack that went stale
+        // since the tab's check routes to the update screen, which installs it
+        // itself before joining — no manual step.
+        if (String(e).includes('PACK_STALE')) {
+          onPlay()
+          return
+        }
         setLaunchError(String(e))
         setLaunchStatus('')
       } finally {
