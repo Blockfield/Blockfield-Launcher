@@ -585,6 +585,8 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let game = scratch.path().join("game");
         let mut config = LauncherConfig {
+            // Host-independent: default 4096 exceeds the host-derived max on small machines.
+            ram_mb: 2048,
             game_dir: game.to_string_lossy().into_owned(),
             workshop_game_dir: game.to_string_lossy().into_owned(),
             ..LauncherConfig::default()
@@ -613,6 +615,8 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let missing = scratch.path().join("java").join("bin").join("java");
         let config = LauncherConfig {
+            // Host-independent: default 4096 exceeds the host-derived max on small machines.
+            ram_mb: 2048,
             game_dir: scratch.path().join("game").to_string_lossy().into_owned(),
             workshop_game_dir: scratch
                 .path()
@@ -636,6 +640,8 @@ mod tests {
         let game = scratch.path().join("game");
         let workshop = scratch.path().join("not-created").join("workshop");
         let mut config = LauncherConfig {
+            // Host-independent: default 4096 exceeds the host-derived max on small machines.
+            ram_mb: 2048,
             game_dir: game.to_string_lossy().into_owned(),
             workshop_game_dir: workshop.to_string_lossy().into_owned(),
             ..LauncherConfig::default()

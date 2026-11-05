@@ -693,6 +693,14 @@ mod tests {
         assert!(pack_files_valid(&root, &data));
         // Same byte size, different bytes: no size probe can catch this.
         fs::write(&good, b"corrupt-bytes!").unwrap();
+        // Real corruption lands long after install; pin a distinct mtime so this
+        // stays deterministic where filesystem timestamp granularity is coarse.
+        std::fs::File::options()
+            .write(true)
+            .open(&good)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
         assert!(!pack_files_valid(&root, &data));
         // The installer rewrites the file: the next launch check passes again.
         fs::write(&good, b"correct-bytes!").unwrap();

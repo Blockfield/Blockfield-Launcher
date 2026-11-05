@@ -1680,6 +1680,14 @@ mod tests {
         assert!(pack_phase_complete(&data, root, "abc"));
         // A same-size corrupted mod forces a full run so it heals.
         std::fs::write(&good, b"corrupt-bytes!").unwrap();
+        // Real corruption lands long after install; pin a distinct mtime so this
+        // stays deterministic where filesystem timestamp granularity is coarse.
+        std::fs::File::options()
+            .write(true)
+            .open(&good)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
         assert!(!pack_phase_complete(&data, root, "abc"));
         // Stale marker: full run even with verified files.
         std::fs::write(&good, b"correct-bytes!").unwrap();
