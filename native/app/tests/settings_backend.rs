@@ -42,7 +42,10 @@ fn form_save_preserves_account_and_other_profile_and_rejects_invalid_writes() {
     };
     let data = SettingsData {
         game_dir: config.game_dir.clone().into(),
-        ram: 4,
+        // Minimum RAM: save_settings validates against host memory, so the
+        // fixture must fit small-gate hosts too (this test is about the
+        // account/profile payload, not RAM sizes).
+        ram: 2,
         max_ram: 12,
         lang: "ru".into(),
         pre_launch: "echo before\necho after".into(),

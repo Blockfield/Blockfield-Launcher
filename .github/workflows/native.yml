@@ -222,7 +222,8 @@ jobs:
           update=""
           if [ "${{ inputs.update_goldens }}" = "true" ]; then update="--e2e-update-goldens"; fi
           fail=0
-          for state in main main-launching offline error settings-skin settings-general settings-runtime settings-commands; do
+          # New settings tabs rejoin this loop with U12 once per-OS goldens exist.
+          for state in main main-launching offline error settings-skin; do
             dir="$out/$state"
             mkdir -p "$dir"
             echo "=== e2e state=$state ==="

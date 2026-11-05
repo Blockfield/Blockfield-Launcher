@@ -295,24 +295,36 @@ export component SettingsScreen inherits Rectangle {
                 }
             }
             actions := Rectangle {
+                // A wrapped save error grows the footer (Tauri wraps its actions
+                // row the same way); the body above shrinks, nothing overpaints.
+                // footer-main stays instantiated so its error height is readable.
+                property <length> row-height: root.tab < 3 ? Math.max(40px, footer-error.height) : 40px;
                 x: root.edge;
-                y: parent.height - 64px - 2 * root.edge;
+                y: parent.height - self.height - root.edge;
                 width: parent.width - 2 * root.edge;
-                height: 64px + root.edge;
+                height: 24px + self.row-height + root.edge;
                 background: Tokens.chrome;
                 Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: #18130d; }
-                if root.tab < 3: HorizontalLayout {
-                    x: 20px; width: parent.width - 40px; y: 13px; height: 40px;
-                    spacing: 12px; alignment: end;
-                    FormButton { text: "СБРОС"; footer: true; horizontal-padding: 20px; clicked => { SettingsForm.reset(); } }
-                    FormError { width: SettingsForm.error == "" ? 0px : 320px; height: 40px; message: SettingsForm.error; raw: SettingsForm.raw-error; }
-                    FormButton {
+                footer-main := Rectangle {
+                    visible: root.tab < 3;
+                    x: 20px; width: parent.width - 40px; y: 12px; height: parent.height - 24px - root.edge;
+                    save-button := FormButton {
+                        x: parent.width - self.width; y: (parent.height - 40px) / 2;
                         footer: true; busy: SettingsForm.saving;
                         text: SettingsForm.saving ? "СОХРАНЕНИЕ..." : SettingsForm.saved ? "СОХРАНЕНО" : "СОХРАНИТЬ";
                         icon: @image-url("../assets/icons/save.svg"); horizontal-padding: 24px;
                         primary: SettingsForm.dirty;
                         enabled: SettingsForm.dirty && !SettingsForm.saving && !SettingsForm.blocked;
                         clicked => { SettingsForm.save(); }
+                    }
+                    footer-error := FormError {
+                        x: save-button.x - 12px - self.width; y: (parent.height - self.height) / 2;
+                        width: SettingsForm.error == "" ? 0px : 320px;
+                        message: SettingsForm.error; raw: SettingsForm.raw-error;
+                    }
+                    FormButton {
+                        x: footer-error.x - 12px - self.width; y: (parent.height - 40px) / 2;
+                        text: "СБРОС"; footer: true; horizontal-padding: 20px; clicked => { SettingsForm.reset(); }
                     }
                 }
                 if root.tab >= 3: HorizontalLayout {
