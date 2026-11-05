@@ -4,6 +4,7 @@ mod config;
 mod dev;
 mod download;
 mod game;
+#[cfg(target_os = "linux")]
 mod host_env;
 mod installed_files;
 mod minecraft;
