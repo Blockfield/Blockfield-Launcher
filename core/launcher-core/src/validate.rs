@@ -32,7 +32,10 @@ pub fn is_valid_username(name: &str) -> bool {
 pub const USERNAME_HINT: &str = "Ник в Minecraft (3-16 букв, цифр или _).";
 
 /// `game-directory.ts:4` — keep a `Blockfield` folder, else append one.
-/// `PathBuf::push` reproduces `join` normalization on each platform.
+/// Join mirrors the Tauri reference (`@tauri-apps/api/path` goes through the
+/// backend `plugin:path|join`, tauri 2.12.1 `src/path/plugin.rs`): append the
+/// platform separator unless empty/trailing-sep, then normalize separators
+/// (`PathBuf::push` alone keeps `/` on Windows, which Tauri never emits).
 pub fn selected_game_directory(parent: &str) -> String {
     let name = parent
         .trim_end_matches(['/', '\\'])
@@ -42,7 +45,14 @@ pub fn selected_game_directory(parent: &str) -> String {
     if name.to_lowercase() == "blockfield" {
         return parent.to_owned();
     }
-    let mut joined = std::path::PathBuf::from(parent);
-    joined.push("Blockfield");
-    joined.to_string_lossy().into_owned()
+    let mut out = parent.to_owned();
+    if !parent.is_empty() && !parent.ends_with('/') && !parent.ends_with('\\') {
+        out.push(std::path::MAIN_SEPARATOR);
+    }
+    out.push_str("Blockfield");
+    if std::path::MAIN_SEPARATOR == '\\' {
+        out.replace('/', "\\")
+    } else {
+        out
+    }
 }
