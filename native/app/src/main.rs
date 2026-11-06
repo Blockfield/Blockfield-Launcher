@@ -140,6 +140,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             blockfield_native::settings_fixtures::apply(&app, &state, &scenario)?;
         } else if state == "settings-skin" {
             fixtures::apply_settings(&app)?;
+        } else if state == "update" {
+            fixtures::apply_update(&app, &scenario)?;
         } else {
             fixtures::apply_main(&app, &state, &scenario)?;
         }

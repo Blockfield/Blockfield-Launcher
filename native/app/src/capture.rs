@@ -25,6 +25,9 @@ pub fn start(
     host: &Rc<PreviewHost>,
     directory: PathBuf,
 ) -> std::io::Result<Timer> {
+    if app.get_active() == 1 {
+        return start_update(app, directory);
+    }
     if app.get_show_main() {
         return start_main(app, directory);
     }
@@ -285,4 +288,27 @@ fn key(app: &AppWindow, text: slint::SharedString) {
         .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
     app.window()
         .dispatch_event(WindowEvent::KeyReleased { text });
+}
+
+pub fn start_update(app: &AppWindow, directory: PathBuf) -> std::io::Result<Timer> {
+    fs::create_dir_all(&directory)?;
+    let timer = Timer::default();
+    let weak = app.as_weak();
+    let mut frame = 0;
+    timer.start(TimerMode::Repeated, Duration::from_millis(250), move || {
+        let app = weak.upgrade().expect("capture window");
+        match frame {
+            0 => snapshot(&app, &directory, "update"),
+            1 => crate::fixtures::apply_update(&app, "error").expect("update error fixtures"),
+            2 => snapshot(&app, &directory, "update-error"),
+            3 => crate::fixtures::apply_update(&app, "complete").expect("update complete fixtures"),
+            4 => snapshot(&app, &directory, "update-complete"),
+            _ => {
+                println!("PASS update capture");
+                slint::quit_event_loop().expect("finish update capture");
+            }
+        }
+        frame += 1;
+    });
+    Ok(timer)
 }

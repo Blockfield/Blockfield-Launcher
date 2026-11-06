@@ -35,6 +35,7 @@ impl Backend {
     pub fn start(self, app: &AppWindow) {
         let Self::Core(handle) = self else {
             crate::main_ops::attach_fixtures(app);
+            crate::update::attach_fixtures(app);
             crate::settings_fixtures::defaults(app);
             crate::settings_tabs::wire(app, None);
             return;
@@ -86,8 +87,11 @@ impl Backend {
             };
             let callbacks_state = state.clone();
             let callbacks_handle = tokio::runtime::Handle::current();
+            let update_state = state.clone();
+            let update_handle = tokio::runtime::Handle::current();
             let _ = weak.upgrade_in_event_loop(move |app| {
                 crate::main_ops::attach(&app, callbacks_state, callbacks_handle);
+                crate::update::attach_core(&app, update_state, update_handle);
             });
             (state.events)(LauncherEvent::GameStatus(status_ops::game_status(&state)));
             let settings_state = state.clone();

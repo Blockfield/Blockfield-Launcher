@@ -9,6 +9,7 @@ import { Spinner } from "main-controls.slint";
 import { ScrollView } from "std-widgets.slint";
 import { GridBackdrop, TopoBackdrop } from "backdrop.slint";
 import { SkinPreview } from "../../skin3d/src/slint_preview.slint";
+import { LauncherUpdatePanel, LauncherUpdateData } from "update.slint";
 
 component SettingsTabButton inherits Rectangle {
     in property <string> label;
@@ -63,6 +64,7 @@ export component SettingsScreen inherits Rectangle {
     in property <image> skin-frame;
     in property <string> skin-error;
     in property <string> caption;
+    in property <LauncherUpdateData> launcher-data;
     in property <bool> dirty: false;
     callback browse-skin();
     callback browse-cape();
@@ -73,6 +75,9 @@ export component SettingsScreen inherits Rectangle {
     callback tab-changed(int);
     callback drag-state(bool);
     callback drag-by(float, float);
+    callback check();
+    callback install();
+    callback restart();
     // WebKit floors CSS borders after zoom; phx preserves that at fractional DPI.
     private property <length> edge: Math.floor(1px / 1phx) * 1phx;
     private property <length> label-leading: Math.floor(16.5px / 1phx) * 1phx;
@@ -291,6 +296,21 @@ export component SettingsScreen inherits Rectangle {
                             horizontal-alignment: center;
                             overflow: elide;
                         }
+                    }
+                }
+                if root.tab == 4: Rectangle {
+                    x: 20px;
+                    y: 8px;
+                    width: parent.width - 40px;
+                    height: parent.height - 16px;
+                    LauncherUpdatePanel {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        data: root.launcher-data;
+                        check => { root.check(); }
+                        install => { root.install(); }
+                        restart => { root.restart(); }
                     }
                 }
             }
