@@ -136,7 +136,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.set_dev_build(true);
     }
     if use_fixtures {
-        if state == "settings-skin" {
+        if ["settings-general", "settings-runtime", "settings-commands"].contains(&state.as_str()) {
+            blockfield_native::settings_fixtures::apply(&app, &state, &scenario)?;
+        } else if state == "settings-skin" {
             fixtures::apply_settings(&app)?;
         } else if state == "login" {
             fixtures::apply_login(&app, &scenario)?;
@@ -145,6 +147,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             fixtures::apply_main(&app, &state, &scenario)?;
         }
+    }
+    if use_fixtures {
+        app.set_dev_build(dev);
     }
     if self_check {
         skin::arm_self_check(&app, &skin_host);

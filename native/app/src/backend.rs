@@ -36,8 +36,14 @@ impl Backend {
         let Self::Core(handle) = self else {
             crate::main_ops::attach_fixtures(app);
             crate::auth::attach_fixtures(app);
+            crate::settings_fixtures::defaults(app);
+            crate::settings_tabs::wire(app, None);
             return;
         };
+        app.global::<crate::SettingsForm>().set_loading(true);
+        app.set_settings_tab(0);
+        // The auth gate owns the window until sign-in: logged-out users must
+        // never see the main Shell, even though settings init runs up front.
         app.set_show_main(false);
         app.set_show_login(false);
         app.set_show_firstrun(false);
@@ -74,6 +80,8 @@ impl Backend {
                     let message = format!("Cannot initialize launcher: {error}");
                     eprintln!("{message}");
                     let _ = weak.upgrade_in_event_loop(move |app| {
+                        // The settings overlay would otherwise hide this error and block input.
+                        app.global::<crate::SettingsForm>().set_loading(false);
                         let mut data = app.get_main_data();
                         data.checking = false;
                         data.check_error = message.into();
@@ -141,6 +149,7 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
         ..Default::default()
     });
     crate::main_ops::attach(app, state.clone(), handle.clone());
+    let settings_handle = handle.clone();
     let weak = app.as_weak();
     handle.spawn(async move {
         let settings = tokio::task::spawn_blocking({
@@ -168,7 +177,10 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
             }
         };
         (state.events)(LauncherEvent::GameStatus(status_ops::game_status(&state)));
+        let settings_state = state.clone();
         let _ = weak.upgrade_in_event_loop(move |app| {
+            crate::settings_tabs::apply_response(&app, &settings);
+            crate::settings_tabs::wire(&app, Some((settings_state, settings_handle)));
             app.set_username(settings["username"].as_str().unwrap_or_default().into());
             app.set_workshop(settings["activeProfile"] == "workshop");
         });

@@ -32,6 +32,9 @@ pub fn start(
     golden_dir: PathBuf,
     update: bool,
 ) -> std::io::Result<Timer> {
+    if app.get_active() == 3 && app.get_settings_tab() < 3 {
+        return crate::settings_e2e::start(app, out_dir, golden_dir, update);
+    }
     fs::create_dir_all(&out_dir)?;
     let os = std::env::consts::OS;
     let log_path = out_dir.join("e2e.log");
