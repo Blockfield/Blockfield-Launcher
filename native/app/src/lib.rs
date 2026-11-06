@@ -12,6 +12,7 @@ pub mod settings_e2e;
 pub mod settings_fixtures;
 pub mod settings_tabs;
 pub mod skin;
+pub mod stats;
 pub mod update;
 pub mod window_activity;
 
@@ -56,6 +57,9 @@ pub fn wire_app(
         if let Some(app) = weak.upgrade() {
             app.set_active(index);
             skin::sync_visibility(&app, &navigate_host);
+            if index == 2 {
+                app.invoke_stats_shown();
+            }
         }
     });
     let weak = app.as_weak();
