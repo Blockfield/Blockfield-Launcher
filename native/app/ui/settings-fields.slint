@@ -1,0 +1,222 @@
+import { Tokens } from "tokens.slint";
+import { ActionArea } from "controls.slint";
+export component SettingRow inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <[string]> hint;
+    // CSS rows use 12px vertical padding and a 260px label column.
+    in property <length> row-height;
+    in property <bool> last: false;
+    private property <length> edge: Math.floor(1px / 1phx) * 1phx;
+    private property <length> label-leading: Math.floor(16.5px / 1phx) * 1phx;
+    private property <length> hint-leading: Math.floor(15.125px / 1phx) * 1phx;
+    height: root.row-height;
+    Rectangle {
+        x: 0px;
+        y: 14px;
+        width: 28px;
+        height: 28px;
+        background: Tokens.chrome;
+        border-width: Math.floor(1px / 1phx) * 1phx;
+        border-color: Tokens.border;
+        Image {
+            x: 7px;
+            y: 7px;
+            width: 14px;
+            height: 14px;
+            source: root.icon;
+            colorize: Tokens.primary;
+        }
+    }
+    Text {
+        x: 40px;
+        y: 12px;
+        width: 220px;
+        height: 15px;
+        text: root.label;
+        font-size: 11px;
+        letter-spacing: 1.32px;
+        color: Tokens.neutral-100;
+        vertical-alignment: center;
+    }
+    // CSS leading-snug is 1.375; Slint's multiline leading is font-dependent.
+    for line[index] in root.hint: Text {
+        x: 40px;
+        y: 16px + root.label-leading + index * root.hint-leading;
+        width: 220px;
+        height: root.hint-leading;
+        text: line;
+        font-size: 11px;
+        color: Tokens.muted-foreground;
+    }
+    Rectangle {
+        x: 284px;
+        y: 12px;
+        width: root.width - 284px;
+        height: root.height - 24px - root.edge;
+        @children
+    }
+    for dash in (root.last ? 0 : Math.ceil(root.width / 6px)): Rectangle {
+        x: dash * 6px; y: root.height - root.edge; width: Math.min(3px, root.width - self.x); height: root.edge; background: Tokens.secondary;
+    }
+}
+
+export component PathField inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    callback browse();
+    height: 40px;
+    clip: true;
+    background: Tokens.chrome;
+    border-width: Math.floor(1px / 1phx) * 1phx;
+    border-color: Tokens.border;
+    field-text := Text {
+        x: 12px;
+        y: 0px;
+        width: parent.width - 79px;
+        height: parent.height;
+        text: root.value;
+        font-family: Tokens.mono;
+        font-size: 12px;
+        color: Tokens.neutral-200;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    browse-button := ActionArea {
+        x: root.width - self.width;
+        y: 0px;
+        width: 67px;
+        height: parent.height;
+        label: "ОБЗОР";
+        background: Tokens.card;
+        Rectangle { x: 0px; y: 0px; width: 1px; height: parent.height; background: Tokens.border; }
+        browse-label := Text {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            text: "ОБЗОР";
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 1.4px;
+            color: parent.hovered ? Tokens.foreground : Tokens.secondary-foreground;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        clicked => { root.browse(); }
+    }
+    TouchArea {
+        x: 0px;
+        y: 0px;
+        width: parent.width - 67px;
+        mouse-cursor: text;
+        clicked => { root.browse(); }
+    }
+}
+
+export component SettingsToggle inherits Rectangle {
+    in property <string> label;
+    in property <bool> on: false;
+    in property <string> on-label;
+    in property <string> off-label;
+    callback toggled(bool);
+    // e2e hook only: exposes the toggle to the Slint testing tree, no pixels change.
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checked: root.on;
+    accessible-action-default => { root.toggled(!root.on); }
+    width: 64px;
+    height: 28px;
+    track := TouchArea {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.toggled(!root.on); }
+    }
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 56px;
+        height: 28px;
+        background: root.on ? Tokens.border : Tokens.chrome;
+        border-width: Math.floor(1px / 1phx) * 1phx;
+        border-color: root.on ? Tokens.primary.with-alpha(0.6) : Tokens.border;
+        Rectangle {
+            x: root.on ? 31px : 3px;
+            y: 4px;
+            width: 20px;
+            height: 20px;
+            background: root.on ? Tokens.primary : #3a2c1d;
+            animate x { duration: 150ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }
+        }
+    }
+    Text {
+        x: 0px;
+        y: 35px;
+        width: 56px;
+        height: 12px;
+        text: root.on ? root.on-label : root.off-label;
+        font-size: 9px;
+        letter-spacing: 1.44px;
+        color: root.on ? Tokens.primary : Tokens.muted-foreground;
+        horizontal-alignment: right;
+    }
+}
+
+export component SettingsButton inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> primary: false;
+    in property <bool> enabled: true;
+    in property <length> horizontal-padding: 24px;
+    callback clicked();
+    // e2e hook only: exposes the button to the Slint testing tree, no pixels change.
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { root.clicked(); }
+    height: 40px;
+    width: measure.preferred-width + (root.icon.width > 0 ? 25px : 0px) + root.horizontal-padding * 2;
+    opacity: root.enabled ? 1 : 0.5;
+    measure := Text {
+        text: root.text;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 1.98px;
+        opacity: 0;
+    }
+    background: root.primary ? @linear-gradient(180deg, #2a2116, #11100d) : Tokens.chrome;
+    border-width: Math.floor(1px / 1phx) * 1phx;
+    border-color: root.primary ? (touch.has-hover ? Tokens.primary : Tokens.primary.with-alpha(0.4)) : (touch.has-hover ? Tokens.ring : Tokens.border);
+    touch := TouchArea {
+        x: 0px;
+        y: 0px;
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+    if root.icon.width > 0: Image {
+        x: root.horizontal-padding + 1px;
+        y: 13.5px;
+        width: 13px;
+        height: 13px;
+        source: root.icon;
+        colorize: Tokens.foreground;
+    }
+    caption := Text {
+        x: root.icon.width > 0 ? root.horizontal-padding + 26px : root.horizontal-padding + 1px;
+        y: 0px;
+        width: measure.preferred-width;
+        height: parent.height;
+        text: root.text;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 1.98px;
+        color: root.icon.width > 0 || (root.enabled && touch.has-hover) ? Tokens.foreground : Tokens.secondary-foreground;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
