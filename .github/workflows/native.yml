@@ -92,7 +92,8 @@ jobs:
           cargo clippy --locked --release --all-targets -- -D warnings
       # Layer 1: headless testing-tree scenarios, no display needed.
       - name: Tests (Layer 1)
-        timeout-minutes: 20
+        # Windows cold-cache release test builds take 11-20 min; 20 timed out.
+        timeout-minutes: 40
         run: |
           cd native/app
           cargo test --locked --release
