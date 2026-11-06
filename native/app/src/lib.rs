@@ -8,6 +8,7 @@ mod main_e2e;
 pub mod main_ops;
 pub mod runtime;
 pub mod skin;
+pub mod update;
 pub mod window_activity;
 
 pub use skin3d::slint::PreviewHost;

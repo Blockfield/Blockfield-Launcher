@@ -1,0 +1,334 @@
+import { Tokens } from "tokens.slint";
+import { ActionArea, StatusDot } from "controls.slint";
+import { GridBackdrop, TopoBackdrop, GlowPanel } from "backdrop.slint";
+import { MainButton, MainMotion, Spinner } from "main-controls.slint";
+
+// Pack-sync screen (nav "ОБНОВЛЕНИЯ") + launcher self-update panel (settings
+// tab "ЛАУНЧЕР"). Mirrors the Tauri UpdateScreen/LauncherUpdatePanel look and
+// behaviour; all derived labels live here like on the main screen, so Rust
+// only carries raw state.
+
+export struct UpdateLogLine { ts: string, msg: string, tone: int }
+
+export struct UpdateData {
+    // checking|downloading|verifying|launching|complete|error|uptodate
+    phase: string,
+    status-message: string,
+    can-cancel: bool,
+    progress: float,
+    // bytes|files
+    progress-unit: string,
+    file-index: int,
+    file-count: int,
+    current-file: string,
+    downloaded: string,
+    total: string,
+    remaining: string,
+    speed: string,
+    mirror-name: string,
+    mirror-status: string,
+    mirror-bad: bool,
+    operation: string,
+    patch: string,
+    description: string,
+    log: [UpdateLogLine],
+    // 0 pending, 1 active, 2 done
+    step0: int, step1: int, step2: int, step3: int,
+    error: string,
+    launching: bool,
+    // idle = ready; anything else blocks actions like on the main screen.
+    game-phase: string,
+    game-label: string,
+    game-sub: string,
+}
+
+export struct LauncherUpdateData {
+    // idle|checking|current|available|downloading|verifying|installing|installed|restarting|error
+    phase: string,
+    current-version: string,
+    update-version: string,
+    update-body: string,
+    downloaded: string,
+    total: string,
+    percent: int,
+    has-total: bool,
+    checked-at: string,
+    error: string,
+    installed: bool,
+}
+
+component SmallLabel inherits Text {
+    font-size: 10px; letter-spacing: 1.4px; color: Tokens.muted-foreground;
+    vertical-alignment: center;
+}
+
+component UpdateStat inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> accent: false;
+    in property <bool> mono: false;
+    background: Tokens.chrome;
+    SmallLabel { x: 12px; y: 8px; width: parent.width - 24px; height: 14px; text: root.label; font-size: 9px; letter-spacing: 1.44px; overflow: elide; }
+    Text { x: 12px; y: 24px; width: parent.width - 24px; height: 18px; text: root.value; font-size: 12px; letter-spacing: 1.44px; color: root.accent ? Tokens.success : Tokens.neutral-100; font-family: root.mono ? Tokens.mono : Tokens.sans; vertical-alignment: center; overflow: elide; }
+}
+
+component UpdateStep inherits Rectangle {
+    in property <string> label;
+    // 0 pending, 1 active, 2 done
+    in property <int> state;
+    height: 26px;
+    Rectangle { x: 0px; y: 10px; width: 8px; height: 8px; border-radius: 4px;
+        background: root.state == 2 ? Tokens.success : root.state == 1 ? Tokens.primary : Tokens.secondary;
+    }
+    Text { x: 20px; y: 0px; width: parent.width - 120px; height: parent.height; text: root.label; font-size: 11px; letter-spacing: 1.32px;
+        color: root.state == 1 ? Tokens.foreground : root.state == 2 ? Tokens.secondary-foreground : Tokens.muted-foreground;
+        vertical-alignment: center; overflow: elide; }
+    Text { x: parent.width - self.preferred-width; y: 0px; height: parent.height;
+        text: root.state == 2 ? "ГОТОВО" : root.state == 1 ? "В РАБОТЕ" : "В ОЧЕРЕДИ";
+        font-size: 9px; letter-spacing: 1.44px; color: Tokens.muted-foreground; vertical-alignment: center; }
+    Rectangle { x: 0px; y: parent.height - 1phx; width: parent.width; height: 1phx; background: Tokens.secondary; }
+}
+
+component UpdateAction inherits Rectangle {
+    in property <string> label;
+    in property <string> sub;
+    in property <image> icon;
+    in property <bool> spinning: false;
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 230px; height: 64px;
+    touch := ActionArea { x: 0px; y: 0px; label: root.label; enabled: root.enabled;
+        clicked => { if root.enabled { root.clicked(); } } }
+    opacity: root.enabled ? 1 : 0.6;
+    background: root.danger ? #1a0e0e : @linear-gradient(180deg, #2a2116, #11100d);
+    border-width: 1phx;
+    border-color: root.danger ? #7a3838 : root.enabled && touch.hovered ? Tokens.primary : root.danger ? #3a2828 : Tokens.primary.with-alpha(0.5);
+    animate border-color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+    for corner in 4: Rectangle {
+        x: Math.mod(corner, 2) == 0 ? 1px : parent.width - 13px; y: corner < 2 ? 1px : parent.height - 13px; width: 12px; height: 12px;
+        Rectangle { y: 0px; x: Math.mod(corner, 2) == 0 ? 0px : 11px; width: 1px; background: root.danger ? #7a3838 : Tokens.primary; }
+        Rectangle { x: 0px; y: corner < 2 ? 0px : 11px; height: 1px; background: root.danger ? #7a3838 : Tokens.primary; }
+    }
+    HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: parent.height; alignment: center; spacing: 16px;
+        Rectangle { width: 18px; height: 64px;
+            if root.spinning: Spinner { x: 0px; y: 23px; width: 18px; height: 18px; }
+            if !root.spinning && root.icon.width > 0: Image { x: 0px; y: 23px; width: 18px; height: 18px; source: root.icon;
+                colorize: root.danger ? #c98b8b : Tokens.foreground; }
+        }
+        VerticalLayout { alignment: center; spacing: 4px;
+            Text { text: root.label; color: root.danger ? #c98b8b : Tokens.foreground; font-size: 17px; font-weight: Tokens.weight-medium; letter-spacing: 3.4px; height: 17px; }
+            Text { text: root.sub; color: root.danger ? #7a3838 : Tokens.secondary-foreground; font-size: 9px; font-weight: Tokens.weight-medium; letter-spacing: 1.44px; height: 9px; }
+        }
+    }
+}
+
+export component UpdateScreen inherits Rectangle {
+    in property <UpdateData> data;
+    callback retry();
+    callback cancel();
+    callback launch();
+    private property <bool> game-busy: root.data.game-phase != "idle";
+    private property <bool> transferring: root.data.phase == "downloading" || root.data.phase == "launching";
+    private property <string> status-text: root.game-busy ? root.data.game-label :
+        root.data.phase == "checking" ? "ПРОВЕРКА ОБНОВЛЕНИЙ..." :
+        root.data.phase == "downloading" ? (root.data.status-message != "" ? root.data.status-message : "ЗАГРУЗКА МОДПАКА") :
+        root.data.phase == "verifying" ? "ПОДГОТОВКА MINECRAFT" :
+        root.data.phase == "launching" ? (root.data.status-message != "" ? root.data.status-message : "ЗАПУСК") :
+        root.data.phase == "complete" ? (root.data.status-message != "" ? root.data.status-message : "АКТУАЛЬНО") :
+        root.data.phase == "uptodate" ? "АКТУАЛЬНО" :
+        root.data.phase == "error" ? (root.data.error != "" ? root.data.error : "ОБНОВЛЕНИЕ МОДПАКА") : "ОБНОВЛЕНИЕ МОДПАКА";
+    private property <color> status-color: root.data.phase == "error" ? #c98b8b :
+        root.data.phase == "complete" || root.data.phase == "uptodate" ? Tokens.success : Tokens.primary;
+    private property <string> mirror-status: root.transferring ? root.data.speed :
+        root.data.mirror-status != "" ? root.data.mirror-status : "ПРОВЕРКА...";
+    background: Tokens.background;
+    TopoBackdrop { x: 0px; y: 0px; }
+    GridBackdrop { x: 0px; y: 0px; intensity: 0.5; }
+    content := Rectangle {
+        x: (parent.width - self.width) / 2; y: 20px; width: Math.min(1600px, parent.width) - 40px; height: parent.height - 40px;
+        operation := SmallLabel { x: 0px; y: 0px; height: 15px; text: "ПОДГОТОВКА ИГРЫ"; letter-spacing: 2.8px; }
+        status-label := Text { x: parent.width - self.preferred-width; y: 0px; height: 15px; text: root.status-text;
+            font-size: 10px; letter-spacing: 1.6px; color: root.status-color; vertical-alignment: center; overflow: elide; }
+        Rectangle { x: operation.preferred-width + 12px; y: 7.5px; width: status-label.x - self.x - 12px; height: 1px; background: Tokens.secondary; }
+        summary := Rectangle { x: 0px; y: Tokens.line-height(15px, 1phx) + 12px; height: 52px;
+            HorizontalLayout { x: 0px; y: 0px; height: 34px; spacing: 12px; alignment: start;
+                Text { text: root.data.operation; color: #fafafa; font-size: 26px; font-weight: Tokens.weight-medium; letter-spacing: 1.56px; vertical-alignment: center; }
+                Text { text: root.data.patch; color: Tokens.muted-foreground; font-size: 10px; letter-spacing: 1.8px; vertical-alignment: bottom; height: 26px; }
+            }
+            Text { x: 0px; y: 36px; width: Math.min(620px, parent.width - 280px); height: 16px; text: root.data.description;
+                color: Tokens.secondary-foreground; font-size: 12px; overflow: elide; }
+            mirror := Rectangle { x: parent.width - 240px; y: 0px; width: 240px; height: 52px; background: Tokens.chrome;
+                border-width: 1phx; border-color: Tokens.border;
+                SmallLabel { x: 12px; y: 6px; height: 12px; text: "ЗЕРКАЛО"; font-size: 9px; letter-spacing: 1.6px; }
+                Text { x: 12px; y: 18px; width: parent.width - 24px; height: 16px; text: root.data.mirror-name;
+                    font-size: 13px; letter-spacing: 2.34px; color: Tokens.neutral-100; overflow: elide; }
+                Text { x: 12px; y: 34px; width: parent.width - 24px; height: 14px; text: "▸ " + root.mirror-status;
+                    font-size: 11px; letter-spacing: 2.42px; color: root.data.mirror-bad ? #c98b8b : root.transferring ? Tokens.primary : Tokens.success; overflow: elide; }
+            }
+        }
+        panel := GlowPanel { x: 0px; y: summary.y + summary.height + 12px; width: parent.width; height: 252px;
+            actions := Rectangle { x: 16px; y: 12px; width: parent.width - 32px; height: 64px;
+                if root.game-busy: UpdateAction { x: 0px; y: 0px; label: root.data.game-label; sub: root.data.game-sub;
+                    icon: @image-url("../assets/icons/gamepad-2.svg"); enabled: false; }
+                if !root.game-busy && root.data.phase == "launching": UpdateAction { x: 0px; y: 0px; label: "ЗАПУСК";
+                    sub: root.data.status-message != "" ? root.data.status-message : "...";
+                    icon: @image-url("../assets/icons/loader-circle.svg"); spinning: true; enabled: false; }
+                if !root.game-busy && root.data.phase == "downloading" && root.data.can-cancel: UpdateAction { x: 0px; y: 0px;
+                    label: "ОТМЕНА"; sub: "ИДЁТ ОБНОВЛЕНИЕ"; icon: @image-url("../assets/icons/x.svg"); danger: true;
+                    clicked => { root.cancel(); } }
+                if !root.game-busy && (root.data.phase == "downloading" || root.data.phase == "verifying") && !root.data.can-cancel:
+                    UpdateAction { x: 0px; y: 0px; label: "..."; sub: root.status-text;
+                        icon: @image-url("../assets/icons/loader-circle.svg"); spinning: true; enabled: false; }
+                if !root.game-busy && (root.data.phase == "complete" || root.data.phase == "uptodate"): UpdateAction { x: 0px; y: 0px;
+                    label: root.data.launching ? "ЗАПУСК" : "ИГРАТЬ";
+                    sub: root.data.launching ? (root.data.status-message != "" ? root.data.status-message : "...") : "ПОДКЛЮЧЕНИЕ К СЕРВЕРУ";
+                    icon: root.data.launching ? @image-url("../assets/icons/loader-circle.svg") : @image-url("../assets/icons/play.svg");
+                    spinning: root.data.launching; enabled: !root.data.launching;
+                    clicked => { root.launch(); } }
+                if !root.game-busy && root.data.phase == "error": UpdateAction { x: 0px; y: 0px; label: "ПОВТОРИТЬ";
+                    sub: "RETRY DEPLOYMENT"; icon: @image-url("../assets/icons/refresh-cw.svg");
+                    clicked => { root.retry(); } }
+                if !root.game-busy && root.data.phase == "checking": UpdateAction { x: 0px; y: 0px; label: "...";
+                    sub: "ПРОВЕРКА ОБНОВЛЕНИЙ..."; icon: @image-url("../assets/icons/loader-circle.svg"); spinning: true; enabled: false; }
+                Text { x: parent.width - self.preferred-width; y: 0px; height: 20px;
+                    text: root.data.phase == "checking" ? "ПРОГРЕСС" : root.data.progress-unit == "files" ? "ОБРАБОТАНО ФАЙЛОВ" : "ПРОГРЕСС";
+                    font-size: 10px; letter-spacing: 1.8px; color: Tokens.muted-foreground; }
+                if root.data.phase == "checking": Spinner { x: parent.width - 32px; y: 24px; width: 32px; height: 32px; }
+                if root.data.phase != "checking" && root.data.progress-unit == "files": Text {
+                    x: parent.width - 220px; y: 22px; width: 220px; height: 28px;
+                    text: root.data.file-index + " / " + (root.data.file-count > 0 ? root.data.file-count : "…");
+                    font-size: 28px; color: Tokens.foreground; horizontal-alignment: right; }
+                if root.data.phase != "checking" && root.data.progress-unit != "files": HorizontalLayout {
+                    x: parent.width - 220px; y: 16px; width: 220px; height: 44px; spacing: 0px; alignment: end;
+                    Text { text: Math.round(root.data.progress * 10) / 10 + ""; font-size: 44px; color: Tokens.foreground; }
+                    Text { text: "%"; font-size: 20px; color: Tokens.muted-foreground; }
+                }
+            }
+            bar := Rectangle { x: 16px; y: actions.y + actions.height + 8px; width: parent.width - 32px; height: 10px;
+                background: Tokens.chrome; border-width: 1phx; border-color: Tokens.border; clip: true;
+                Rectangle { x: 0px; y: 0px; width: parent.width * Math.min(100, Math.max(0, root.data.progress)) / 100; height: parent.height;
+                    background: @linear-gradient(90deg, #8a571c, #f5a524 60%, #ffc861); }
+            }
+            if root.data.phase == "error" && root.data.error != "": Rectangle { x: 16px; y: bar.y + bar.height + 6px;
+                width: parent.width - 32px; height: 18px;
+                Text { x: 0px; y: 0px; width: parent.width; height: parent.height; text: root.data.error;
+                    font-size: 11px; color: #c98b8b; overflow: elide; }
+            }
+            stats := Rectangle { x: 16px; y: bar.y + bar.height + (root.data.phase == "error" && root.data.error != "" ? 24px : 8px);
+                width: parent.width - 32px; height: 58px;
+                HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: parent.height; spacing: 1px;
+                    UpdateStat { label: "ТЕКУЩИЙ ФАЙЛ"; value: root.data.current-file != "" ? root.data.current-file : "—"; mono: true; }
+                    UpdateStat { label: "ЗАГРУЖЕНО"; value: root.data.progress-unit == "files" ? "—" : root.data.downloaded + " / " + root.data.total; }
+                    UpdateStat { label: "ОСТАЛОСЬ"; value: root.data.remaining; }
+                    UpdateStat { label: "СКОРОСТЬ"; value: root.transferring ? root.data.speed : "—"; accent: true; }
+                }
+            }
+            status-row := Rectangle { x: 16px; y: stats.y + stats.height + 6px; width: parent.width - 32px; height: 14px;
+                StatusDot { x: 0px; y: 4px; tint: root.status-color; pulse: root.transferring || root.data.phase == "verifying"; }
+                Text { x: 14px; y: 0px; height: parent.height; text: root.status-text; font-size: 10px;
+                    letter-spacing: 1.6px; color: root.status-color; vertical-alignment: center; overflow: elide; }
+                Text { x: parent.width - self.preferred-width; y: 0px; height: parent.height;
+                    text: root.data.phase == "complete" ? "ФАЙЛЫ ПРОВЕРЕНЫ" : root.data.phase == "uptodate" ? "ВЕРСИЯ ПРОВЕРЕНА" : "ПРОВЕРКА ФАЙЛОВ";
+                    font-size: 10px; letter-spacing: 1.6px; color: Tokens.muted-foreground; vertical-alignment: center; }
+            }
+        }
+        lists := Rectangle { x: 0px; y: panel.y + panel.height + 8px; width: parent.width; height: parent.height - self.y;
+            border-width: 1phx; border-color: Tokens.border; background: Tokens.secondary;
+            log-pane := Rectangle { x: 1phx; y: 1phx; width: (parent.width - 2phx - 1px) * 1.35 / 2.35; height: parent.height - 2phx;
+                background: Tokens.chrome;
+                log-head := Rectangle { x: 12px; y: 10px; width: parent.width - 24px; height: 15px;
+                    Text { x: 0px; y: 0px; height: parent.height; text: "ЖУРНАЛ ОБНОВЛЕНИЯ"; font-size: 10px;
+                        letter-spacing: 1.8px; color: Tokens.foreground; vertical-alignment: center; }
+                    Text { x: parent.width - self.preferred-width; y: 0px; height: parent.height; text: "SYNC-PHASE-2";
+                        font-size: 9px; letter-spacing: 2.52px; color: Tokens.faint; vertical-alignment: center; }
+                }
+                Rectangle { x: log-head.x + log-head.preferred-width + 12px; y: 17.5px; width: parent.width - self.x - 12px; height: 1px; background: Tokens.secondary; }
+                log-list := Rectangle { x: 12px; y: 32px; width: parent.width - 24px; height: parent.height - 44px; clip: true;
+                    VerticalLayout { x: 0px; y: 0px; width: parent.width; height: self.preferred-height; spacing: 4px; alignment: start;
+                        for line in root.data.log: HorizontalLayout { height: 14px; spacing: 16px; alignment: start;
+                            Text { text: "[" + line.ts + "]"; font-family: Tokens.mono; font-size: 11px; color: Tokens.faint; }
+                            Text { text: line.msg; font-family: Tokens.mono; font-size: 11px;
+                                color: line.tone == 0 ? Tokens.success : line.tone == 1 ? Tokens.primary : line.tone == 3 ? #c98b8b : Tokens.secondary-foreground;
+                                overflow: elide; }
+                        }
+                    }
+                }
+            }
+            steps-pane := Rectangle { x: log-pane.x + log-pane.width + 1px; y: 1phx; width: parent.width - self.x - 1phx;
+                height: parent.height - 2phx; background: Tokens.chrome;
+                steps-head := Rectangle { x: 12px; y: 10px; width: parent.width - 24px; height: 15px;
+                    Text { x: 0px; y: 0px; height: parent.height; text: "ЭТАПЫ ЗАПУСКА"; font-size: 10px;
+                        letter-spacing: 1.8px; color: Tokens.foreground; vertical-alignment: center; }
+                    Text { x: parent.width - self.preferred-width; y: 0px; height: parent.height; text: "SEQ";
+                        font-size: 9px; letter-spacing: 2.52px; color: Tokens.faint; vertical-alignment: center; }
+                }
+                Rectangle { x: steps-head.x + steps-head.preferred-width + 12px; y: 17.5px; width: parent.width - self.x - 12px; height: 1px; background: Tokens.secondary; }
+                VerticalLayout { x: 12px; y: 34px; width: parent.width - 24px; height: self.preferred-height; spacing: 2px; alignment: start;
+                    UpdateStep { label: "ПРОВЕРКА ФАЙЛОВ"; state: root.data.step0; }
+                    UpdateStep { label: "ЗАГРУЗКА ОБНОВЛЕНИЯ"; state: root.data.step1; }
+                    UpdateStep { label: "ПОДГОТОВКА MINECRAFT"; state: root.data.step2; }
+                    UpdateStep { label: "ЗАПУСК"; state: root.data.step3; }
+                }
+            }
+        }
+    }
+}
+
+export component LauncherUpdatePanel inherits Rectangle {
+    in property <LauncherUpdateData> data;
+    callback check();
+    callback install();
+    callback restart();
+    private property <bool> busy: root.data.phase == "checking" || root.data.phase == "downloading" || root.data.phase == "verifying" || root.data.phase == "installing" || root.data.phase == "restarting";
+    private property <bool> transferring: root.data.phase == "downloading" || root.data.phase == "verifying" || root.data.phase == "installing";
+    private property <string> status-text: root.data.phase == "idle" ? "Проверка ещё не выполнялась" :
+        root.data.phase == "checking" ? "Проверяем обновления…" :
+        root.data.phase == "current" ? "Установлена актуальная версия" :
+        root.data.phase == "available" ? "Доступна версия " + root.data.update-version :
+        root.data.phase == "downloading" ? "Скачиваем обновление…" :
+        root.data.phase == "verifying" ? "Проверяем подпись…" :
+        root.data.phase == "installing" ? "Устанавливаем обновление…" :
+        root.data.phase == "installed" ? "Версия " + root.data.update-version + " установлена. Перезапустите лаунчер." :
+        root.data.phase == "restarting" ? "Перезапускаем лаунчер…" : "Не удалось завершить обновление";
+    private property <color> status-color: root.data.phase == "error" ? #c98b8b :
+        root.data.phase == "current" || root.data.phase == "installed" ? Tokens.success : Tokens.foreground;
+    background: Tokens.background;
+    VerticalLayout { x: 0px; y: 0px; width: parent.width; height: self.preferred-height; spacing: 8px; alignment: start;
+        HorizontalLayout { height: 22px; spacing: 8px; alignment: start;
+            Text { text: "Обновление лаунчера"; font-size: 18px; color: Tokens.foreground; vertical-alignment: center; }
+            Text { text: "Текущая версия: " + root.data.current-version; font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; }
+        }
+        Text { text: root.status-text; font-size: 13px; color: root.status-color; wrap: word-wrap; width: parent.width; }
+        if root.transferring: Rectangle { height: 40px;
+            Rectangle { x: 0px; y: 0px; width: parent.width; height: 8px; background: Tokens.chrome;
+                border-width: 1phx; border-color: Tokens.border; clip: true;
+                Rectangle { x: 0px; y: 0px; width: parent.width * (root.data.phase == "downloading" ? root.data.percent : 100) / 100;
+                    height: parent.height; background: Tokens.primary; }
+            }
+            Text { x: 0px; y: 12px; height: 16px; text: root.data.downloaded + (root.data.has-total ? " / " + root.data.total : " · размер не указан сервером");
+                font-size: 12px; color: Tokens.secondary-foreground; }
+            if root.data.has-total: Text { x: parent.width - self.preferred-width; y: 12px; height: 16px;
+                text: root.data.percent + "%"; font-size: 12px; color: Tokens.secondary-foreground; }
+        }
+        if root.data.checked-at != "": Text { text: "Последняя проверка: " + root.data.checked-at; font-size: 11px;
+            color: Tokens.secondary-foreground; }
+        if root.data.error != "": Text { text: root.data.error; font-size: 12px; color: #c98b8b; wrap: word-wrap; width: parent.width; }
+        if root.data.error == "" && root.data.update-body != "": Text { text: root.data.update-body; font-size: 12px;
+            color: Tokens.secondary-foreground; wrap: word-wrap; width: parent.width; }
+        if root.data.error == "" && root.data.update-body == "": Text {
+            text: "Новые версии проверяются при запуске лаунчера. Установка начинается по вашей команде.";
+            font-size: 12px; color: Tokens.secondary-foreground; wrap: word-wrap; width: parent.width; }
+        HorizontalLayout { height: 32px; spacing: 12px; alignment: start;
+            if !root.data.installed: MainButton { label: "Проверить обновления"; text: "ПРОВЕРИТЬ ОБНОВЛЕНИЯ";
+                icon: @image-url("../assets/icons/refresh-cw.svg"); spinning: root.data.phase == "checking";
+                enabled: !root.busy; clicked => { if self.enabled { root.check(); } } }
+            if root.data.update-version != "" && !root.data.installed: MainButton { label: "Установить обновление"; text: "УСТАНОВИТЬ";
+                icon: @image-url("../assets/icons/download.svg"); enabled: !root.busy;
+                clicked => { if self.enabled { root.install(); } } }
+            if root.data.installed: MainButton { label: "Перезапустить лаунчер"; text: "ПЕРЕЗАПУСТИТЬ ЛАУНЧЕР";
+                icon: @image-url("../assets/icons/refresh-cw.svg"); enabled: !root.busy;
+                clicked => { if self.enabled { root.restart(); } } }
+        }
+    }
+}

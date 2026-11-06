@@ -138,6 +138,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if use_fixtures {
         if state == "settings-skin" {
             fixtures::apply_settings(&app)?;
+        } else if state == "update" {
+            fixtures::apply_update(&app, &scenario)?;
         } else {
             fixtures::apply_main(&app, &state, &scenario)?;
         }

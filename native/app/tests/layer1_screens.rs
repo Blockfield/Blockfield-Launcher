@@ -37,6 +37,8 @@ fn given_app(state: &str, scenario: &str) -> (AppWindow, Rc<PreviewHost>) {
         wire_app(&app, blockfield_native::backend::Backend::Fixtures).expect("wire test app");
     if state == "settings-skin" {
         fixtures::apply_settings(&app).expect("settings fixtures");
+    } else if state == "update" {
+        fixtures::apply_update(&app, scenario).expect("update fixtures");
     } else {
         fixtures::apply_main(&app, state, scenario).expect("main fixtures");
     }
@@ -78,8 +80,11 @@ fn layer1_screen_walk() {
     scenario_settings_each_tab();
     scenario_skin_tab_controls();
     scenario_main_deploy_states();
+    scenario_update_nav_and_retry();
+    scenario_update_deploy();
+    scenario_launcher_update_panel();
     scenario_minimize_probe();
-    println!("PASS layer1 screen walk (5 scenarios)");
+    println!("PASS layer1 screen walk (8 scenarios)");
 }
 
 /// Navigate main → settings → each tab label → back, through the UI tree.
@@ -289,4 +294,56 @@ fn scenario_minimize_probe() {
     // …and restore brings the window back.
     app.window().set_minimized(false);
     assert!(!app.window().is_minimized(), "window restores");
+}
+
+/// Update screen: nav mounts it, cancel/retry drive the fixture flow.
+fn scenario_update_nav_and_retry() {
+    // Given the default online main screen…
+    let (app, _host) = given_app("main", "default");
+    // …when the operator opens updates via the nav tree, the screen mounts…
+    when_click_label(&app, "ОБНОВЛЕНИЯ");
+    assert_eq!(app.get_active(), 1, "update mounts");
+    // …and a cancelable download (update fixtures) cancels and retries.
+    let (app, _host) = given_app("update", "default");
+    assert_eq!(app.get_update_data().phase, "downloading");
+    // …when the operator cancels, the flow errors…
+    when_click_label(&app, "ОТМЕНА");
+    assert_eq!(app.get_update_data().phase, "error");
+    // …and retry resets it to checking with a fresh first step.
+    when_click_label(&app, "ПОВТОРИТЬ");
+    let data = app.get_update_data();
+    assert_eq!(data.phase, "checking");
+    assert_eq!((data.step0, data.step1), (1, 0));
+}
+
+/// Update screen: the finished pack offers play; a running game locks it.
+fn scenario_update_deploy() {
+    // Given a finished pack, the 64px play button (not the nav item) launches…
+    let (app, _host) = given_app("update", "complete");
+    let play = ElementHandle::find_by_accessible_label(&app, "ИГРАТЬ")
+        .find(|el| el.size().height > 50.0)
+        .expect("update play button exists");
+    play.invoke_accessible_default_action();
+    assert!(app.get_update_data().launching, "play starts the launch");
+    assert_eq!(app.get_update_data().phase, "launching");
+    // …while a running game replaces actions with its own state.
+    let (app, _host) = given_app("update", "running");
+    assert_eq!(app.get_update_data().game_phase, "running");
+}
+
+/// Launcher tab: the self-update panel checks, installs and restarts.
+fn scenario_launcher_update_panel() {
+    // Given the settings screen with a staged launcher update…
+    let (app, _host) = given_app("settings-skin", "default");
+    fixtures::apply_launcher_update(&app, "idle").expect("launcher fixtures");
+    when_click_label(&app, "ЛАУНЧЕР");
+    assert_eq!(app.get_settings_tab(), 4, "launcher tab selects");
+    // …when the operator checks, the staged update is offered…
+    when_click_label(&app, "Проверить обновления");
+    assert_eq!(app.get_launcher_update_data().phase, "available");
+    // …and installing finishes it, offering a restart.
+    when_click_label(&app, "Установить обновление");
+    let panel = app.get_launcher_update_data();
+    assert!(panel.installed, "install finishes");
+    assert_eq!(panel.phase, "installed");
 }
