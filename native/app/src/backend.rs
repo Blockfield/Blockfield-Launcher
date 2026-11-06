@@ -74,6 +74,8 @@ impl Backend {
                     let message = format!("Cannot initialize launcher: {error}");
                     eprintln!("{message}");
                     let _ = weak.upgrade_in_event_loop(move |app| {
+                        // The settings overlay would otherwise hide this error and block input.
+                        app.global::<crate::SettingsForm>().set_loading(false);
                         let mut data = app.get_main_data();
                         data.checking = false;
                         data.check_error = message.into();
