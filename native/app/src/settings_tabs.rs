@@ -173,6 +173,7 @@ pub fn wire(app: &AppWindow, core: Core) {
                             .set_error(friendly.message.into());
                         app.global::<SettingsForm>()
                             .set_raw_error(friendly.raw.into());
+                        app.global::<SettingsForm>().set_blocked(false);
                     }
                 });
             });
