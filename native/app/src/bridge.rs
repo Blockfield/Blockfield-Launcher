@@ -46,6 +46,11 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
             }
         }
         LauncherEvent::RoomPending => data.pending_room = true,
+        LauncherEvent::AccountExpired => {
+            // Tauri answers `account://expired` with the login screen; the
+            // stored username stays so the user can sign straight back in.
+            crate::auth::show_login_expired(app);
+        }
         event => {
             eprintln!("Launcher event has no native UI target yet: {event:?}");
             return;

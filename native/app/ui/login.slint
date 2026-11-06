@@ -1,0 +1,91 @@
+import { Tokens } from "tokens.slint";
+import { GridBackdrop, TopoBackdrop } from "backdrop.slint";
+import { AuthHeader, ErrorText, FieldRow, FormButton, LinkButton, TextField } from "forms.slint";
+
+// Native port of src/app/components/LoginScreen.tsx: same titles, hints,
+// fields and mode toggle, driven by native/app/src/auth.rs (core account ops).
+export component LoginScreen inherits Rectangle {
+    in property <string> mode: "login";
+    in-out property <string> username;
+    in-out property <string> password;
+    in property <bool> set-password;
+    in property <bool> name-valid: true;
+    in property <bool> busy;
+    in property <string> error;
+    in property <bool> can-submit;
+    callback submit();
+    callback toggle-mode();
+    callback logout();
+    callback username-edited(string);
+    callback password-edited(string);
+    callback accept();
+    background: Tokens.background;
+    TopoBackdrop { x: 0px; y: 0px; }
+    GridBackdrop { x: 0px; y: 0px; intensity: 0.4; }
+    VerticalLayout {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: Math.min(640px, parent.width - 32px);
+        alignment: center;
+        spacing: 16px;
+        AuthHeader {
+            title: root.set-password ? "НОВЫЙ ПАРОЛЬ" : (root.mode == "register" ? "РЕГИСТРАЦИЯ" : "ВХОД");
+            hint: root.set-password ? "Лаунчер перенёс ваш аккаунт. Задайте свой пароль — он понадобится для входа на других устройствах." : "Войдите в аккаунт Blockfield или создайте новый — никнейм станет вашим именем в игре.";
+        }
+        Rectangle {
+            background: Tokens.card;
+            border-width: 1px;
+            border-color: Tokens.border;
+            // 16px padding + one 65px row per visible field.
+            height: 16px + (root.set-password ? 65px : 130px);
+            inner := VerticalLayout {
+                x: 12px;
+                y: 8px;
+                width: parent.width - 24px;
+                if !root.set-password: FieldRow {
+                    label: "НИКНЕЙМ";
+                    hint: "3–16 латинских букв, цифр или _.";
+                    name-field := TextField {
+                        width: 100%;
+                        field-label: "НИКНЕЙМ";
+                        value <=> root.username;
+                        invalid: root.username != "" && !root.name-valid;
+                        edited => { root.username-edited(name-field.value); }
+                        accepted => { root.accept(); }
+                    }
+                }
+                FieldRow {
+                    label: "ПАРОЛЬ";
+                    hint: "Не меньше 8 символов.";
+                    pass-field := TextField {
+                        width: 100%;
+                        field-label: "ПАРОЛЬ";
+                        value <=> root.password;
+                        password: true;
+                        edited => { root.password-edited(pass-field.value); }
+                        accepted => { root.accept(); }
+                    }
+                }
+            }
+        }
+        if root.error != "": ErrorText { message: root.error; }
+        footer := HorizontalLayout {
+            alignment: space-between;
+            if root.set-password: LinkButton {
+                text: "Выйти";
+                accessible-label: "Выйти";
+                clicked => { root.logout(); }
+            }
+            if !root.set-password: LinkButton {
+                text: root.mode == "register" ? "Уже есть аккаунт? Войти" : "Нет аккаунта? Зарегистрироваться";
+                accessible-label: root.mode == "register" ? "Уже есть аккаунт? Войти" : "Нет аккаунта? Зарегистрироваться";
+                clicked => { root.toggle-mode(); }
+            }
+            FormButton {
+                text: root.set-password ? "СОХРАНИТЬ ПАРОЛЬ" : (root.mode == "register" ? "ЗАРЕГИСТРИРОВАТЬСЯ" : "ВОЙТИ");
+                enabled: root.can-submit && !root.busy;
+                clicked => { root.submit(); }
+            }
+        }
+    }
+}

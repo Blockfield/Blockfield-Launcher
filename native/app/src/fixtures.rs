@@ -27,6 +27,8 @@ pub const STATES: &[&str] = &[
     "error",
     "shell",
     "settings-skin",
+    "login",
+    "firstrun",
 ];
 pub const SCENARIOS: &[&str] = &[
     "default",
@@ -165,6 +167,54 @@ pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), St
     )));
     app.set_rooms(ModelRc::new(VecModel::from(rooms)));
     app.set_main_data(data);
+    Ok(())
+}
+
+/// Login fixtures: `variant` is default (empty form), register (mode
+/// toggle) or password (migration: username fixed, logout link shown).
+pub fn apply_login(app: &AppWindow, variant: &str) -> Result<(), String> {
+    if !["default", "register", "password"].contains(&variant) {
+        return Err(format!("Unknown login variant: {variant}"));
+    }
+    app.set_show_main(false);
+    app.set_show_firstrun(false);
+    app.set_login_mode(
+        if variant == "register" {
+            "register"
+        } else {
+            "login"
+        }
+        .into(),
+    );
+    app.set_login_set_password(variant == "password");
+    app.set_login_username(
+        if variant == "password" {
+            "CaptureOperator"
+        } else {
+            ""
+        }
+        .into(),
+    );
+    app.set_login_password("".into());
+    app.set_login_busy(false);
+    app.set_login_error("".into());
+    app.set_login_name_valid(true);
+    app.set_login_can_submit(false);
+    app.set_show_login(true);
+    Ok(())
+}
+
+pub fn apply_firstrun(app: &AppWindow) -> Result<(), String> {
+    app.set_show_main(false);
+    app.set_show_login(false);
+    app.set_firstrun_game_dir("/home/operator/.blockfield".into());
+    app.set_firstrun_java_path("".into());
+    app.set_firstrun_ram(4);
+    app.set_firstrun_maxram(16);
+    app.set_firstrun_presets(ModelRc::new(VecModel::from(vec![4, 6, 8, 12, 16])));
+    app.set_firstrun_saving(false);
+    app.set_firstrun_error("".into());
+    app.set_show_firstrun(true);
     Ok(())
 }
 

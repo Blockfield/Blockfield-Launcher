@@ -28,6 +28,9 @@ pub fn start(
     if app.get_show_main() {
         return start_main(app, directory);
     }
+    if app.get_show_login() || app.get_show_firstrun() {
+        return start_auth(app, directory);
+    }
     if app.get_active() == 3 {
         return start_settings(app, host, directory);
     }
@@ -141,6 +144,30 @@ pub fn start_settings(
         } else if snapshotted.get() && frame >= 12 {
             println!("PASS settings-skin capture");
             slint::quit_event_loop().expect("finish settings capture");
+        }
+        frame += 1;
+    });
+    Ok(timer)
+}
+
+/// Auth screens: one still each (login form, firstrun form), then quit.
+/// Interaction coverage lives in Layer-1; captures are eyeball references.
+pub fn start_auth(app: &AppWindow, directory: PathBuf) -> std::io::Result<Timer> {
+    fs::create_dir_all(&directory)?;
+    let timer = Timer::default();
+    let weak = app.as_weak();
+    let mut frame = 0;
+    timer.start(TimerMode::Repeated, Duration::from_millis(250), move || {
+        let app = weak.upgrade().expect("capture window");
+        let name = if app.get_show_login() {
+            "login"
+        } else {
+            "firstrun"
+        };
+        if frame == 2 {
+            snapshot(&app, &directory, name);
+            println!("PASS {name} capture");
+            slint::quit_event_loop().expect("finish auth capture");
         }
         frame += 1;
     });

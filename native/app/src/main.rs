@@ -138,6 +138,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if use_fixtures {
         if state == "settings-skin" {
             fixtures::apply_settings(&app)?;
+        } else if state == "login" {
+            fixtures::apply_login(&app, &scenario)?;
+        } else if state == "firstrun" {
+            fixtures::apply_firstrun(&app)?;
         } else {
             fixtures::apply_main(&app, &state, &scenario)?;
         }
