@@ -605,7 +605,7 @@ pub fn wire_fixtures(app: &AppWindow) {
                 _ => app.set_stats_sort(value),
             }
             app.set_stats_page(1);
-            crate::fixtures::apply_stats_page(&app, 1);
+            crate::fixtures::apply_stats_page(app, 1);
         };
         match callback {
             "mode" => app.on_stats_set_mode(move |v| {
