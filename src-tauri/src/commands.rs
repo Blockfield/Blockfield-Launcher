@@ -453,9 +453,7 @@ pub async fn download_modpack(
         .clone()
         .ok_or_else(|| "No pack info cached – call check_modpack_version first".to_string())?;
     let mut config = state.config.read().await.validated_active()?;
-    if pack.profile != config.active_profile {
-        return Err("Профиль изменился. Повторите проверку.".to_string());
-    }
+    require_pack_profile(&pack, config.active_profile)?;
     let game_dir = PathBuf::from(&config.game_dir);
     std::fs::create_dir_all(&game_dir).map_err(|e| format!("Failed to create game dir: {e}"))?;
     let _tracking = crate::installed_files::begin(&state.app_data_dir, &game_dir)?;
@@ -902,6 +900,7 @@ pub async fn verify_files(
         }
         config.validated_active()?
     };
+    require_pack_profile(&pack, config.active_profile)?;
     let game_dir = PathBuf::from(&config.game_dir);
     let java = resolved_java_path(&config);
     std::fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
@@ -1354,6 +1353,15 @@ fn pack_base_url_for(profile: ClientProfile) -> Result<String, String> {
             option_env!("VITE_BLOCKFIELD_WORKSHOP_PACK_URL"),
         ),
     }
+}
+
+/// A pack checked for one profile must never install into the other profile's
+/// game directory: refuse the cached state after a profile switch.
+fn require_pack_profile(pack: &PackState, profile: ClientProfile) -> Result<(), String> {
+    if pack.profile != profile {
+        return Err("Профиль изменился. Повторите проверку.".to_string());
+    }
+    Ok(())
 }
 
 /// Pure URL selection + validation so unit tests pin both profiles without env mutation.
@@ -2096,6 +2104,48 @@ mod tests {
         assert_eq!(
             select_pack_base_url("VITE_BLOCKFIELD_PACK_URL", None, None).unwrap_err(),
             "VITE_BLOCKFIELD_PACK_URL is required",
+        );
+    }
+
+    fn test_pack(profile: ClientProfile) -> PackState {
+        PackState {
+            profile,
+            info: LauncherInfo {
+                pack: "https://blockfield.pro/pack.toml".into(),
+                server: "localhost:25565".into(),
+                skins: None,
+                installer: crate::pack::Artifact {
+                    url: "https://example.com/i.jar".into(),
+                    sha256: "a".into(),
+                },
+                bootstrap: crate::pack::Artifact {
+                    url: "https://example.com/b.jar".into(),
+                    sha256: "b".into(),
+                },
+                java: std::collections::HashMap::new(),
+            },
+            meta: PackMeta {
+                version: "1.0".into(),
+                index_hash: "abc".into(),
+                minecraft: "1.21.1".into(),
+                loader: None,
+            },
+        }
+    }
+
+    #[test]
+    fn cached_pack_is_refused_for_the_other_profile() {
+        require_pack_profile(&test_pack(ClientProfile::Game), ClientProfile::Game).unwrap();
+        require_pack_profile(&test_pack(ClientProfile::Workshop), ClientProfile::Workshop).unwrap();
+        assert_eq!(
+            require_pack_profile(&test_pack(ClientProfile::Game), ClientProfile::Workshop)
+                .unwrap_err(),
+            "Профиль изменился. Повторите проверку.",
+        );
+        assert_eq!(
+            require_pack_profile(&test_pack(ClientProfile::Workshop), ClientProfile::Game)
+                .unwrap_err(),
+            "Профиль изменился. Повторите проверку.",
         );
     }
 }
