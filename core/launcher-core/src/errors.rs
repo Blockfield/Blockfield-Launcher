@@ -156,6 +156,8 @@ pub fn friendly_error(raw: &str, context: ErrorContext) -> FriendlyError {
         (*hit).to_owned()
     } else if raw.contains(SESSION_EXPIRED) {
         "Сессия истекла — войдите снова.".to_owned()
+    } else if raw.contains("PACK_STALE") {
+        "Пак устарел — откройте «Обновления», чтобы скачать свежую сборку.".to_owned()
     } else if raw.contains("Drasl account server unavailable") {
         "Сервер аккаунтов недоступен, попробуйте позже.".to_owned()
     } else if context == ErrorContext::Account && raw.contains("Drasl: ") {
