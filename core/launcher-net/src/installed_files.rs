@@ -363,7 +363,10 @@ fn inventory(root: &Path, directory: &Path, files: &mut BTreeSet<String>) -> Res
     Ok(())
 }
 
-fn valid_relative(path: &str) -> bool {
+/// Manifest- or index-derived relative paths must stay inside their root:
+/// no absolute paths, no `.`/`..`/empty components, no separators that
+/// escape the join. Same rule the installer tracker enforces.
+pub(crate) fn valid_relative(path: &str) -> bool {
     !path.is_empty()
         && !path.contains(['\\', ':'])
         && path

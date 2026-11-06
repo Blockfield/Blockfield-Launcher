@@ -472,6 +472,31 @@ async fn fetch_json(url: &str) -> Result<Value, String> {
     serde_json::from_slice(&bytes).map_err(|e| format!("Failed to parse JSON from {url}: {e}"))
 }
 
+/// Fetch metadata pinned by a manifest SHA-1: the bytes must match the pin
+/// *before* they replace the local file, so a stale CDN object that still
+/// parses never becomes trusted metadata and the previous file survives.
+async fn download_pinned_text_to(url: &str, path: &Path, sha1: &str) -> Result<(), String> {
+    let bytes = fetch_bytes(url).await?;
+    {
+        use sha1::Digest;
+        let actual = crate::download::hex_digest(&sha1::Sha1::digest(&bytes));
+        if !actual.eq_ignore_ascii_case(sha1) {
+            return Err(format!(
+                "Metadata from {url} does not match its pinned SHA-1"
+            ));
+        }
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+    }
+    let partial = crate::download::partial_path(path);
+    std::fs::write(&partial, &bytes)
+        .map_err(|e| format!("Failed to write {}: {e}", partial.display()))?;
+    crate::download::activate_partial(&partial, path)
+        .map_err(|e| format!("Failed to activate {}: {e}", path.display()))
+}
+
 async fn download_text_to(url: &str, path: &Path) -> Result<(), String> {
     let bytes = fetch_bytes(url).await?;
 
@@ -507,10 +532,11 @@ pub async fn heal_runtime_manifests(
         .as_str()
         .ok_or_else(|| format!("Minecraft version has no URL: {minecraft_version}"))?;
     let path = version_json_path(game_dir, minecraft_version);
-    let fresh = entry["sha1"]
-        .as_str()
-        .is_none_or(|sha1| file_matches_sha1(&path, sha1));
-    if !fresh {
+    if let Some(expected) = entry["sha1"].as_str() {
+        if !file_matches_sha1(&path, expected) {
+            download_pinned_text_to(url, &path, expected).await?;
+        }
+    } else if !path.is_file() {
         download_text_to(url, &path).await?;
     }
     let vanilla = read_json_file(&path)?;
@@ -525,7 +551,7 @@ pub async fn heal_runtime_manifests(
             .join("indexes")
             .join(format!("{id}.json"));
         if !file_matches_sha1(&index_path, sha1) {
-            download_text_to(url, &index_path).await?;
+            download_pinned_text_to(url, &index_path, sha1).await?;
         }
     }
     Ok(())
@@ -722,6 +748,9 @@ pub fn find_corrupt_runtime_files(
                 continue;
             };
             let path = libs_root.join(&artifact.path);
+            if !path.starts_with(&libs_root) {
+                continue;
+            }
             if path.is_file() && !file_matches_sha1(&path, expected) {
                 corrupt.push(path);
             }
@@ -741,6 +770,9 @@ pub fn find_corrupt_runtime_files(
                     continue;
                 };
                 let path = objects_root.join(&artifact.path);
+                if !path.starts_with(&objects_root) {
+                    continue;
+                }
                 if path.is_file() && !file_matches_sha1(&path, expected) {
                     corrupt.push(path);
                 }
@@ -793,8 +825,12 @@ fn collect_asset_artifacts(index_json: &Value) -> Vec<Artifact> {
         .filter_map(|(_, object)| {
             let hash = object["hash"].as_str()?;
             let prefix = hash.get(0..2)?;
+            let path = format!("{prefix}/{hash}");
+            if !crate::installed_files::valid_relative(&path) {
+                return None;
+            }
             Some(Artifact {
-                path: format!("{prefix}/{hash}"),
+                path,
                 url: format!("{}/{prefix}/{hash}", asset_base_url()),
                 size: object["size"].as_u64().unwrap_or(0),
                 sha1: Some(hash.to_string()),
@@ -846,6 +882,12 @@ fn maven_path(name: &str) -> Option<String> {
 
 fn artifact_from_value(value: &Value) -> Option<Artifact> {
     let path = value["path"].as_str()?;
+    // Untrusted metadata decides where we write and what we delete: an
+    // absolute path or `..` must never become an Artifact. Fabric coordinates
+    // get the same treatment in `maven_path`.
+    if !crate::installed_files::valid_relative(path) {
+        return None;
+    }
     let url = value["url"].as_str()?;
     Some(Artifact {
         path: path.to_string(),
@@ -1757,5 +1799,134 @@ mod tests {
         let url = serve_flaky_then_ok();
         let json = fetch_json(&url).await.unwrap();
         assert_eq!(json["ok"], true);
+    }
+
+    #[test]
+    fn manifest_paths_escaping_the_game_dir_are_never_deleted() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().join("game");
+        let version = "1.20.1";
+        let version_dir = root.join("versions").join(version);
+        std::fs::create_dir_all(&version_dir).unwrap();
+        // A real file outside libraries/ that a `..` path would resolve to.
+        let victim = root.join("traversal-victim.txt");
+        std::fs::write(&victim, b"corrupt").unwrap();
+        std::fs::write(
+            version_dir.join(format!("{version}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "downloads": { "client": {
+                    "url": "https://example.invalid/client.jar",
+                    "size": 7,
+                    "sha1": hex(b"correct")
+                }},
+                "libraries": [{
+                    "downloads": { "artifact": {
+                        "path": "../traversal-victim.txt",
+                        "url": "https://example.invalid/evil.jar",
+                        "size": 7,
+                        "sha1": hex(b"correct")
+                    }}
+                }, {
+                    "downloads": { "artifact": {
+                        "path": "/abs/evil.jar",
+                        "url": "https://example.invalid/evil2.jar",
+                        "size": 7,
+                        "sha1": hex(b"correct")
+                    }}
+                }],
+                "assetIndex": { "id": "test", "url": "https://example.invalid/assets.json" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let index_dir = root.join("assets").join("indexes");
+        std::fs::create_dir_all(&index_dir).unwrap();
+        std::fs::write(
+            index_dir.join("test.json"),
+            serde_json::to_vec(&serde_json::json!({ "objects": {
+                "evil": { "hash": "../traversal-victim", "size": 7 }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+
+        // Nothing escapes: no finding reported, victim untouched.
+        assert!(find_corrupt_runtime_files(&root, version, None)
+            .unwrap()
+            .is_empty());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"corrupt");
+        // Constructors reject directly.
+        for bad in ["../x.jar", "/abs/x.jar", "a/../../x.jar", ""] {
+            let value = serde_json::json!({
+                "path": bad, "url": "https://example.invalid/x.jar", "size": 1
+            });
+            assert!(artifact_from_value(&value).is_none(), "{bad}");
+        }
+        let index = serde_json::json!({ "objects": {
+            "evil": { "hash": "../traversal-victim", "size": 7 }
+        }});
+        assert!(collect_asset_artifacts(&index).is_empty());
+    }
+
+    #[tokio::test]
+    async fn heal_rejects_metadata_that_misses_its_pin() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        // The manifest pins GOOD bytes, but the endpoint serves different,
+        // still-parseable STALE bytes (stale CDN object).
+        let good = serde_json::to_vec(&serde_json::json!({
+            "downloads": { "client": {
+                "url": "https://example.invalid/client.jar", "size": 1 }},
+            "libraries": [],
+            "assetIndex": { "id": "test", "url": "https://example.invalid/assets.json" }
+        }))
+        .unwrap();
+        let stale = br#"{"downloads":{},"libraries":[]}"#.to_vec();
+        let manifest = format!(
+            r#"{{"versions":[{{"id":"1.20.1","url":"http://{address}/v.json","sha1":"{}"}}]}}"#,
+            hex(&good)
+        )
+        .into_bytes();
+        let bodies = vec![manifest, stale];
+        std::thread::spawn(move || {
+            for (body, mut stream) in bodies
+                .into_iter()
+                .zip(listener.incoming().take(2).flatten())
+            {
+                use std::io::{Read, Write};
+                let mut buffer = [0u8; 4096];
+                let _ = stream.read(&mut buffer);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(&body);
+            }
+        });
+        unsafe {
+            std::env::set_var(
+                "BLOCKFIELD_MOJANG_MANIFEST_URL",
+                format!("http://{address}/manifest.json"),
+            );
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let version_dir = root.join("versions").join("1.20.1");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        let local = version_dir.join("1.20.1.json");
+        std::fs::write(&local, b"old{}").unwrap();
+
+        let result = heal_runtime_manifests(root, "1.20.1").await;
+        unsafe {
+            std::env::remove_var("BLOCKFIELD_MOJANG_MANIFEST_URL");
+        }
+        // Fails closed: error, and the previous file survives untouched.
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&local).unwrap(), b"old{}");
     }
 }

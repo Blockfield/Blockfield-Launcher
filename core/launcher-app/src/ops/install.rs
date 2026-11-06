@@ -629,6 +629,11 @@ mod tests {
         )
         .unwrap();
         assert!(pack_phase_complete(&data, &game, "abc"));
+        // Unchanged files are stats-only on repeat checks (mtime+size cache).
+        assert!(pack_phase_complete(&data, &game, "abc"));
+        // Drop the cache so the corruption step is a fresh hash, not a race
+        // with filesystem timestamp granularity on same-size rewrites.
+        std::fs::remove_dir_all(&data).unwrap();
         // A same-size corrupted mod forces a full run so it heals.
         std::fs::write(&good, b"corrupt-bytes!").unwrap();
         assert!(!pack_phase_complete(&data, &game, "abc"));
