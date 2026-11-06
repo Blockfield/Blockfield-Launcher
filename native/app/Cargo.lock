@@ -444,6 +444,7 @@ dependencies = [
 name = "blockfield-native"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dirs",
  "i-slint-backend-testing",
  "image",

@@ -51,6 +51,7 @@ impl Backend {
             crate::main_ops::attach_fixtures(app);
             crate::auth::attach_fixtures(app);
             crate::update::attach_fixtures(app);
+            crate::stats::wire_fixtures(app);
             crate::settings_fixtures::defaults(app);
             crate::settings_tabs::wire(app, None);
             return;
@@ -134,8 +135,14 @@ pub fn apply_init_error(app: &AppWindow, message: String) {
     app.set_show_main(true);
     let mut data = app.get_main_data();
     data.checking = false;
-    data.check_error = message.into();
+    data.check_error = message.clone().into();
     app.set_main_data(data);
+    // TOP has no live data without init: show the failure there too
+    // instead of leaving the board on its loading spinner.
+    app.set_stats_board_state(1);
+    app.set_stats_board_error(message.clone().into());
+    app.set_stats_self_state(2);
+    app.set_stats_self_error(message.into());
 }
 
 async fn account_status(state: &LauncherAppState) -> Result<account::AccountStatus, String> {
@@ -170,6 +177,7 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
     });
     crate::main_ops::attach(app, state.clone(), handle.clone());
     crate::update::attach_core(app, state.clone(), handle.clone());
+    crate::stats::wire_live(app, handle.clone(), state.clone());
     let settings_handle = handle.clone();
     let weak = app.as_weak();
     handle.spawn(async move {
