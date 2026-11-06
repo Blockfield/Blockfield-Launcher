@@ -12,6 +12,8 @@ pub fn apply(app: &AppWindow) {
     app.set_server_label("IP · play.blockfield.pro".into());
     app.set_support_label("ПОДДЕРЖКА".into());
     app.set_network_label("АККАУНТ BLOCKFIELD".into());
+    app.set_update_data(crate::update::default_data());
+    app.set_launcher_update_data(crate::update::default_launcher_data());
     app.set_nav_labels(ModelRc::new(VecModel::from(
         ["ИГРАТЬ", "ОБНОВЛЕНИЯ", "ТОП", "НАСТРОЙКИ"]
             .map(SharedString::from)
@@ -29,6 +31,7 @@ pub const STATES: &[&str] = &[
     "settings-skin",
     "login",
     "firstrun",
+    "update",
 ];
 pub const SCENARIOS: &[&str] = &[
     "default",
@@ -265,6 +268,156 @@ pub fn find_option(options: &slint::ModelRc<slint::SharedString>, search: &str) 
         .position(|option| option.to_lowercase().starts_with(&search.to_lowercase()))
         .map(|index| index as i32)
         .unwrap_or(-1)
+}
+
+pub const UPDATE_SCENARIOS: &[&str] = &[
+    "default",
+    "checking",
+    "verifying",
+    "complete",
+    "uptodate",
+    "error",
+    "running",
+];
+
+/// Pack-sync screen on nav index 1; main fixtures stay loaded so the e2e
+/// walk back to main still screenshots a populated screen.
+pub fn apply_update(app: &AppWindow, scenario: &str) -> Result<(), String> {
+    if !UPDATE_SCENARIOS.contains(&scenario) {
+        return Err(format!("Unknown update scenario: {scenario}"));
+    }
+    apply_main(app, "main", "default")?;
+    app.set_active(1);
+    let mut data = crate::UpdateData {
+        operation: "BLOCKFIELD".into(),
+        patch: "/ ПАТЧ 2.75".into(),
+        description:
+            "Лаунчер скачает обновления и проверит файлы игры. Дождитесь завершения перед запуском."
+                .into(),
+        mirror_name: "mirror.blockfield.pro".into(),
+        game_phase: "idle".into(),
+        ..Default::default()
+    };
+    match scenario {
+        "checking" => {
+            data.phase = "checking".into();
+            data.step0 = 1;
+            data.log = crate::update::checking_log();
+        }
+        "verifying" => {
+            data.phase = "verifying".into();
+            data.progress = 100.0;
+            data.downloaded = "1.2 ГБ".into();
+            data.total = "1.2 ГБ".into();
+            data.step0 = 2;
+            data.step1 = 2;
+            data.step2 = 1;
+        }
+        "complete" => {
+            data.phase = "complete".into();
+            data.progress = 100.0;
+            data.downloaded = "1.2 ГБ".into();
+            data.total = "1.2 ГБ".into();
+            data.mirror_status = "mirror.blockfield.pro".into();
+            data.step0 = 2;
+            data.step1 = 2;
+            data.step2 = 2;
+        }
+        "uptodate" => {
+            data.phase = "uptodate".into();
+            data.progress = 100.0;
+            data.downloaded = "1.2 ГБ".into();
+            data.total = "1.2 ГБ".into();
+            data.step0 = 2;
+            data.step1 = 2;
+            data.step2 = 2;
+        }
+        "error" => {
+            data.phase = "error".into();
+            data.progress = 37.0;
+            data.error = "Не удалось загрузить обновление".into();
+            data.step0 = 2;
+            data.step1 = 1;
+            data.log = crate::update::downloading_log();
+        }
+        "running" => {
+            data.phase = "downloading".into();
+            data.game_phase = "running".into();
+            data.game_label = "В ИГРЕ".into();
+            data.game_sub = "Игра запущена".into();
+        }
+        _ => {
+            data.phase = "downloading".into();
+            data.status_message = "ЗАГРУЗКА МОДПАКА".into();
+            data.can_cancel = true;
+            data.progress = 42.5;
+            data.file_index = 18;
+            data.file_count = 42;
+            data.current_file = "mods/blockfield-content.jar".into();
+            data.downloaded = "512 МБ".into();
+            data.total = "1.2 ГБ".into();
+            data.remaining = "24".into();
+            data.speed = "8.4 МБ/с".into();
+            data.step0 = 2;
+            data.step1 = 1;
+            data.log = crate::update::downloading_log();
+        }
+    }
+    app.set_update_data(data);
+    Ok(())
+}
+
+pub const LAUNCHER_UPDATE_SCENARIOS: &[&str] = &[
+    "idle",
+    "current",
+    "available",
+    "downloading",
+    "installed",
+    "error",
+];
+
+/// Launcher self-update panel (settings launcher tab).
+pub fn apply_launcher_update(app: &AppWindow, scenario: &str) -> Result<(), String> {
+    if !LAUNCHER_UPDATE_SCENARIOS.contains(&scenario) {
+        return Err(format!("Unknown launcher-update scenario: {scenario}"));
+    }
+    let mut data = crate::LauncherUpdateData {
+        current_version: "1.0.19".into(),
+        update_version: "1.0.20".into(),
+        update_body: "Версия 1.0.20: ускорена проверка файлов, исправлены мелкие ошибки.".into(),
+        checked_at: "06.11.2026, 11:00:00".into(),
+        ..Default::default()
+    };
+    match scenario {
+        "current" => {
+            data.phase = "current".into();
+            data.update_version = "".into();
+            data.update_body = "".into();
+        }
+        "available" => {
+            data.phase = "available".into();
+        }
+        "downloading" => {
+            data.phase = "downloading".into();
+            data.downloaded = "12 МБ".into();
+            data.total = "21.4 МБ".into();
+            data.percent = 56;
+            data.has_total = true;
+        }
+        "installed" => {
+            data.phase = "installed".into();
+            data.installed = true;
+        }
+        "error" => {
+            data.phase = "error".into();
+            data.error = "Не удалось скачать обновление".into();
+        }
+        _ => {
+            data.phase = "idle".into();
+        }
+    }
+    app.set_launcher_update_data(data);
+    Ok(())
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ import { SettingsForm } from "settings-model.slint";
 import { SettingsScreen } from "settings.slint";
 import { LoginScreen } from "login.slint";
 import { FirstRunScreen } from "firstrun.slint";
+import { UpdateScreen, LauncherUpdatePanel, UpdateData, LauncherUpdateData } from "update.slint";
 import { Tokens } from "tokens.slint";
 import { WindowChrome, Shell } from "shell.slint";
 import { GridBackdrop, TopoBackdrop, CornerTicks, GlowPanel } from "backdrop.slint";
@@ -57,6 +58,8 @@ export component AppWindow inherits Window {
     in property <image> skin-frame;
     in property <string> skin-error;
     in property <string> skin-caption;
+    in property <UpdateData> update-data;
+    in property <LauncherUpdateData> launcher-update-data;
     callback browse-skin();
     callback browse-cape();
     callback upload-skin();
@@ -67,6 +70,12 @@ export component AppWindow inherits Window {
     callback skin-drag-state(bool);
     callback skin-drag-by(float, float);
     callback skin-frame-ready();
+    callback update-retry();
+    callback update-cancel();
+    callback update-launch();
+    callback launcher-check();
+    callback launcher-install();
+    callback launcher-restart();
     callback download-modpack();
     callback cancel-download();
     callback deploy();
@@ -147,6 +156,12 @@ export component AppWindow inherits Window {
                 verify => { root.verify(); }
                 join(id) => { root.join(id); }
             }
+            if root.show-main && root.active == 1: UpdateScreen {
+                data: root.update-data;
+                retry => { root.update-retry(); }
+                cancel => { root.update-cancel(); }
+                launch => { root.update-launch(); }
+            }
             if root.active == 3: SettingsScreen {
                 // shortcut: preserve u16's logical-pixel layout until settings adopts CSS zoom metrics.
                 private property <length> legacy-inset: 1px - 1phx;
@@ -163,6 +178,10 @@ export component AppWindow inherits Window {
                 skin-frame: root.skin-frame;
                 skin-error: root.skin-error;
                 caption: root.skin-caption;
+                launcher-data: root.launcher-update-data;
+                check => { root.launcher-check(); }
+                install => { root.launcher-install(); }
+                restart => { root.launcher-restart(); }
                 browse-skin => { root.browse-skin(); }
                 browse-cape => { root.browse-cape(); }
                 upload => { root.upload-skin(); }

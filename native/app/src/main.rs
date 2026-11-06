@@ -144,6 +144,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             fixtures::apply_login(&app, &scenario)?;
         } else if state == "firstrun" {
             fixtures::apply_firstrun(&app)?;
+        } else if state == "update" {
+            fixtures::apply_update(&app, &scenario)?;
         } else {
             fixtures::apply_main(&app, &state, &scenario)?;
         }

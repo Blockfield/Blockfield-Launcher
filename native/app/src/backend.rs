@@ -50,6 +50,7 @@ impl Backend {
         let Self::Core(handle) = self else {
             crate::main_ops::attach_fixtures(app);
             crate::auth::attach_fixtures(app);
+            crate::update::attach_fixtures(app);
             crate::settings_fixtures::defaults(app);
             crate::settings_tabs::wire(app, None);
             return;
@@ -168,6 +169,7 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
         ..Default::default()
     });
     crate::main_ops::attach(app, state.clone(), handle.clone());
+    crate::update::attach_core(app, state.clone(), handle.clone());
     let settings_handle = handle.clone();
     let weak = app.as_weak();
     handle.spawn(async move {

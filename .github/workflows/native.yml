@@ -71,14 +71,19 @@ jobs:
             native/app -> native/app/target
       # Ubuntu runners have no display server and no Vulkan ICD: Xvfb for the
       # winit window, lavapipe so the skin3d wgpu preview gets an adapter.
+      # winit dlopens libxkbcommon-x11 at window creation (invisible to ldd).
+      - name: Cache apt .deb archives
+        if: runner.os == 'Linux'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/apt-archives
+          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-tauri-deps.sh', '.github/workflows/native.yml') }}
+          restore-keys: |
+            apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Linux display and software GL/Vulkan
         if: runner.os == 'Linux'
         timeout-minutes: 8
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          # winit dlopens libxkbcommon-x11 at window creation (invisible to ldd).
-          sudo apt-get install -y -qq xvfb mesa-vulkan-drivers libgl1 libfontconfig-dev libxkbcommon-x11-0
+        run: scripts/install-tauri-deps.sh xvfb mesa-vulkan-drivers libgl1 libfontconfig-dev libxkbcommon-x11-0
       - name: Format check
         timeout-minutes: 3
         run: |
@@ -224,7 +229,7 @@ jobs:
           if [ "${{ inputs.update_goldens }}" = "true" ]; then update="--e2e-update-goldens"; fi
           fail=0
           # New settings tabs rejoin this loop with U12 once per-OS goldens exist.
-          for state in main main-launching offline error settings-skin login firstrun; do
+          for state in main main-launching offline error settings-skin login firstrun update; do
             dir="$out/$state"
             mkdir -p "$dir"
             echo "=== e2e state=$state ==="
