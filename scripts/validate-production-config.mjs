@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 
-export function validateProductionUrl(value) {
-  if (!value) throw new Error('VITE_BLOCKFIELD_PACK_URL is required')
+export function validateProductionUrl(value, name = 'VITE_BLOCKFIELD_PACK_URL') {
+  if (!value) throw new Error(`${name} is required`)
   const url = new URL(value)
   const host = url.hostname.toLowerCase()
   if (url.protocol !== 'https:') throw new Error('Production pack must use HTTPS')
@@ -20,6 +20,8 @@ export function validateProductionUrl(value) {
 }
 
 const url = validateProductionUrl(process.env.VITE_BLOCKFIELD_PACK_URL)
+const workshopPack = process.env.VITE_BLOCKFIELD_WORKSHOP_PACK_URL?.trim()
+if (workshopPack) validateProductionUrl(workshopPack, 'VITE_BLOCKFIELD_WORKSHOP_PACK_URL')
 const config = JSON.parse(
   readFileSync(new URL('../src-tauri/tauri.prod.conf.json', import.meta.url), 'utf8'),
 )

@@ -18,6 +18,7 @@ declare const __BLOCKFIELD_DEV_BUILD__: boolean
 interface ImportMetaEnv {
   readonly DEV: boolean
   readonly VITE_BLOCKFIELD_PACK_URL?: string
+  readonly VITE_BLOCKFIELD_WORKSHOP_PACK_URL?: string
   // Branding / CMS fallbacks
   readonly VITE_LAUNCHER_VERSION?: string
   readonly VITE_SERVER_IP?: string
