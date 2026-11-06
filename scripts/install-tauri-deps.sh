@@ -56,6 +56,8 @@ if ! apt_update; then
 fi
 if ! apt_install "$@"; then
     switch_azure_mirror
+    # The rewritten sources need their own package lists before the retry.
+    apt_update
     apt_install "$@"
 fi
 
