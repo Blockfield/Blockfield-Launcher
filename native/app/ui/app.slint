@@ -10,7 +10,9 @@ import "../assets/fonts/Inter-800.ttf";
 export { SelectSearch, MainMotion, MainText } from "main-controls.slint";
 export { SettingsForm, SettingsData } from "settings-model.slint";
 export { WindowActivity } from "controls.slint";
-import { MainScreen, MainData, Room } from "main.slint";
+import { MainScreen, MainData } from "main.slint";
+import { Room } from "rooms.slint";
+import { DevData } from "dev.slint";
 import { SettingsForm } from "settings-model.slint";
 import { SettingsScreen } from "settings.slint";
 import { StatsScreen, StatsRow, StatsRating, StatsMatch, StatsFilter } from "stats.slint";
@@ -99,6 +101,7 @@ export component AppWindow inherits Window {
     in property <string> skin-caption;
     in property <UpdateData> update-data;
     in property <LauncherUpdateData> launcher-update-data;
+    in property <DevData> dev-data;
     callback browse-skin();
     callback browse-cape();
     callback upload-skin();
@@ -255,6 +258,7 @@ export component AppWindow inherits Window {
                 skin-error: root.skin-error;
                 caption: root.skin-caption;
                 launcher-data: root.launcher-update-data;
+                dev-data: root.dev-data;
                 check => { root.launcher-check(); }
                 install => { root.launcher-install(); }
                 restart => { root.launcher-restart(); }

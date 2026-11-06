@@ -1,0 +1,26 @@
+import { Tokens } from "tokens.slint";
+
+// Dev-build panel (Tauri DevPanel): shows which dev environment variables are
+// in effect. Hidden in production builds where the core reports no status.
+export struct DevData {
+    server: string,
+    freeze: string,
+    jvm-args: string,
+    pack-url: string,
+}
+
+export component DevPanel inherits Rectangle {
+    in property <DevData> data;
+    height: 112px;
+    Text { x: 0px; y: 0px; height: 20px; text: "DEV-СБОРКА"; font-size: 13px; font-weight: Tokens.weight-medium; color: Tokens.foreground; vertical-alignment: center; }
+    Text { x: 0px; y: 22px; height: 14px; text: "Настройки берутся из переменных окружения при запуске лаунчера"; font-size: 11px; color: Tokens.muted-foreground; overflow: elide; vertical-alignment: center; }
+    for row[i] in [
+        { name: "BLOCKFIELD_DEV_SERVER", value: root.data.server },
+        { name: "BLOCKFIELD_DEV_FREEZE_PACK", value: root.data.freeze },
+        { name: "BLOCKFIELD_DEV_JVM_ARGS", value: root.data.jvm-args },
+        { name: "VITE_BLOCKFIELD_PACK_URL", value: root.data.pack-url },
+    ]: Rectangle { x: 0px; y: 42px + i * 17px; width: parent.width; height: 14px;
+        Text { x: 0px; y: 0px; width: 232px; height: parent.height; text: row.name; font-family: Tokens.mono; font-size: 11px; color: Tokens.muted-foreground; overflow: elide; vertical-alignment: center; }
+        Text { x: 238px; y: 0px; width: parent.width - 238px; height: parent.height; text: row.value; font-family: Tokens.mono; font-size: 11px; color: Tokens.neutral-200; overflow: elide; vertical-alignment: center; }
+    }
+}

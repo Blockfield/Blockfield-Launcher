@@ -99,8 +99,10 @@ fn layer1_screen_walk() {
     scenario_update_nav_and_retry();
     scenario_update_deploy();
     scenario_launcher_update_panel();
+    scenario_room_battle_and_pager();
+    scenario_dev_panel();
     scenario_minimize_probe();
-    println!("PASS layer1 screen walk (13 scenarios)");
+    println!("PASS layer1 screen walk (15 scenarios)");
 }
 
 /// Navigate main → settings → each tab label → back, through the UI tree.
@@ -447,6 +449,92 @@ fn scenario_firstrun_ram_and_continue() {
     when_click_label(&app, "ПРОДОЛЖИТЬ");
     assert!(!app.get_show_firstrun(), "firstrun unmounts on continue");
     assert!(app.get_show_main(), "continue shows main");
+}
+
+/// RoomList battle + pager (U9): BRAVO carries live scores and point bars
+/// with a pager; a closed room keeps its label but refuses the join.
+fn scenario_room_battle_and_pager() {
+    // Given the default online main screen on the first room (no battle).
+    let (app, _host) = given_app("main", "default");
+    assert_eq!(app.get_room_index(), 0, "starts on ALPHA");
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "Красные: 2")
+            .next()
+            .is_none(),
+        "no battle on ALPHA"
+    );
+
+    // When the operator pages to the second room…
+    when_click_label(&app, "Следующий матч");
+    assert_eq!(app.get_room_index(), 1, "pager selects BRAVO");
+    // …then live scores and the first page of points show…
+    for label in [
+        "Красные: 2",
+        "Синие: 5",
+        "Высота · Синие",
+        "Мост · Красные",
+        "Завод · Нейтральная",
+    ] {
+        assert!(
+            ElementHandle::find_by_accessible_label(&app, label)
+                .next()
+                .is_some(),
+            "battle shows {label}"
+        );
+    }
+    // …with the fourth point on the second pager page.
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "Холм · Синие")
+            .next()
+            .is_none(),
+        "page 2 point hidden at first"
+    );
+    when_click_label(&app, "Следующие точки захвата");
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "Холм · Синие")
+            .next()
+            .is_some(),
+        "pager flips to page 2"
+    );
+
+    // A closed room keeps its label but refuses the join.
+    let (app, _host) = given_app("main", "closed");
+    use slint::Model;
+    assert_eq!(
+        app.get_rooms().row_data(0).map(|room| room.joinable),
+        Some(false),
+        "closed room not joinable"
+    );
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "Мест нет")
+            .next()
+            .is_some(),
+        "closed join label shows"
+    );
+}
+
+/// DevPanel (U9): the launcher tab shows the dev-build environment rows.
+fn scenario_dev_panel() {
+    // Given the settings screen on the launcher tab…
+    let (app, _host) = given_app("settings-skin", "default");
+    when_click_label(&app, "ЛАУНЧЕР");
+    assert_eq!(app.get_settings_tab(), 4, "launcher tab selects");
+    // …then the DEV panel shows every variable row.
+    for label in [
+        "DEV-СБОРКА",
+        "BLOCKFIELD_DEV_SERVER",
+        "BLOCKFIELD_DEV_FREEZE_PACK",
+        "BLOCKFIELD_DEV_JVM_ARGS",
+        "VITE_BLOCKFIELD_PACK_URL",
+        "127.0.0.1:25565",
+    ] {
+        assert!(
+            ElementHandle::find_by_accessible_label(&app, label)
+                .next()
+                .is_some(),
+            "dev panel shows {label}"
+        );
+    }
 }
 
 fn scenario_minimize_probe() {

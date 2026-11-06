@@ -20,6 +20,18 @@ pub fn apply(app: &AppWindow) {
             .to_vec(),
     )));
     app.set_dev_build(cfg!(debug_assertions));
+    apply_dev(app);
+}
+
+/// Dev panel fixture: rows of a dev build with the standard dev environment
+/// (mirrors the Tauri DevPanel; production hides the panel via empty server).
+pub fn apply_dev(app: &AppWindow) {
+    app.set_dev_data(crate::DevData {
+        server: "127.0.0.1:25565".into(),
+        freeze: "пак заморожен".into(),
+        jvm_args: "-Xmx2G -Dtestbot=true".into(),
+        pack_url: "https://packs.blockfield.pro/dev.zip".into(),
+    });
 }
 
 pub const STATES: &[&str] = &[
@@ -61,7 +73,7 @@ pub const SCENARIOS: &[&str] = &[
 ];
 
 pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), String> {
-    use crate::{MainData, Room};
+    use crate::{BattlePoint, MainData, Room};
     if !STATES.contains(&state) || !SCENARIOS.contains(&scenario) {
         return Err(format!("Unknown state/scenario: {state}/{scenario}"));
     }
@@ -174,6 +186,10 @@ pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), St
                 }
                 .into(),
                 joinable: scenario != "closed",
+                has_battle: false,
+                battle_red: 0,
+                battle_blue: 0,
+                points: slint::ModelRc::default(),
             },
             Room {
                 id: "capture-ranked".into(),
@@ -183,6 +199,36 @@ pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), St
                 ready: "".into(),
                 join: "Встать в очередь".into(),
                 joinable: true,
+                has_battle: true,
+                battle_red: 2,
+                battle_blue: 5,
+                // Four points over two pager pages (Tauri BattlePoints parity).
+                points: slint::ModelRc::new(slint::VecModel::from(vec![
+                    BattlePoint {
+                        label: "Высота · Синие".into(),
+                        sub: "82%".into(),
+                        progress: 82,
+                        tone: 2,
+                    },
+                    BattlePoint {
+                        label: "Мост · Красные".into(),
+                        sub: "45% · Синие нейтрализуют".into(),
+                        progress: 45,
+                        tone: 1,
+                    },
+                    BattlePoint {
+                        label: "Завод · Нейтральная".into(),
+                        sub: "10%".into(),
+                        progress: 10,
+                        tone: 0,
+                    },
+                    BattlePoint {
+                        label: "Холм · Синие".into(),
+                        sub: "100%".into(),
+                        progress: 100,
+                        tone: 2,
+                    },
+                ])),
             },
         ]
     };

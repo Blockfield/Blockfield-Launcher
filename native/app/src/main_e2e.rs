@@ -14,6 +14,7 @@ const SHOTS: &[&str] = &[
     "join-updating",
     "join-check-error",
     "deploy-focus",
+    "battle",
 ];
 
 pub(crate) fn step(
@@ -33,6 +34,7 @@ pub(crate) fn step(
                 app.set_show_main(false);
             } else {
                 fixtures::apply_main(app, "main", "default").unwrap();
+                app.set_room_index(0);
             }
             *step += 1;
             return true;
@@ -68,6 +70,7 @@ pub(crate) fn step(
                 app.set_main_data(data);
             }
             7 => fixtures::apply_main(app, "error", "default").unwrap(),
+            9 => app.set_room_index(1),
             8 => {
                 // Chrome (3), brand (1) and navigation (4) precede Deploy.
                 for _ in 0..9 {
