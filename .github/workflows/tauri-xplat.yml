@@ -55,12 +55,19 @@ jobs:
         with:
           toolchain: 1.99.0
           components: rustfmt, clippy
+      - name: Cache apt .deb archives
+        if: runner.os == 'Linux'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/apt-archives
+          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-tauri-deps.sh', '.github/workflows/tauri-xplat.yml') }}
+          restore-keys: |
+            apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Linux dependencies and isolated display
         if: runner.os == 'Linux'
         timeout-minutes: 8
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb xdotool mesa-utils mesa-vulkan-drivers libgl1 libfontconfig-dev libxkbcommon-x11-0 imagemagick
+          scripts/install-tauri-deps.sh libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb xdotool mesa-utils mesa-vulkan-drivers libgl1 libfontconfig-dev libxkbcommon-x11-0 imagemagick
           # Ubuntu 24.04 ships ImageMagick 6; expose the v7 command used by the harness.
           if ! command -v magick; then
             mkdir -p "$RUNNER_TEMP/bin"
