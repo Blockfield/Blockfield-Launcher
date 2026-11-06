@@ -30,3 +30,10 @@ slint-build = "~1.18"
 [profile.release]
 lto = "thin"
 strip = true
+
+# Layer-1 CI profile: same opts as release (identical test semantics) but no
+# LTO, so linking the N test binaries of the huge Slint crate stays fast on
+# every OS. The shipped binary keeps [profile.release] (thin LTO).
+[profile.ci-test]
+inherits = "release"
+lto = false

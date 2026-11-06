@@ -84,7 +84,8 @@ jobs:
         run: |
           cd native/app
           cargo fmt --all -- --check
-      # Release profile throughout so clippy/test/build share one codegen round.
+      # Release profile for clippy/build (shipped binary keeps thin LTO);
+      # tests use ci-test (release opts, no LTO) so linking stays fast.
       - name: Clippy
         timeout-minutes: 25
         run: |
@@ -92,10 +93,10 @@ jobs:
           cargo clippy --locked --release --all-targets -- -D warnings
       # Layer 1: headless testing-tree scenarios, no display needed.
       - name: Tests (Layer 1)
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           cd native/app
-          cargo test --locked --release
+          cargo test --locked --profile ci-test
       - name: Release build
         timeout-minutes: 30
         run: |
