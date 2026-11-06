@@ -78,8 +78,9 @@ fn layer1_screen_walk() {
     scenario_settings_each_tab();
     scenario_skin_tab_controls();
     scenario_main_deploy_states();
+    scenario_stale_pack_flags_update_prompt();
     scenario_minimize_probe();
-    println!("PASS layer1 screen walk (5 scenarios)");
+    println!("PASS layer1 screen walk (6 scenarios)");
 }
 
 /// Navigate main → settings → each tab label → back, through the UI tree.
@@ -269,6 +270,22 @@ fn scenario_main_deploy_states() {
         select.accessible_value().as_deref(),
         Some("Мастерская"),
         "workshop profile selected"
+    );
+}
+
+/// PACK_STALE fixture (core ops::launch refusal): the main screen carries the
+/// raw refusal plus the stale flag, so the friendly update prompt renders
+/// instead of the generic launch failure.
+fn scenario_stale_pack_flags_update_prompt() {
+    let (app, _host) = given_app("main", "stale");
+    let data = app.get_main_data();
+    assert!(
+        data.launch_error.to_string().contains("PACK_STALE"),
+        "stale fixture keeps the raw refusal for details"
+    );
+    assert!(
+        data.launch_stale,
+        "stale fixture arms the friendly update prompt"
     );
 }
 

@@ -9,7 +9,7 @@ export struct MainData {
     players: string, ping: string, region: string, location: string,
     installed: string, latest: string, size: string, checked: bool, checking: bool,
     needs-setup: bool, needs-update: bool, check-error: string,
-    phase: string, launching: bool, launch-status: string, progress: int, launch-error: string,
+    phase: string, launching: bool, launch-status: string, progress: int, launch-error: string, launch-stale: bool,
     can-workshop: bool, profile-changing: bool, profile-blocked: bool, profile-error: string, pending-room: bool,
 }
 
@@ -263,7 +263,7 @@ export component MainScreen inherits Rectangle {
                     }
                     if root.data.check-error != "" || root.data.launch-error != "": Rectangle { x: 0px;
                         y: Tokens.line-height(15px, 1phx) + 12px + 4 * (Tokens.line-height(16.5px, 1phx) + 16px + 1phx); height: parent.height - self.y - 44px;
-                        Text { x: 0px; y: 0px;width: parent.width; text: root.data.check-error != "" ? "Не удалось проверить обновление модпака." : "Не удалось запустить игру."; color: #c98b8b; font-size: 11px; wrap: word-wrap; }
+                        Text { x: 0px; y: 0px;width: parent.width; text: root.data.check-error != "" ? "Не удалось проверить обновление модпака." : root.data.launch-stale ? "Пак устарел — откройте «Обновления», чтобы скачать свежую сборку." : "Не удалось запустить игру."; color: #c98b8b; font-size: 11px; wrap: word-wrap; }
                         ActionArea { x: 0px; y: Tokens.line-height(17.875px, 1phx) + 4px; width: disclosure.preferred-width + 11px; height: Tokens.line-height(16.25px, 1phx); label: "Подробности"; clicked => { root.error-details = !root.error-details; }
                             Path { x: 0px; y: 7px; width: 5px; height: 5px; viewbox-width: 7; viewbox-height: 7; fill: Tokens.muted-foreground; commands: root.error-details ? "M 0 0 L 7 0 L 3.5 7 Z" : "M 0 0 L 7 3.5 L 0 7 Z"; }
                             disclosure := SmallLabel { x: 11px; y: 0px; height: parent.height; text: "Подробности"; letter-spacing: 1px; }

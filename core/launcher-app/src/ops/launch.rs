@@ -15,11 +15,12 @@
 //! (finishing, restore, post-exit hook, statuses).
 
 use super::java::{resolved_java_path, system_java_available};
-use super::pack_check::pack_base_url;
+use super::pack_check::{installed_pack, pack_base_url};
 use crate::rooms::PendingRoom;
 use crate::{EventSink, GameIdentity, LauncherAppState, LauncherEvent, PackState};
 use launcher_core::config::{ClientProfile, LauncherConfig};
 use launcher_core::game::GameSession;
+use launcher_net::pack::PackMeta;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -68,6 +69,45 @@ pub fn seed_game_options(game_dir: &Path) -> std::io::Result<()> {
     )
 }
 
+/// Launch-time staleness verdict: Some PACK_STALE string when the installed pack
+/// is positively older than the published manifest. Any client change (a new
+/// mod JAR carrying a protocol bump included) changes the pack index hash,
+/// so the hash comparison covers protocol updates without parsing them; the
+/// server gate stays the protocol authority and only kicks as a last resort.
+/// The UI routes this to the update screen, which installs the pack itself
+/// before joining. Ports stale_pack_message from commands.rs (PR 73).
+pub fn stale_pack_message(installed_hash: &str, meta: &PackMeta) -> Option<String> {
+    (installed_hash != meta.index_hash).then(|| {
+        format!(
+            "PACK_STALE: installed pack is outdated (remote {}). Open Updates to install it, then launch again.",
+            meta.version
+        )
+    })
+}
+
+async fn fresh_pack_state() -> Result<PackState, String> {
+    let base = pack_base_url()?;
+    let info = launcher_net::pack::fetch_launcher_info(&base).await?;
+    let meta = launcher_net::pack::fetch_pack_meta(&info.pack).await?;
+    Ok(PackState { info, meta })
+}
+
+/// Play pressed while the pack was stale routes to Updates; the game must start
+/// on its own once the sync finishes. A manual visit to Updates never arms the
+/// intent, so plain updates stay on the done screen.
+/// Ports shouldAutoLaunchAfterSync from auto-launch.ts (PR 73).
+pub fn should_auto_launch_after_sync(
+    phase: &str,
+    play_triggered: bool,
+    launching: bool,
+    game_busy: bool,
+) -> bool {
+    if !play_triggered || launching || game_busy {
+        return false;
+    }
+    phase == "complete" || phase == "uptodate"
+}
+
 pub async fn launch_game(
     state: &LauncherAppState,
     pending: &PendingRoom,
@@ -94,6 +134,29 @@ pub async fn launch_game(
     )
     .await?;
     let pack = state.pack.read().await.clone();
+    // A cached (or missing) version check may predate a release: launching the
+    // stale pack would only die at the server gate with a manual close-the-game
+    // and-update step. Re-check the published manifest here so the UI routes to
+    // the update screen instead. An unreachable manifest is fail-open (offline
+    // launch keeps working); a positive mismatch fails closed.
+    let pack = if !launcher_core::dev::freeze_pack() {
+        match fresh_pack_state().await {
+            Ok(fresh) => {
+                let installed_hash = installed_pack(&PathBuf::from(&config.game_dir)).0;
+                if let Some(stale) = stale_pack_message(&installed_hash, &fresh.meta) {
+                    return Err(stale);
+                }
+                *state.pack.write().await = Some(fresh.clone());
+                Some(fresh)
+            }
+            Err(error) => {
+                log::warn!("launch: pack manifest unreachable, using cached state: {error}");
+                pack
+            }
+        }
+    } else {
+        pack
+    };
     launch_with_identity(
         state,
         pending,
@@ -308,6 +371,45 @@ mod tests {
     use super::*;
     use crate::{EventSink, LauncherEvent};
     use std::sync::{Arc, Mutex as StdMutex};
+
+    #[test]
+    fn stale_pack_message_fires_only_on_index_mismatch() {
+        let meta = PackMeta {
+            version: "2.80.0".into(),
+            index_hash: "new-hash".into(),
+            minecraft: "1.21.1".into(),
+            loader: None,
+        };
+        assert!(stale_pack_message("new-hash", &meta).is_none());
+        let stale = stale_pack_message("old-hash", &meta).expect("stale pack must refuse launch");
+        assert!(stale.starts_with("PACK_STALE"), "{stale}");
+        assert!(stale.contains("2.80.0"), "{stale}");
+    }
+
+    #[test]
+    fn auto_launch_continues_only_play_triggered_syncs() {
+        assert!(should_auto_launch_after_sync(
+            "complete", true, false, false
+        ));
+        assert!(should_auto_launch_after_sync(
+            "uptodate", true, false, false
+        ));
+        assert!(!should_auto_launch_after_sync(
+            "complete", false, false, false
+        ));
+        for phase in ["checking", "downloading", "verifying", "launching", "error"] {
+            assert!(
+                !should_auto_launch_after_sync(phase, true, false, false),
+                "{phase}"
+            );
+        }
+        assert!(!should_auto_launch_after_sync(
+            "complete", true, true, false
+        ));
+        assert!(!should_auto_launch_after_sync(
+            "complete", true, false, true
+        ));
+    }
 
     #[test]
     fn game_options_are_seeded_once_and_never_overwrite_the_player() {
