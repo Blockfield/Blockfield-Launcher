@@ -1,16 +1,30 @@
 //! Fixture selection is explicit; a plain launch reads the shared launcher core.
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use launcher_app::{
     LauncherAppState, LauncherEvent,
     ops::{pack_check, settings},
     status_ops,
 };
-use launcher_net::{minecraft, status::ServerStatus};
+use launcher_net::{account, minecraft, status::ServerStatus};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use tokio::runtime::Handle;
 
 use crate::{AppWindow, MainData, Room, bridge, runtime};
+
+/// Starts the never-ending background loops (10s server poll, presence)
+/// exactly once per process: every enter_main re-runs only the one-shot
+/// checks. Tauri starts both loops once at setup the same way.
+fn claim_background_loops() -> bool {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    !STARTED.swap(true, Ordering::SeqCst)
+}
 
 pub enum Backend {
     Fixtures,
@@ -35,6 +49,7 @@ impl Backend {
     pub fn start(self, app: &AppWindow) {
         let Self::Core(handle) = self else {
             crate::main_ops::attach_fixtures(app);
+            crate::auth::attach_fixtures(app);
             crate::update::attach_fixtures(app);
             crate::settings_fixtures::defaults(app);
             crate::settings_tabs::wire(app, None);
@@ -42,7 +57,11 @@ impl Backend {
         };
         app.global::<crate::SettingsForm>().set_loading(true);
         app.set_settings_tab(0);
-        app.set_show_main(true);
+        // The auth gate owns the window until sign-in: logged-out users must
+        // never see the main Shell, even though settings init runs up front.
+        app.set_show_main(false);
+        app.set_show_login(false);
+        app.set_show_firstrun(false);
         app.set_dev_build(launcher_core::dev::is_dev_build());
         app.set_update_label("".into());
         app.set_main_data(MainData {
@@ -58,6 +77,7 @@ impl Backend {
         });
         let events = bridge::sink(app);
         let weak = app.as_weak();
+        let route_handle = handle.clone();
         handle.spawn(async move {
             let initialized = tokio::task::spawn_blocking(move || {
                 let state = runtime::build_state(events)?;
@@ -75,104 +95,185 @@ impl Backend {
                     let message = format!("Cannot initialize launcher: {error}");
                     eprintln!("{message}");
                     let _ = weak.upgrade_in_event_loop(move |app| {
-                        // The settings overlay would otherwise hide this error and block input.
-                        app.global::<crate::SettingsForm>().set_loading(false);
-                        let mut data = app.get_main_data();
-                        data.checking = false;
-                        data.check_error = message.into();
-                        app.set_main_data(data);
+                        apply_init_error(&app, message);
                     });
                     return;
                 }
             };
-            let callbacks_state = state.clone();
-            let callbacks_handle = tokio::runtime::Handle::current();
-            let update_state = state.clone();
-            let update_handle = tokio::runtime::Handle::current();
+            let status = account_status(&state).await;
+            let stored_username = settings["username"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
             let _ = weak.upgrade_in_event_loop(move |app| {
-                crate::main_ops::attach(&app, callbacks_state, callbacks_handle);
-                crate::update::attach_core(&app, update_state, update_handle);
-            });
-            (state.events)(LauncherEvent::GameStatus(status_ops::game_status(&state)));
-            let settings_state = state.clone();
-            let settings_handle = Handle::current();
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                crate::settings_tabs::apply_response(&app, &settings);
-                crate::settings_tabs::wire(&app, Some((settings_state, settings_handle)));
-                app.set_username(settings["username"].as_str().unwrap_or_default().into());
-                app.set_workshop(settings["activeProfile"] == "workshop");
-            });
-            let pack_state = state.clone();
-            let pack_weak = weak.clone();
-            tokio::spawn(async move {
-                let result =
-                    pack_check::check_modpack_version(&pack_state, |dir, meta| {
-                        match &meta.loader {
-                            Some(loader) => {
-                                let id = minecraft::loader_version_id(&meta.minecraft, loader);
-                                minecraft::loader_profile_exists(dir, &id)
-                                    && minecraft::has_launch_dependencies(
-                                        dir,
-                                        &meta.minecraft,
-                                        Some(&id),
-                                    )
-                            }
-                            None => minecraft::has_launch_dependencies(dir, &meta.minecraft, None),
-                        }
-                    })
-                    .await;
-                if let Err(error) = &result {
-                    eprintln!("check_modpack_version: {error}");
-                }
-                let _ = pack_weak.upgrade_in_event_loop(move |app| {
-                    let mut data = app.get_main_data();
-                    data.checking = false;
-                    match result {
-                        Ok(version) => {
-                            data.checked = true;
-                            data.needs_update = version.needs_update;
-                            data.needs_setup =
-                                version.needs_update || !version.java_ok || !version.loader_ok;
-                            data.installed = version.installed_version.into();
-                            data.latest = version.remote_version.into();
-                            data.size = if version.total_size == 0 {
-                                "—".into()
-                            } else {
-                                format!("{:.1} GB", version.total_size as f64 / 1e9).into()
-                            };
-                            data.check_error = "".into();
-                        }
-                        Err(error) => data.check_error = error.into(),
-                    }
-                    app.set_main_data(data);
-                });
-            });
-            let server_state = state.clone();
-            tokio::spawn(async move {
-                let mut timer = tokio::time::interval(Duration::from_secs(10));
-                timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                loop {
-                    timer.tick().await;
-                    let result = match pack_check::pack_base_url() {
-                        Ok(base) => status_ops::server_status(&server_state, &base).await,
-                        Err(error) => Err(error),
-                    };
-                    if let Err(error) = &result {
-                        eprintln!("server_status: {error}");
-                    }
-                    if weak
-                        .upgrade_in_event_loop(move |app| {
-                            apply_server(&app, result);
-                        })
-                        .is_err()
-                    {
-                        break;
+                let handle = route_handle.clone();
+                crate::auth::attach(&app, state.clone(), handle.clone());
+                match status {
+                    Ok(status) => crate::auth::enter_startup(&app, state, handle, status),
+                    Err(error) => {
+                        app.set_login_mode("login".into());
+                        app.set_login_set_password(false);
+                        app.set_login_username(stored_username.into());
+                        app.set_login_error(error.into());
+                        app.set_show_main(false);
+                        app.set_show_firstrun(false);
+                        app.set_show_login(true);
                     }
                 }
             });
-            presence(state).await;
         });
     }
+}
+
+/// Show a fatal init failure on the main screen. Startup hides every
+/// screen until auth resolves, so without this the error would sit in
+/// empty chrome nobody can see.
+pub fn apply_init_error(app: &AppWindow, message: String) {
+    // The settings overlay would otherwise hide this error and block input.
+    app.global::<crate::SettingsForm>().set_loading(false);
+    app.set_show_main(true);
+    let mut data = app.get_main_data();
+    data.checking = false;
+    data.check_error = message.into();
+    app.set_main_data(data);
+}
+
+async fn account_status(state: &LauncherAppState) -> Result<account::AccountStatus, String> {
+    let skins = state
+        .pack
+        .read()
+        .await
+        .as_ref()
+        .and_then(|pack| pack.info.skins.clone());
+    account::account_status(&state.config, &state.app_data_dir, skins).await
+}
+
+/// Enter the main Shell: wire MainScreen ops, load settings, then run the
+/// pack check, server poll and presence loop (moved here so the auth screens
+/// own the window until sign-in completes).
+pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
+    app.set_show_login(false);
+    app.set_show_firstrun(false);
+    app.set_show_main(true);
+    app.set_dev_build(launcher_core::dev::is_dev_build());
+    app.set_update_label("".into());
+    app.set_main_data(MainData {
+        checking: true,
+        progress: -1,
+        phase: "idle".into(),
+        players: "—".into(),
+        ping: "—".into(),
+        installed: "...".into(),
+        latest: "...".into(),
+        size: "—".into(),
+        ..Default::default()
+    });
+    crate::main_ops::attach(app, state.clone(), handle.clone());
+    crate::update::attach_core(app, state.clone(), handle.clone());
+    let settings_handle = handle.clone();
+    let weak = app.as_weak();
+    handle.spawn(async move {
+        let settings = tokio::task::spawn_blocking({
+            let state = state.clone();
+            move || -> std::io::Result<serde_json::Value> {
+                let settings = settings::load_settings(&state).map_err(std::io::Error::other)?;
+                serde_json::to_value(settings).map_err(std::io::Error::other)
+            }
+        })
+        .await
+        .map_err(std::io::Error::other)
+        .and_then(|result| result);
+        let settings = match settings {
+            Ok(settings) => settings,
+            Err(error) => {
+                let message = format!("Cannot load settings: {error}");
+                eprintln!("{message}");
+                let _ = weak.upgrade_in_event_loop(move |app| {
+                    let mut data = app.get_main_data();
+                    data.checking = false;
+                    data.check_error = message.into();
+                    app.set_main_data(data);
+                });
+                return;
+            }
+        };
+        (state.events)(LauncherEvent::GameStatus(status_ops::game_status(&state)));
+        let settings_state = state.clone();
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            crate::settings_tabs::apply_response(&app, &settings);
+            crate::settings_tabs::wire(&app, Some((settings_state, settings_handle)));
+            app.set_username(settings["username"].as_str().unwrap_or_default().into());
+            app.set_workshop(settings["activeProfile"] == "workshop");
+        });
+        let pack_state = state.clone();
+        let pack_weak = weak.clone();
+        tokio::spawn(async move {
+            let result =
+                pack_check::check_modpack_version(&pack_state, |dir, meta| match &meta.loader {
+                    Some(loader) => {
+                        let id = minecraft::loader_version_id(&meta.minecraft, loader);
+                        minecraft::loader_profile_exists(dir, &id)
+                            && minecraft::has_launch_dependencies(dir, &meta.minecraft, Some(&id))
+                    }
+                    None => minecraft::has_launch_dependencies(dir, &meta.minecraft, None),
+                })
+                .await;
+            if let Err(error) = &result {
+                eprintln!("check_modpack_version: {error}");
+            }
+            let _ = pack_weak.upgrade_in_event_loop(move |app| {
+                let mut data = app.get_main_data();
+                data.checking = false;
+                match result {
+                    Ok(version) => {
+                        data.checked = true;
+                        data.needs_update = version.needs_update;
+                        data.needs_setup =
+                            version.needs_update || !version.java_ok || !version.loader_ok;
+                        data.installed = version.installed_version.into();
+                        data.latest = version.remote_version.into();
+                        data.size = if version.total_size == 0 {
+                            "—".into()
+                        } else {
+                            format!("{:.1} GB", version.total_size as f64 / 1e9).into()
+                        };
+                        data.check_error = "".into();
+                    }
+                    Err(error) => data.check_error = error.into(),
+                }
+                app.set_main_data(data);
+            });
+        });
+        // Never-ending loops start once per process; re-logins only re-run
+        // the one-shot pack check above, never piling up duplicate loops.
+        if !claim_background_loops() {
+            return;
+        }
+        let server_state = state.clone();
+        tokio::spawn(async move {
+            let mut timer = tokio::time::interval(Duration::from_secs(10));
+            timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                timer.tick().await;
+                let result = match pack_check::pack_base_url() {
+                    Ok(base) => status_ops::server_status(&server_state, &base).await,
+                    Err(error) => Err(error),
+                };
+                if let Err(error) = &result {
+                    eprintln!("server_status: {error}");
+                }
+                if weak
+                    .upgrade_in_event_loop(move |app| {
+                        apply_server(&app, result);
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        presence(state).await;
+    });
 }
 
 async fn presence(state: Arc<LauncherAppState>) {
@@ -273,6 +374,12 @@ fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn background_loops_start_exactly_once() {
+        assert!(super::claim_background_loops());
+        assert!(!super::claim_background_loops());
+    }
+
     #[test]
     fn server_refresh_preserves_game_state_and_clears_stale_rooms() {
         use launcher_net::status::{GameRoom, ServerStatus};
