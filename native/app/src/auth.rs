@@ -285,7 +285,7 @@ fn on_auth_done(
             if status_needs_password(&status) {
                 show_login(app, "login", true, &status_username(&status));
             } else if first_run || status_username(&status).is_empty() {
-                enter_firstrun(app, state.clone());
+                enter_firstrun(app, state.clone(), handle.clone());
             } else {
                 crate::backend::enter_main(app, state.clone(), handle.clone());
             }
@@ -296,9 +296,11 @@ fn on_auth_done(
 /// Fill the FirstRun form from the stored (or platform-default) settings and
 /// show it. `load_settings` already returns sane defaults when nothing was
 /// saved yet, so this mirrors the Tauri `!cfg.username` gate exactly.
-pub fn enter_firstrun(app: &AppWindow, state: Arc<LauncherAppState>) {
+pub fn enter_firstrun(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
     let weak = app.as_weak();
-    tokio::spawn(async move {
+    // handle.spawn, not tokio::spawn: callers run on the Slint UI thread
+    // (upgrade_in_event_loop), where no Tokio runtime context exists.
+    handle.spawn(async move {
         let active = state.config.read().await.active();
         let max = ram_limit_gb(max_ram_mb()).max(RAM_MIN_GB);
         let ram = clamp_ram_gb((active.ram_mb / 1024) as i32, max);
@@ -352,7 +354,7 @@ pub fn enter_startup(
             &status_field(&status, "username"),
         );
     } else if first_run || status_field(&status, "username").is_empty() {
-        enter_firstrun(app, state);
+        enter_firstrun(app, state, handle);
     } else {
         crate::backend::enter_main(app, state, handle);
     }
