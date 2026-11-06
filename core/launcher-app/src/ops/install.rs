@@ -9,7 +9,7 @@
 //! of steps are exactly as in `commands.rs`.
 
 use super::java::{java_runtime_ready, resolved_java_path, system_java_available};
-use super::pack_check::INSTALLED_VERSION_FILE;
+use super::pack_check::{installed_pack, INSTALLED_VERSION_FILE};
 use crate::{DownloadMirrorPayload, EventSink, LauncherAppState, LauncherEvent};
 use launcher_core::config::ClientProfile;
 use launcher_net::download::Downloader;
@@ -38,6 +38,24 @@ fn minecraft_status_sink(events: &EventSink) -> launcher_net::minecraft::StatusS
             events(LauncherAppState::status_event(phase, message, cancelable));
         },
     )
+}
+
+/// The pack phase already completed for this index hash AND a real hash check
+/// of the installed files passes: a retry after a runtime-phase failure
+/// resumes at the runtime phase. A missing or same-size-corrupted mod fails
+/// the check and forces a full installer run, so it heals without a manual
+/// verify. Unchanged files are not re-hashed (mtime+size cache).
+pub(crate) fn pack_phase_complete(app_data: &Path, game_dir: &Path, index_hash: &str) -> bool {
+    installed_pack(game_dir).0 == index_hash
+        && launcher_net::installed_files::pack_files_valid(game_dir, app_data)
+}
+
+/// Blocking pack hash check, designed for `spawn_blocking`: a corrupt pack
+/// must not survive a launch, so the check runs off the async worker.
+async fn pack_phase_done(app_data: PathBuf, game_dir: PathBuf, index_hash: String) -> bool {
+    tokio::task::spawn_blocking(move || pack_phase_complete(&app_data, &game_dir, &index_hash))
+        .await
+        .unwrap_or(false)
 }
 
 pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
@@ -112,24 +130,39 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         None => None,
     };
 
-    emit_status(&state.events, "modpack", "Обновление файлов модпака", true);
-    ensure_jar(state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
-    ensure_jar(state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
-    let cancel = state.cancel_flag.clone();
-    let events = state.events.clone();
-    let (java_for_installer, dir, pack_url) =
-        (java.clone(), game_dir.clone(), pack.info.pack.clone());
-    tokio::task::spawn_blocking(move || {
-        run_packwiz_installer(&events, &cancel, &java_for_installer, &dir, &pack_url)
-    })
-    .await
-    .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
-    launcher_net::installed_files::write(
-        &game_dir.join(INSTALLED_VERSION_FILE),
-        format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
+    if pack_phase_done(
+        state.app_data_dir.clone(),
+        game_dir.clone(),
+        pack.meta.index_hash.clone(),
     )
-    .map_err(|e| format!("Failed to record installed version: {e}"))?;
-    emit_status(&state.events, "modpack", "Файлы модпака готовы", false);
+    .await
+    {
+        emit_status(
+            &state.events,
+            "modpack",
+            "Файлы модпака уже установлены",
+            false,
+        );
+    } else {
+        emit_status(&state.events, "modpack", "Обновление файлов модпака", true);
+        ensure_jar(state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
+        ensure_jar(state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
+        let cancel = state.cancel_flag.clone();
+        let events = state.events.clone();
+        let (java_for_installer, dir, pack_url) =
+            (java.clone(), game_dir.clone(), pack.info.pack.clone());
+        tokio::task::spawn_blocking(move || {
+            run_packwiz_installer(&events, &cancel, &java_for_installer, &dir, &pack_url)
+        })
+        .await
+        .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
+        launcher_net::installed_files::write(
+            &game_dir.join(INSTALLED_VERSION_FILE),
+            format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
+        )
+        .map_err(|e| format!("Failed to record installed version: {e}"))?;
+        emit_status(&state.events, "modpack", "Файлы модпака готовы", false);
+    }
 
     emit_status(
         &state.events,
@@ -485,12 +518,64 @@ pub async fn verify_files(
     state.downloader.reset_cancel();
     let cancel = state.cancel_flag.clone();
     let events = state.events.clone();
+    let java_for_verify = java.clone();
+    let dir = game_dir.clone();
+    let pack_url = pack.info.pack.clone();
     tokio::task::spawn_blocking(move || {
-        run_packwiz_installer(&events, &cancel, &java, &game_dir, &pack.info.pack)
+        run_packwiz_installer(&events, &cancel, &java_for_verify, &dir, &pack_url)
     })
     .await
     .map_err(|e| format!("Verification task failed: {e}"))??;
-    Ok(Vec::new())
+    // Runtime files were never re-checked: a same-size corrupt jar passed every
+    // size probe while the game crashed at launch. Heal the manifests first so
+    // the hash checks trust fresh metadata, then delete the corrupt files so
+    // the dependency pass below re-downloads them against the metadata hashes.
+    // The hash scan is blocking file IO: it runs on the blocking pool.
+    let loader = pack.meta.loader.clone();
+    if let Some(loader) = &loader {
+        launcher_net::minecraft::ensure_loader_profile(&game_dir, &pack.meta.minecraft, loader)
+            .await?;
+    }
+    launcher_net::minecraft::heal_runtime_manifests(&game_dir, &pack.meta.minecraft).await?;
+    let loader_id = loader
+        .as_ref()
+        .map(|loader| launcher_net::minecraft::loader_version_id(&pack.meta.minecraft, loader));
+    let loader_id = loader_id
+        .as_deref()
+        .filter(|id| launcher_net::minecraft::loader_profile_exists(&game_dir, id));
+    let minecraft = pack.meta.minecraft.clone();
+    let loader_id_owned = loader_id.map(String::from);
+    let dir = game_dir.clone();
+    let corrupt = tokio::task::spawn_blocking(move || {
+        launcher_net::minecraft::heal_corrupt_runtime_files(
+            &dir,
+            &minecraft,
+            loader_id_owned.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Verification task failed: {e}"))??;
+    if !corrupt.is_empty()
+        || !launcher_net::minecraft::has_launch_dependencies(
+            &game_dir,
+            &pack.meta.minecraft,
+            loader_id,
+        )
+    {
+        let runtime_status = minecraft_status_sink(&state.events);
+        launcher_net::minecraft::ensure_launch_dependencies(
+            &state.downloader,
+            &runtime_status,
+            &game_dir,
+            &pack.meta.minecraft,
+            loader_id,
+        )
+        .await?;
+    }
+    Ok(corrupt
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect())
 }
 
 pub async fn cancel_download(state: &LauncherAppState) -> Result<(), String> {
@@ -659,6 +744,55 @@ mod tests {
             serde_json::to_string(&without_speed).unwrap(),
             r#"{"name":"Cloudflare R2","speed":null}"#
         );
+    }
+
+    #[test]
+    fn pack_phase_skips_only_when_marker_current_and_files_verify() {
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-pack-phase-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let data = root.join("app-data");
+        let game = root.join("game");
+        std::fs::create_dir_all(game.join("mods")).unwrap();
+        // No marker: full installer run.
+        assert!(!pack_phase_complete(&data, &game, "abc"));
+        std::fs::write(game.join(INSTALLED_VERSION_FILE), "abc\n1.0\n").unwrap();
+        // Marker current but no installer cache: full run.
+        assert!(!pack_phase_complete(&data, &game, "abc"));
+        let good = game.join("mods/a.jar");
+        std::fs::write(&good, b"correct-bytes!").unwrap();
+        std::fs::write(
+            game.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "a": {
+                    "cachedLocation": "mods/a.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&good).unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(pack_phase_complete(&data, &game, "abc"));
+        // Unchanged files are stats-only on repeat checks (mtime+size cache).
+        assert!(pack_phase_complete(&data, &game, "abc"));
+        // Drop the cache so the corruption step is a fresh hash, not a race
+        // with filesystem timestamp granularity on same-size rewrites.
+        std::fs::remove_dir_all(&data).unwrap();
+        // A same-size corrupted mod forces a full run so it heals.
+        std::fs::write(&good, b"corrupt-bytes!").unwrap();
+        assert!(!pack_phase_complete(&data, &game, "abc"));
+        // Stale marker: full run even with verified files.
+        std::fs::write(&good, b"correct-bytes!").unwrap();
+        assert!(!pack_phase_complete(&data, &game, "other"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

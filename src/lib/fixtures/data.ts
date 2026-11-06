@@ -1,6 +1,8 @@
+import { SETTINGS_CAPTURE_STATES } from './settings'
 import type { LauncherConfig, ServerStatus, VersionCheckResult } from '../api'
 
 export const CAPTURE_STATES = [
+  ...SETTINGS_CAPTURE_STATES,
   'first-run',
   'login',
   'main',
