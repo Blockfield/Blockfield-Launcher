@@ -6,7 +6,10 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use launcher_app::{LauncherAppState, ops::pack_check, status_ops};
@@ -581,6 +584,23 @@ pub fn apply_self(app: &AppWindow, outcome: &StatsOutcome, uuid: &str) {
     });
 }
 
+/// Thread 4: live reloads race (filter flips, pager): only the newest
+/// request may paint; older completions are dropped on the floor.
+#[derive(Debug, Default)]
+pub struct StatsRequests {
+    latest: AtomicU64,
+}
+
+impl StatsRequests {
+    pub fn next(&self) -> u64 {
+        self.latest.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn is_latest(&self, generation: u64) -> bool {
+        self.latest.load(Ordering::SeqCst) == generation
+    }
+}
+
 /// Fixture-mode callbacks: pager and filters mutate the fixture state
 /// synchronously (deterministic for Layer 1); refresh re-applies fixtures.
 pub fn wire_fixtures(app: &AppWindow) {
@@ -639,11 +659,21 @@ pub fn wire_fixtures(app: &AppWindow) {
 /// Live-mode wiring: every callback spawns on the worker runtime and posts
 /// back through the event loop; the Slint thread never blocks on network.
 pub fn wire_live(app: &AppWindow, handle: Handle, state: Arc<LauncherAppState>) {
+    // Threads 2+3: the live path owns the same initial state the fixtures
+    // set; without it the filter rows render empty and the first reload
+    // queries period=/sort=/page=0 instead of StatsFilters::default.
+    apply_filter_options(app);
+    let defaults = StatsFilters::default();
+    app.set_stats_period(defaults.period.into());
+    app.set_stats_sort(defaults.sort.into());
+    app.set_stats_page(i32::try_from(defaults.page).unwrap_or(1));
+    let requests: Arc<StatsRequests> = Arc::default();
+    let reload_requests = requests.clone();
     let site_handle = handle.clone();
     let reload = {
         let weak = app.as_weak();
         Arc::new(move |app: &AppWindow| {
-            request_reload(&weak, &handle, &state, app);
+            request_reload(&weak, &handle, &state, &reload_requests, app);
         })
     };
     let reload_shown = reload.clone();
@@ -728,6 +758,7 @@ fn request_reload(
     weak: &Weak<AppWindow>,
     handle: &Handle,
     state: &Arc<LauncherAppState>,
+    requests: &Arc<StatsRequests>,
     app: &AppWindow,
 ) {
     let filters = StatsFilters {
@@ -736,6 +767,8 @@ fn request_reload(
         sort: app.get_stats_sort().to_string(),
         page: i64::from(app.get_stats_page()),
     };
+    let generation = requests.next();
+    let requests = requests.clone();
     let weak = weak.clone();
     let handle = handle.clone();
     let state = state.clone();
@@ -798,6 +831,9 @@ fn request_reload(
         );
         let page = filters.page;
         let _ = weak.upgrade_in_event_loop(move |app| {
+            if !requests.is_latest(generation) {
+                return;
+            }
             if let Some(data) = seasons.data.as_ref() {
                 apply_seasons(&app, data);
             }
@@ -931,6 +967,16 @@ mod tests {
         assert_eq!(outcome_tone("Ничья"), 0);
         assert_eq!(mode_label("campaign"), "Ranked");
         assert_eq!(mode_label("custom"), "custom");
+    }
+
+    #[test]
+    fn stale_generations_are_dropped() {
+        let requests = StatsRequests::default();
+        let first = requests.next();
+        assert!(requests.is_latest(first));
+        let second = requests.next();
+        assert!(!requests.is_latest(first));
+        assert!(requests.is_latest(second));
     }
 
     #[test]

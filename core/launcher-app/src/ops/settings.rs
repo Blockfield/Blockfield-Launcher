@@ -186,16 +186,16 @@ mod tests {
         // Valid change applies to the active profile and persists.
         let game_dir = dir.join("game");
         std::fs::create_dir_all(&game_dir).unwrap();
+        // Fresh default RAM must save on any host (clamped to it above).
         let good = LauncherConfig {
             game_dir: game_dir.to_string_lossy().to_string(),
-            ram_mb: 4096,
             ..LauncherConfig::default()
         };
         save_settings(&state, &dir, good).unwrap();
         let active = state.config.blocking_read().active();
         assert_eq!(active.game_dir, game_dir.to_string_lossy());
-        assert_eq!(active.ram_mb, 4096);
-        assert_eq!(load_config(&dir).ram_mb, 4096);
+        assert_eq!(active.ram_mb, LauncherConfig::default().ram_mb);
+        assert_eq!(load_config(&dir).ram_mb, active.ram_mb);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

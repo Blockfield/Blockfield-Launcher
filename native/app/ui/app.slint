@@ -8,10 +8,15 @@ import "../assets/fonts/Inter-600.ttf";
 import "../assets/fonts/Inter-700.ttf";
 import "../assets/fonts/Inter-800.ttf";
 export { SelectSearch, MainMotion, MainText } from "main-controls.slint";
+export { SettingsForm, SettingsData } from "settings-model.slint";
 export { WindowActivity } from "controls.slint";
 import { MainScreen, MainData, Room } from "main.slint";
+import { SettingsForm } from "settings-model.slint";
 import { SettingsScreen } from "settings.slint";
 import { StatsScreen, StatsRow, StatsRating, StatsMatch, StatsFilter } from "stats.slint";
+import { LoginScreen } from "login.slint";
+import { FirstRunScreen } from "firstrun.slint";
+import { UpdateScreen, LauncherUpdatePanel, UpdateData, LauncherUpdateData } from "update.slint";
 import { Tokens } from "tokens.slint";
 import { WindowChrome, Shell } from "shell.slint";
 import { GridBackdrop, TopoBackdrop, CornerTicks, GlowPanel } from "backdrop.slint";
@@ -19,10 +24,28 @@ import { StatusDot } from "controls.slint";
 
 export component AppWindow inherits Window {
     in property <bool> show-main: false;
+    in property <bool> show-login: false;
+    in property <bool> show-firstrun: false;
+    in property <string> login-mode: "login";
+    in-out property <string> login-username;
+    in-out property <string> login-password;
+    in property <bool> login-set-password: false;
+    in property <bool> login-name-valid: true;
+    in property <bool> login-busy: false;
+    in property <string> login-error;
+    in property <bool> login-can-submit: false;
+    in-out property <string> firstrun-game-dir;
+    in-out property <string> firstrun-java-path;
+    in-out property <int> firstrun-ram: 4;
+    in property <int> firstrun-maxram: 2;
+    in property <[int]> firstrun-presets;
+    in property <bool> firstrun-saving: false;
+    in property <string> firstrun-error;
     in property <MainData> main-data;
     in property <[Room]> rooms;
     in property <[string]> room-names;
     in-out property <bool> workshop: false;
+    changed workshop => { SettingsForm.profile(root.workshop); }
     in-out property <int> room-index: 0;
     in-out property <int> details-view: 0;
     in-out property <string> room-message;
@@ -74,6 +97,8 @@ export component AppWindow inherits Window {
     in property <image> skin-frame;
     in property <string> skin-error;
     in property <string> skin-caption;
+    in property <UpdateData> update-data;
+    in property <LauncherUpdateData> launcher-update-data;
     callback browse-skin();
     callback browse-cape();
     callback upload-skin();
@@ -84,6 +109,12 @@ export component AppWindow inherits Window {
     callback skin-drag-state(bool);
     callback skin-drag-by(float, float);
     callback skin-frame-ready();
+    callback update-retry();
+    callback update-cancel();
+    callback update-launch();
+    callback launcher-check();
+    callback launcher-install();
+    callback launcher-restart();
     callback download-modpack();
     callback cancel-download();
     callback deploy();
@@ -107,6 +138,16 @@ export component AppWindow inherits Window {
     callback minimize();
     callback maximize();
     callback request-close();
+    callback login-submit();
+    callback login-toggle-mode();
+    callback login-logout();
+    callback login-username-edited(string);
+    callback login-password-edited(string);
+    callback login-accept();
+    callback firstrun-browse-dir();
+    callback firstrun-browse-java();
+    callback firstrun-ram-text-edited(string);
+    callback firstrun-continue();
     callback navigate(int);
     callback launcher-update();
     callback support();
@@ -125,7 +166,7 @@ export component AppWindow inherits Window {
         minimize => { root.minimize(); }
         maximize => { root.maximize(); }
         request-close => { root.request-close(); }
-        Shell {
+        if !root.show-login && !root.show-firstrun: Shell {
             fixture-face: root.show-main || root.active == 3;
             active <=> root.active;
             brand: root.brand;
@@ -192,10 +233,17 @@ export component AppWindow inherits Window {
                 refresh => { root.stats-refresh(); }
                 open-site => { root.stats-open-site(); }
             }
+            if root.show-main && root.active == 1: UpdateScreen {
+                data: root.update-data;
+                retry => { root.update-retry(); }
+                cancel => { root.update-cancel(); }
+                launch => { root.update-launch(); }
+            }
             if root.active == 3: SettingsScreen {                // shortcut: preserve u16's logical-pixel layout until settings adopts CSS zoom metrics.
                 private property <length> legacy-inset: 1px - 1phx;
                 x: self.legacy-inset; y: self.legacy-inset;
                 width: parent.width - 2 * self.legacy-inset; height: parent.height - Tokens.header-height - Tokens.footer-height - 2 * self.legacy-inset;
+                username: root.username;
                 tabs: root.settings-tabs;
                 tab <=> root.settings-tab;
                 title: root.settings-title;
@@ -206,6 +254,10 @@ export component AppWindow inherits Window {
                 skin-frame: root.skin-frame;
                 skin-error: root.skin-error;
                 caption: root.skin-caption;
+                launcher-data: root.launcher-update-data;
+                check => { root.launcher-check(); }
+                install => { root.launcher-install(); }
+                restart => { root.launcher-restart(); }
                 browse-skin => { root.browse-skin(); }
                 browse-cape => { root.browse-cape(); }
                 upload => { root.upload-skin(); }
@@ -223,6 +275,35 @@ export component AppWindow inherits Window {
                 GlowPanel { x: 20px; y: 20px; width: 280px; height: 80px; }
             }
             StatusDot { x: 24px; y: 24px; visible: root.show-pulse; pulse: root.show-pulse; }
+        }
+        if root.show-login: LoginScreen {
+            mode: root.login-mode;
+            username <=> root.login-username;
+            password <=> root.login-password;
+            set-password: root.login-set-password;
+            name-valid: root.login-name-valid;
+            busy: root.login-busy;
+            error: root.login-error;
+            can-submit: root.login-can-submit;
+            submit => { root.login-submit(); }
+            toggle-mode => { root.login-toggle-mode(); }
+            logout => { root.login-logout(); }
+            username-edited(text) => { root.login-username-edited(text); }
+            password-edited(text) => { root.login-password-edited(text); }
+            accept => { root.login-accept(); }
+        }
+        if root.show-firstrun: FirstRunScreen {
+            game-dir <=> root.firstrun-game-dir;
+            java-path <=> root.firstrun-java-path;
+            ram <=> root.firstrun-ram;
+            maxram: root.firstrun-maxram;
+            presets: root.firstrun-presets;
+            saving: root.firstrun-saving;
+            error: root.firstrun-error;
+            browse-dir => { root.firstrun-browse-dir(); }
+            browse-java => { root.firstrun-browse-java(); }
+            ram-text-edited(text) => { root.firstrun-ram-text-edited(text); }
+            continue => { root.firstrun-continue(); }
         }
     }
 }

@@ -58,15 +58,27 @@ fn empty_home_boots_real_core_and_reports_offline() {
     let app = AppWindow::new().unwrap();
     let runtime = runtime::new().unwrap();
     Backend::Core(runtime.handle().clone()).start(&app);
-    assert!(app.get_show_main());
-    assert!(app.get_main_data().checking);
+    // Entry routing is async: an empty home has no session, so the auth
+    // gate shows login first instead of the main Shell.
     let weak = app.as_weak();
+    let entered = std::rc::Rc::new(std::cell::Cell::new(false));
     let poll = slint::Timer::default();
-    poll.start(
-        slint::TimerMode::Repeated,
-        Duration::from_millis(10),
+    poll.start(slint::TimerMode::Repeated, Duration::from_millis(10), {
+        let entered = entered.clone();
+        let state = state.clone();
+        let handle = runtime.handle().clone();
         move || {
             let app = weak.upgrade().unwrap();
+            if !entered.get() {
+                if !app.get_show_login() {
+                    return;
+                }
+                assert!(!app.get_show_main());
+                assert!(!app.get_login_can_submit());
+                entered.set(true);
+                blockfield_native::backend::enter_main(&app, state.clone(), handle.clone());
+                return;
+            }
             let data = app.get_main_data();
             if !data.checking {
                 assert!(!data.checked);
@@ -75,8 +87,9 @@ fn empty_home_boots_real_core_and_reports_offline() {
                 assert!(!data.online);
                 slint::quit_event_loop().unwrap();
             }
-        },
-    );
+        }
+    });
+
     slint::Timer::single_shot(Duration::from_secs(10), || {
         panic!("core bootstrap timed out")
     });

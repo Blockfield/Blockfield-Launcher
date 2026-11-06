@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod backend;
 pub mod bridge;
 pub mod capture;
@@ -7,8 +8,12 @@ pub mod idle_self_check;
 mod main_e2e;
 pub mod main_ops;
 pub mod runtime;
+pub mod settings_e2e;
+pub mod settings_fixtures;
+pub mod settings_tabs;
 pub mod skin;
 pub mod stats;
+pub mod update;
 pub mod window_activity;
 
 pub use skin3d::slint::PreviewHost;
@@ -84,7 +89,6 @@ pub fn wire_app(
     });
     app.on_browse_skin(|| eprintln!("POC settings: skin browse is a stub (no backend)"));
     app.on_browse_cape(|| eprintln!("POC settings: cape browse is a stub (no backend)"));
-    stats::wire_fixtures(app);
     app.on_upload_skin(|| eprintln!("POC settings: skin upload is a stub (no backend)"));
     app.on_settings_reset(|| eprintln!("POC settings: reset is a stub (no backend)"));
     app.on_settings_save(|| eprintln!("POC settings: save is a stub (no backend)"));

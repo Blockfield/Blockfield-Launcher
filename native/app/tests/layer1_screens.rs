@@ -37,12 +37,25 @@ fn given_app(state: &str, scenario: &str) -> (AppWindow, Rc<PreviewHost>) {
         wire_app(&app, blockfield_native::backend::Backend::Fixtures).expect("wire test app");
     if state == "settings-skin" {
         fixtures::apply_settings(&app).expect("settings fixtures");
+    } else if state == "login" {
+        fixtures::apply_login(&app, scenario).expect("login fixtures");
+    } else if state == "firstrun" {
+        fixtures::apply_firstrun(&app).expect("firstrun fixtures");
+    } else if state == "update" {
+        fixtures::apply_update(&app, scenario).expect("update fixtures");
     } else {
         fixtures::apply_main(&app, state, scenario).expect("main fixtures");
     }
     // Guard: without SLINT_EMIT_DEBUG_INFO=1 the ElementHandle tree is empty.
+    let anchor = match (state, scenario) {
+        ("login", "register") => "ЗАРЕГИСТРИРОВАТЬСЯ",
+        ("login", "password") => "СОХРАНИТЬ ПАРОЛЬ",
+        ("login", _) => "ВОЙТИ",
+        ("firstrun", _) => "ПРОДОЛЖИТЬ",
+        _ => "ИГРАТЬ",
+    };
     assert!(
-        ElementHandle::find_by_accessible_label(&app, "ИГРАТЬ")
+        ElementHandle::find_by_accessible_label(&app, anchor)
             .next()
             .is_some(),
         "testing tree has no accessible labels: rebuild with SLINT_EMIT_DEBUG_INFO=1"
@@ -78,8 +91,16 @@ fn layer1_screen_walk() {
     scenario_settings_each_tab();
     scenario_skin_tab_controls();
     scenario_main_deploy_states();
+    scenario_inflight_file_leads_launch_status();
+    scenario_stale_pack_flags_update_prompt();
+    scenario_login_validation_and_submit();
+    scenario_login_modes();
+    scenario_firstrun_ram_and_continue();
+    scenario_update_nav_and_retry();
+    scenario_update_deploy();
+    scenario_launcher_update_panel();
     scenario_minimize_probe();
-    println!("PASS layer1 screen walk (5 scenarios)");
+    println!("PASS layer1 screen walk (13 scenarios)");
 }
 
 /// Navigate main → settings → each tab label → back, through the UI tree.
@@ -272,7 +293,162 @@ fn scenario_main_deploy_states() {
     );
 }
 
+/// Inflight installer file (PR #64, core ops::install): the main screen shows
+/// the live file, bytes and source in the launch status while launching.
+fn scenario_inflight_file_leads_launch_status() {
+    let (app, _host) = given_app("main", "inflight");
+    let data = app.get_main_data();
+    assert!(data.launching, "inflight fixture is launching");
+    assert!(
+        data.launch_status
+            .to_string()
+            .starts_with("12.3/40.1 MB - "),
+        "live file bytes lead the launch status"
+    );
+    assert!(
+        data.launch_status.to_string().ends_with("Gcore CDN"),
+        "live file source stays visible"
+    );
+    assert_eq!(data.progress, 8, "file count drives the progress");
+}
+
+/// PACK_STALE fixture (core ops::launch refusal): the main screen carries the
+/// raw refusal plus the stale flag, so the friendly update prompt renders
+/// instead of the generic launch failure.
+fn scenario_stale_pack_flags_update_prompt() {
+    let (app, _host) = given_app("main", "stale");
+    let data = app.get_main_data();
+    assert!(
+        data.launch_error.to_string().contains("PACK_STALE"),
+        "stale fixture keeps the raw refusal for details"
+    );
+    assert!(
+        data.launch_stale,
+        "stale fixture arms the friendly update prompt"
+    );
+}
+
 /// Minimize must stop animation timers (idle self-check logic, headless form).
+/// Login: fixture entry, validation, submit transition to FirstRun.
+fn scenario_login_validation_and_submit() {
+    // Given the empty login form…
+    let (app, _host) = given_app("login", "default");
+    assert!(app.get_show_login(), "login mounts");
+    assert!(!app.get_show_main(), "shell stays hidden on login");
+    // …both fields exist in the testing tree as text inputs…
+    let name = ElementHandle::find_by_accessible_label(&app, "НИКНЕЙМ")
+        .find(|el| el.accessible_role() == Some(AccessibleRole::TextInput))
+        .expect("username input exists");
+    assert!(name.is_valid(), "username input valid");
+    let password = ElementHandle::find_by_accessible_label(&app, "ПАРОЛЬ")
+        .find(|el| el.accessible_role() == Some(AccessibleRole::TextInput))
+        .expect("password input exists");
+    // …then submitting is blocked until both fields are valid…
+    assert!(!app.get_login_can_submit(), "empty form cannot submit");
+    name.set_accessible_value("ab");
+    app.invoke_login_username_edited("ab".into());
+    assert!(!app.get_login_name_valid(), "two-letter name rejected");
+    assert!(!app.get_login_can_submit(), "invalid name cannot submit");
+    name.set_accessible_value("Player_1");
+    app.invoke_login_username_edited("Player_1".into());
+    assert_eq!(
+        app.get_login_username().to_string(),
+        "Player_1",
+        "typing reaches the form state"
+    );
+    password.set_accessible_value("secret123");
+    app.invoke_login_password_edited("secret123".into());
+    assert!(app.get_login_name_valid(), "valid name accepted");
+    assert!(app.get_login_can_submit(), "complete form can submit");
+    // …when valid credentials submit, the fixture signs in and moves on…
+    when_click_label(&app, "ВОЙТИ");
+    assert!(!app.get_show_login(), "login unmounts after submit");
+    assert!(app.get_show_main(), "signed-in user reaches main");
+}
+
+/// Login: register toggle and password-migration variants.
+fn scenario_login_modes() {
+    // Given the login form, toggling switches to registration…
+    let (app, _host) = given_app("login", "default");
+    when_click_label(&app, "Нет аккаунта? Зарегистрироваться");
+    assert_eq!(
+        app.get_login_mode().to_string(),
+        "register",
+        "toggle switches to register"
+    );
+    assert_eq!(
+        all_labels(&app, "ЗАРЕГИСТРИРОВАТЬСЯ").len(),
+        1,
+        "register submit exists"
+    );
+    // …and back.
+    when_click_label(&app, "Уже есть аккаунт? Войти");
+    assert_eq!(
+        app.get_login_mode().to_string(),
+        "login",
+        "toggle switches back"
+    );
+    // Given password migration, the name field hides and logout shows…
+    let (app, _host) = given_app("login", "password");
+    assert!(app.get_login_set_password(), "migration sets password mode");
+    assert!(
+        all_labels(&app, "НИКНЕЙМ").is_empty(),
+        "migration hides the name field"
+    );
+    assert_eq!(
+        all_labels(&app, "СОХРАНИТЬ ПАРОЛЬ").len(),
+        1,
+        "migration submit exists"
+    );
+    // …when the operator logs out, the plain login form returns.
+    when_click_label(&app, "Выйти");
+    assert!(
+        !app.get_login_set_password(),
+        "logout leaves migration mode"
+    );
+    assert!(app.get_show_login(), "logout stays on login");
+    let (app, _host) = given_app("login", "password");
+    app.set_login_password("fresh-secret-1".into());
+    app.invoke_login_password_edited("fresh-secret-1".into());
+    app.invoke_login_submit();
+    assert!(app.get_show_firstrun(), "migration continues to firstrun");
+}
+
+/// FirstRun: RAM stepper, presets, number clamp and continue.
+fn scenario_firstrun_ram_and_continue() {
+    // Given the first-run form…
+    let (app, _host) = given_app("firstrun", "default");
+    assert!(app.get_show_firstrun(), "firstrun mounts");
+    assert!(!app.get_show_main(), "shell stays hidden on firstrun");
+    assert_eq!(app.get_firstrun_ram(), 4, "fixture RAM");
+    // …stepper, presets and the typed value target the same property…
+    when_click_label(&app, "Увеличить память");
+    assert_eq!(app.get_firstrun_ram(), 5, "plus steps up");
+    when_click_label(&app, "Уменьшить память");
+    assert_eq!(app.get_firstrun_ram(), 4, "minus steps down");
+    when_click_label(&app, "8G");
+    assert_eq!(app.get_firstrun_ram(), 8, "preset applies");
+    app.invoke_firstrun_ram_text_edited("20".into());
+    assert_eq!(app.get_firstrun_ram(), 16, "number clamps to max");
+    app.invoke_firstrun_ram_text_edited("abc".into());
+    assert_eq!(app.get_firstrun_ram(), 16, "garbage keeps RAM");
+    // …the slider is exposed with its value, and both browse stubs hold…
+    let slider = ElementHandle::find_by_accessible_label(&app, "Выделенная память, ГБ")
+        .find(|el| el.accessible_role() == Some(AccessibleRole::Slider))
+        .expect("ram slider exists");
+    assert!(slider.is_valid(), "slider valid");
+    assert_eq!(
+        slider.accessible_value().as_deref(),
+        Some("16"),
+        "slider exposes clamped RAM"
+    );
+    assert_eq!(all_labels(&app, "ОБЗОР").len(), 2, "dir + java browse");
+    // …when the operator continues, the fixture saves and shows main.
+    when_click_label(&app, "ПРОДОЛЖИТЬ");
+    assert!(!app.get_show_firstrun(), "firstrun unmounts on continue");
+    assert!(app.get_show_main(), "continue shows main");
+}
+
 fn scenario_minimize_probe() {
     // Given the main screen…
     let (app, _host) = given_app("main", "default");
@@ -289,4 +465,56 @@ fn scenario_minimize_probe() {
     // …and restore brings the window back.
     app.window().set_minimized(false);
     assert!(!app.window().is_minimized(), "window restores");
+}
+
+/// Update screen: nav mounts it, cancel/retry drive the fixture flow.
+fn scenario_update_nav_and_retry() {
+    // Given the default online main screen…
+    let (app, _host) = given_app("main", "default");
+    // …when the operator opens updates via the nav tree, the screen mounts…
+    when_click_label(&app, "ОБНОВЛЕНИЯ");
+    assert_eq!(app.get_active(), 1, "update mounts");
+    // …and a cancelable download (update fixtures) cancels and retries.
+    let (app, _host) = given_app("update", "default");
+    assert_eq!(app.get_update_data().phase, "downloading");
+    // …when the operator cancels, the flow errors…
+    when_click_label(&app, "ОТМЕНА");
+    assert_eq!(app.get_update_data().phase, "error");
+    // …and retry resets it to checking with a fresh first step.
+    when_click_label(&app, "ПОВТОРИТЬ");
+    let data = app.get_update_data();
+    assert_eq!(data.phase, "checking");
+    assert_eq!((data.step0, data.step1), (1, 0));
+}
+
+/// Update screen: the finished pack offers play; a running game locks it.
+fn scenario_update_deploy() {
+    // Given a finished pack, the 64px play button (not the nav item) launches…
+    let (app, _host) = given_app("update", "complete");
+    let play = ElementHandle::find_by_accessible_label(&app, "ИГРАТЬ")
+        .find(|el| el.size().height > 50.0)
+        .expect("update play button exists");
+    play.invoke_accessible_default_action();
+    assert!(app.get_update_data().launching, "play starts the launch");
+    assert_eq!(app.get_update_data().phase, "launching");
+    // …while a running game replaces actions with its own state.
+    let (app, _host) = given_app("update", "running");
+    assert_eq!(app.get_update_data().game_phase, "running");
+}
+
+/// Launcher tab: the self-update panel checks, installs and restarts.
+fn scenario_launcher_update_panel() {
+    // Given the settings screen with a staged launcher update…
+    let (app, _host) = given_app("settings-skin", "default");
+    fixtures::apply_launcher_update(&app, "idle").expect("launcher fixtures");
+    when_click_label(&app, "ЛАУНЧЕР");
+    assert_eq!(app.get_settings_tab(), 4, "launcher tab selects");
+    // …when the operator checks, the staged update is offered…
+    when_click_label(&app, "Проверить обновления");
+    assert_eq!(app.get_launcher_update_data().phase, "available");
+    // …and installing finishes it, offering a restart.
+    when_click_label(&app, "Установить обновление");
+    let panel = app.get_launcher_update_data();
+    assert!(panel.installed, "install finishes");
+    assert_eq!(panel.phase, "installed");
 }

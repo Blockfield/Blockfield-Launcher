@@ -9,7 +9,7 @@
 //! of steps are exactly as in `commands.rs`.
 
 use super::java::{java_runtime_ready, resolved_java_path, system_java_available};
-use super::pack_check::INSTALLED_VERSION_FILE;
+use super::pack_check::{installed_pack, INSTALLED_VERSION_FILE};
 use crate::{DownloadMirrorPayload, EventSink, LauncherAppState, LauncherEvent};
 use launcher_core::config::ClientProfile;
 use launcher_net::download::Downloader;
@@ -38,6 +38,24 @@ fn minecraft_status_sink(events: &EventSink) -> launcher_net::minecraft::StatusS
             events(LauncherAppState::status_event(phase, message, cancelable));
         },
     )
+}
+
+/// The pack phase already completed for this index hash AND a real hash check
+/// of the installed files passes: a retry after a runtime-phase failure
+/// resumes at the runtime phase. A missing or same-size-corrupted mod fails
+/// the check and forces a full installer run, so it heals without a manual
+/// verify. Unchanged files are not re-hashed (mtime+size cache).
+pub(crate) fn pack_phase_complete(app_data: &Path, game_dir: &Path, index_hash: &str) -> bool {
+    installed_pack(game_dir).0 == index_hash
+        && launcher_net::installed_files::pack_files_valid(game_dir, app_data)
+}
+
+/// Blocking pack hash check, designed for `spawn_blocking`: a corrupt pack
+/// must not survive a launch, so the check runs off the async worker.
+async fn pack_phase_done(app_data: PathBuf, game_dir: PathBuf, index_hash: String) -> bool {
+    tokio::task::spawn_blocking(move || pack_phase_complete(&app_data, &game_dir, &index_hash))
+        .await
+        .unwrap_or(false)
 }
 
 pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
@@ -112,24 +130,39 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         None => None,
     };
 
-    emit_status(&state.events, "modpack", "Обновление файлов модпака", true);
-    ensure_jar(state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
-    ensure_jar(state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
-    let cancel = state.cancel_flag.clone();
-    let events = state.events.clone();
-    let (java_for_installer, dir, pack_url) =
-        (java.clone(), game_dir.clone(), pack.info.pack.clone());
-    tokio::task::spawn_blocking(move || {
-        run_packwiz_installer(&events, &cancel, &java_for_installer, &dir, &pack_url)
-    })
-    .await
-    .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
-    launcher_net::installed_files::write(
-        &game_dir.join(INSTALLED_VERSION_FILE),
-        format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
+    if pack_phase_done(
+        state.app_data_dir.clone(),
+        game_dir.clone(),
+        pack.meta.index_hash.clone(),
     )
-    .map_err(|e| format!("Failed to record installed version: {e}"))?;
-    emit_status(&state.events, "modpack", "Файлы модпака готовы", false);
+    .await
+    {
+        emit_status(
+            &state.events,
+            "modpack",
+            "Файлы модпака уже установлены",
+            false,
+        );
+    } else {
+        emit_status(&state.events, "modpack", "Обновление файлов модпака", true);
+        ensure_jar(state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
+        ensure_jar(state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
+        let cancel = state.cancel_flag.clone();
+        let events = state.events.clone();
+        let (java_for_installer, dir, pack_url) =
+            (java.clone(), game_dir.clone(), pack.info.pack.clone());
+        tokio::task::spawn_blocking(move || {
+            run_packwiz_installer(&events, &cancel, &java_for_installer, &dir, &pack_url)
+        })
+        .await
+        .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
+        launcher_net::installed_files::write(
+            &game_dir.join(INSTALLED_VERSION_FILE),
+            format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
+        )
+        .map_err(|e| format!("Failed to record installed version: {e}"))?;
+        emit_status(&state.events, "modpack", "Файлы модпака готовы", false);
+    }
 
     emit_status(
         &state.events,
@@ -271,6 +304,56 @@ pub(crate) fn installer_mirror(line: &str) -> Option<(String, Option<String>)> {
     Some((name.to_string(), None))
 }
 
+/// "[blockfield-file] {\"name\":\"a.jar\",\"received\":123,\"total\":456,\"source\":\"Mirror\"}"
+/// → (name, received bytes, total bytes, source). JSON so spaces, quotes and Unicode survive.
+#[derive(Debug, serde::Deserialize)]
+struct InstallerFileLine {
+    name: String,
+    received: u64,
+    total: Option<u64>,
+    source: Option<String>,
+}
+
+fn installer_file(line: &str) -> Option<(String, u64, Option<u64>, Option<String>)> {
+    let payload = line.strip_prefix("[blockfield-file] ")?.trim();
+    if payload.is_empty() {
+        return None;
+    }
+    let parsed: InstallerFileLine = serde_json::from_str(payload).ok()?;
+    if parsed.name.is_empty() {
+        return None;
+    }
+    Some((
+        parsed.name,
+        parsed.received,
+        parsed.total,
+        parsed.source.filter(|source| !source.is_empty()),
+    ))
+}
+
+/// What the update screen shows as the current file while a large jar is still downloading.
+/// Bytes lead so progress stays visible when the stats cell truncates a long jar name.
+fn installer_file_display(
+    name: &str,
+    received: u64,
+    total: Option<u64>,
+    source: Option<&str>,
+) -> String {
+    let bytes = match total {
+        Some(total) => format!("{:.1}/{:.1} MB", received as f64 / 1e6, total as f64 / 1e6),
+        None => format!("{:.1} MB", received as f64 / 1e6),
+    };
+    let short = if name.chars().count() > 44 {
+        format!("{}…", name.chars().take(43).collect::<String>())
+    } else {
+        name.to_string()
+    };
+    match source {
+        Some(source) => format!("{bytes} - {short} - {source}"),
+        None => format!("{bytes} - {short}"),
+    }
+}
+
 /// Runs packwiz-installer (client side, via its bootstrap) in the game dir; it downloads, verifies and prunes the
 /// pack contents itself. Output lines are forwarded to the UI as status/progress events.
 fn run_packwiz_installer(
@@ -345,6 +428,7 @@ fn run_packwiz_installer(
     drop(tx);
 
     let mut tail = std::collections::VecDeque::with_capacity(20);
+    let mut last_files: Option<(usize, usize)> = None;
     let mut handle_line = |line: String| {
         log::info!("[packwiz-installer] {line}");
         if let Some((name, speed)) = installer_mirror(&line) {
@@ -353,8 +437,19 @@ fn run_packwiz_installer(
                 speed,
             }));
         } else if let Some((done, total)) = installer_progress(&line) {
+            last_files = Some((done, total));
             events(LauncherEvent::DownloadProgress(
                 launcher_net::download::DownloadProgressPayload::files(line.clone(), done, total),
+            ));
+        } else if let Some((name, received, total, source)) = installer_file(&line) {
+            // A large file is still downloading: keep the last file count, show the live file.
+            let (done, total_files) = last_files.unwrap_or((0, 0));
+            events(LauncherEvent::DownloadProgress(
+                launcher_net::download::DownloadProgressPayload::files(
+                    installer_file_display(&name, received, total, source.as_deref()),
+                    done,
+                    total_files,
+                ),
             ));
         } else {
             emit_status(events, "modpack", line.clone(), true);
@@ -423,12 +518,64 @@ pub async fn verify_files(
     state.downloader.reset_cancel();
     let cancel = state.cancel_flag.clone();
     let events = state.events.clone();
+    let java_for_verify = java.clone();
+    let dir = game_dir.clone();
+    let pack_url = pack.info.pack.clone();
     tokio::task::spawn_blocking(move || {
-        run_packwiz_installer(&events, &cancel, &java, &game_dir, &pack.info.pack)
+        run_packwiz_installer(&events, &cancel, &java_for_verify, &dir, &pack_url)
     })
     .await
     .map_err(|e| format!("Verification task failed: {e}"))??;
-    Ok(Vec::new())
+    // Runtime files were never re-checked: a same-size corrupt jar passed every
+    // size probe while the game crashed at launch. Heal the manifests first so
+    // the hash checks trust fresh metadata, then delete the corrupt files so
+    // the dependency pass below re-downloads them against the metadata hashes.
+    // The hash scan is blocking file IO: it runs on the blocking pool.
+    let loader = pack.meta.loader.clone();
+    if let Some(loader) = &loader {
+        launcher_net::minecraft::ensure_loader_profile(&game_dir, &pack.meta.minecraft, loader)
+            .await?;
+    }
+    launcher_net::minecraft::heal_runtime_manifests(&game_dir, &pack.meta.minecraft).await?;
+    let loader_id = loader
+        .as_ref()
+        .map(|loader| launcher_net::minecraft::loader_version_id(&pack.meta.minecraft, loader));
+    let loader_id = loader_id
+        .as_deref()
+        .filter(|id| launcher_net::minecraft::loader_profile_exists(&game_dir, id));
+    let minecraft = pack.meta.minecraft.clone();
+    let loader_id_owned = loader_id.map(String::from);
+    let dir = game_dir.clone();
+    let corrupt = tokio::task::spawn_blocking(move || {
+        launcher_net::minecraft::heal_corrupt_runtime_files(
+            &dir,
+            &minecraft,
+            loader_id_owned.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Verification task failed: {e}"))??;
+    if !corrupt.is_empty()
+        || !launcher_net::minecraft::has_launch_dependencies(
+            &game_dir,
+            &pack.meta.minecraft,
+            loader_id,
+        )
+    {
+        let runtime_status = minecraft_status_sink(&state.events);
+        launcher_net::minecraft::ensure_launch_dependencies(
+            &state.downloader,
+            &runtime_status,
+            &game_dir,
+            &pack.meta.minecraft,
+            loader_id,
+        )
+        .await?;
+    }
+    Ok(corrupt
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect())
 }
 
 pub async fn cancel_download(state: &LauncherAppState) -> Result<(), String> {
@@ -453,6 +600,10 @@ mod tests {
         assert_eq!(installer_progress("Finished successfully!"), None);
         assert_eq!(
             installer_progress("[blockfield-mirror] Gcore CDN 12.3 MB/s"),
+            None
+        );
+        assert_eq!(
+            installer_progress("[blockfield-file] {\"name\":\"a.jar\"}"),
             None
         );
     }
@@ -488,6 +639,92 @@ mod tests {
     }
 
     #[test]
+    fn installer_file_lines_are_parsed() {
+        for (line, expected) in [
+            (
+                "[blockfield-file] {\"name\":\"create.jar\",\"received\":131072,\"total\":22105900,\"source\":\"Gcore CDN\"}",
+                Some((
+                    "create.jar".to_string(),
+                    131072,
+                    Some(22105900),
+                    Some("Gcore CDN".to_string()),
+                )),
+            ),
+            (
+                // Spaces, quotes and delimiter-like text survive the JSON format.
+                "[blockfield-file] {\"name\":\"My \\\"Mod\\\" 1/2.jar\",\"received\":0,\"total\":null,\"source\":\"pack host\"}",
+                Some((
+                    "My \"Mod\" 1/2.jar".to_string(),
+                    0,
+                    None,
+                    Some("pack host".to_string()),
+                )),
+            ),
+            (
+                "[blockfield-file] {\"name\":\"Мод.jar\",\"received\":1,\"total\":2,\"source\":\"Cloudflare R2\"}",
+                Some((
+                    "Мод.jar".to_string(),
+                    1,
+                    Some(2),
+                    Some("Cloudflare R2".to_string()),
+                )),
+            ),
+            (
+                "[blockfield-file] {\"name\":\"a.jar\",\"received\":1,\"total\":2}",
+                Some(("a.jar".to_string(), 1, Some(2), None)),
+            ),
+        ] {
+            assert_eq!(installer_file(line), expected, "{line}");
+        }
+        for line in [
+            "[blockfield-file] ",
+            "[blockfield-file] not json",
+            "[blockfield-file] {\"name\":\"\",\"received\":1,\"total\":2}",
+            "[blockfield-file] {\"name\":\"a.jar\",\"received\":\"x\",\"total\":2}",
+            // The previous space-separated format is no longer produced; it must not parse.
+            "[blockfield-file] create.jar 131072/22105900 Gcore CDN",
+            "Finished successfully!",
+            "(12/137) Downloaded Create",
+            "[blockfield-mirror] Gcore CDN 12.3 MB/s",
+        ] {
+            assert_eq!(installer_file(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn installer_file_display_keeps_bytes_visible() {
+        // Bytes lead so a truncated stats cell still shows progress.
+        assert_eq!(
+            installer_file_display(
+                "blockfield-client-1.56.0+mc1.21.1.jar",
+                12300000,
+                Some(40088921),
+                Some("Gcore CDN")
+            ),
+            "12.3/40.1 MB - blockfield-client-1.56.0+mc1.21.1.jar - Gcore CDN"
+        );
+        assert_eq!(
+            installer_file_display(
+                "create-fabric-6.0.0.0+mc1.21.1-bf6.jar",
+                0,
+                Some(22105900),
+                Some("pack host")
+            ),
+            "0.0/22.1 MB - create-fabric-6.0.0.0+mc1.21.1-bf6.jar - pack host"
+        );
+        // Long names truncate; the byte count stays at the front.
+        let long = installer_file_display(
+            "a-quite-long-mod-name-that-keeps-going-forever.jar",
+            1000000,
+            None,
+            None,
+        );
+        assert!(long.starts_with("1.0 MB - "), "{long}");
+        assert!(long.ends_with("…"), "{long}");
+        assert_eq!(long.chars().count(), "1.0 MB - ".len() + 44);
+    }
+
+    #[test]
     fn mirror_payload_matches_todays_download_mirror_json() {
         // The Tauri sink maps DownloadMirror to
         // `json!({"name", "speed"})`; the struct must serialize byte-identical.
@@ -507,6 +744,55 @@ mod tests {
             serde_json::to_string(&without_speed).unwrap(),
             r#"{"name":"Cloudflare R2","speed":null}"#
         );
+    }
+
+    #[test]
+    fn pack_phase_skips_only_when_marker_current_and_files_verify() {
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-pack-phase-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let data = root.join("app-data");
+        let game = root.join("game");
+        std::fs::create_dir_all(game.join("mods")).unwrap();
+        // No marker: full installer run.
+        assert!(!pack_phase_complete(&data, &game, "abc"));
+        std::fs::write(game.join(INSTALLED_VERSION_FILE), "abc\n1.0\n").unwrap();
+        // Marker current but no installer cache: full run.
+        assert!(!pack_phase_complete(&data, &game, "abc"));
+        let good = game.join("mods/a.jar");
+        std::fs::write(&good, b"correct-bytes!").unwrap();
+        std::fs::write(
+            game.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "a": {
+                    "cachedLocation": "mods/a.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&good).unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(pack_phase_complete(&data, &game, "abc"));
+        // Unchanged files are stats-only on repeat checks (mtime+size cache).
+        assert!(pack_phase_complete(&data, &game, "abc"));
+        // Drop the cache so the corruption step is a fresh hash, not a race
+        // with filesystem timestamp granularity on same-size rewrites.
+        std::fs::remove_dir_all(&data).unwrap();
+        // A same-size corrupted mod forces a full run so it heals.
+        std::fs::write(&good, b"corrupt-bytes!").unwrap();
+        assert!(!pack_phase_complete(&data, &game, "abc"));
+        // Stale marker: full run even with verified files.
+        std::fs::write(&good, b"correct-bytes!").unwrap();
+        assert!(!pack_phase_complete(&data, &game, "other"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

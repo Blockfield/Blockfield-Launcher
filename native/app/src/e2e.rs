@@ -32,6 +32,9 @@ pub fn start(
     golden_dir: PathBuf,
     update: bool,
 ) -> std::io::Result<Timer> {
+    if app.get_active() == 3 && app.get_settings_tab() < 3 {
+        return crate::settings_e2e::start(app, out_dir, golden_dir, update);
+    }
     fs::create_dir_all(&out_dir)?;
     let os = std::env::consts::OS;
     let log_path = out_dir.join("e2e.log");
@@ -65,6 +68,7 @@ pub fn start(
     let mut failures = 0u32;
     // Minimize probe state.
     let mut probe_delivered = 0u64;
+    let auth_walk = app.get_show_login() || app.get_show_firstrun();
     timer.start(
         TimerMode::Repeated,
         Duration::from_millis(FRAME_MS),
@@ -92,7 +96,26 @@ pub fn start(
                     shot_count += 1;
                     failures +=
                         check_shot(&app, &out_dir, &golden_dir, &os_name(), "state", update);
-                    step = 1;
+                    step = if auth_walk { 10 } else { 1 };
+                }
+                // Auth screens: one variant shot, then the minimize probe.
+                10 => {
+                    if app.get_show_login() {
+                        app.invoke_login_toggle_mode();
+                    } else {
+                        app.set_firstrun_ram(12);
+                    }
+                    step = 11;
+                }
+                11 => {
+                    let name = if app.get_show_login() && app.get_login_mode() == "register" {
+                        "mode-register"
+                    } else {
+                        "ram-12"
+                    };
+                    shot_count += 1;
+                    failures += check_shot(&app, &out_dir, &golden_dir, &os_name(), name, update);
+                    step = 4;
                 }
                 // 1..: walk settings tabs 0..=4, one shot each.
                 1 => {
