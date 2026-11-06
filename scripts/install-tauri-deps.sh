@@ -23,19 +23,19 @@ shopt -s nullglob
 CACHE_DIR="${APT_ARCHIVES_CACHE:-$HOME/.cache/apt-archives}"
 cached=("$CACHE_DIR"/*.deb)
 if [ "${#cached[@]}" -gt 0 ]; then
-  sudo cp -n "$CACHE_DIR"/*.deb /var/cache/apt/archives/
+    sudo cp -n "$CACHE_DIR"/*.deb /var/cache/apt/archives/
 fi
 
 APT_TIMEOUT="${APT_TIMEOUT:-300}"
 apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
 apt_update() {
-  sudo env DEBIAN_FRONTEND=noninteractive timeout "$APT_TIMEOUT" apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
+    sudo env DEBIAN_FRONTEND=noninteractive timeout "$APT_TIMEOUT" apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
 }
 apt_install() {
-  sudo env DEBIAN_FRONTEND=noninteractive timeout "$APT_TIMEOUT" apt-get "${apt_options[@]}" install --yes "$@"
+    sudo env DEBIAN_FRONTEND=noninteractive timeout "$APT_TIMEOUT" apt-get "${apt_options[@]}" install --yes "$@"
 }
 switch_azure_mirror() {
-  sudo python3 - <<'PYEOF_INNER'
+    sudo python3 - <<'PYEOF_INNER'
 from pathlib import Path
 sources = [Path("/etc/apt/sources.list"), Path("/etc/apt/blacksmith-ubuntu-mirrors.txt")]
 for pattern in ("*.list", "*.sources"):
@@ -51,17 +51,17 @@ PYEOF_INNER
 }
 
 if ! apt_update; then
-  switch_azure_mirror
-  apt_update
+    switch_azure_mirror
+    apt_update
 fi
 if ! apt_install "$@"; then
-  switch_azure_mirror
-  apt_install "$@"
+    switch_azure_mirror
+    apt_install "$@"
 fi
 
 mkdir -p "$CACHE_DIR"
 debs=(/var/cache/apt/archives/*.deb)
 if [ "${#debs[@]}" -gt 0 ]; then
-  sudo cp -n /var/cache/apt/archives/*.deb "$CACHE_DIR"/
-  sudo chown "$(id -u):$(id -g)" "$CACHE_DIR"/*.deb
+    sudo cp -n /var/cache/apt/archives/*.deb "$CACHE_DIR"/
+    sudo chown "$(id -u):$(id -g)" "$CACHE_DIR"/*.deb
 fi
