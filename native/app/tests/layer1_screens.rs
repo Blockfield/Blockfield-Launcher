@@ -80,11 +80,13 @@ fn layer1_screen_walk() {
     scenario_settings_each_tab();
     scenario_skin_tab_controls();
     scenario_main_deploy_states();
+    scenario_inflight_file_leads_launch_status();
+    scenario_stale_pack_flags_update_prompt();
     scenario_update_nav_and_retry();
     scenario_update_deploy();
     scenario_launcher_update_panel();
     scenario_minimize_probe();
-    println!("PASS layer1 screen walk (8 scenarios)");
+    println!("PASS layer1 screen walk (10 scenarios)");
 }
 
 /// Navigate main → settings → each tab label → back, through the UI tree.
@@ -274,6 +276,41 @@ fn scenario_main_deploy_states() {
         select.accessible_value().as_deref(),
         Some("Мастерская"),
         "workshop profile selected"
+    );
+}
+
+/// Inflight installer file (PR #64, core ops::install): the main screen shows
+/// the live file, bytes and source in the launch status while launching.
+fn scenario_inflight_file_leads_launch_status() {
+    let (app, _host) = given_app("main", "inflight");
+    let data = app.get_main_data();
+    assert!(data.launching, "inflight fixture is launching");
+    assert!(
+        data.launch_status
+            .to_string()
+            .starts_with("12.3/40.1 MB - "),
+        "live file bytes lead the launch status"
+    );
+    assert!(
+        data.launch_status.to_string().ends_with("Gcore CDN"),
+        "live file source stays visible"
+    );
+    assert_eq!(data.progress, 8, "file count drives the progress");
+}
+
+/// PACK_STALE fixture (core ops::launch refusal): the main screen carries the
+/// raw refusal plus the stale flag, so the friendly update prompt renders
+/// instead of the generic launch failure.
+fn scenario_stale_pack_flags_update_prompt() {
+    let (app, _host) = given_app("main", "stale");
+    let data = app.get_main_data();
+    assert!(
+        data.launch_error.to_string().contains("PACK_STALE"),
+        "stale fixture keeps the raw refusal for details"
+    );
+    assert!(
+        data.launch_stale,
+        "stale fixture arms the friendly update prompt"
     );
 }
 

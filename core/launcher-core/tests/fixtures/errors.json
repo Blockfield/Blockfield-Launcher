@@ -465,6 +465,14 @@
         "context": "launch"
       },
       "expected": "Не удалось запустить игру."
+    },
+    {
+      "fn": "friendly_error",
+      "input": {
+        "raw": "PACK_STALE: installed pack is outdated (remote 2.80.0). Open Updates to install it, then launch again.",
+        "context": "launch"
+      },
+      "expected": "Пак устарел — откройте «Обновления», чтобы скачать свежую сборку."
     }
   ]
 }
