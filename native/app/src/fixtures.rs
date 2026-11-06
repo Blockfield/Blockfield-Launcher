@@ -46,6 +46,7 @@ pub const SCENARIOS: &[&str] = &[
     "update",
     "setup",
     "retry",
+    "stale",
     "closed",
 ];
 
@@ -127,6 +128,12 @@ pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), St
         }
         "setup" => data.needs_setup = true,
         "retry" => data.launch_error = "Fixture: launch failed".into(),
+        // Mirrors the PACK_STALE launch refusal (core ops::launch): the main
+        // screen shows the friendly update prompt instead of a raw error.
+        "stale" => {
+            data.launch_error = "PACK_STALE: installed pack is outdated (remote 2.80.0). Open Updates to install it, then launch again.".into();
+            data.launch_stale = true;
+        }
         _ => {}
     }
     let no_rooms = state == "offline"

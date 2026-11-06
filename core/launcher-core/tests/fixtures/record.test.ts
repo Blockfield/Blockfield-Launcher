@@ -191,6 +191,7 @@ describe('record fixtures', () => {
         })),
       ),
       { fn: 'friendly_error', input: { raw: 'x SESSION_EXPIRED y', context: 'launch' }, expected: friendlyError('x SESSION_EXPIRED y', 'launch').message },
+      { fn: "friendly_error", input: { raw: "PACK_STALE: installed pack is outdated (remote 2.80.0). Open Updates to install it, then launch again.", context: "launch" }, expected: friendlyError("PACK_STALE: installed pack is outdated (remote 2.80.0). Open Updates to install it, then launch again.", "launch").message },
       { fn: 'friendly_error', input: { raw: 'Drasl account server unavailable', context: 'account' }, expected: friendlyError('Drasl account server unavailable', 'account').message },
       ...['Invalid credentials', 'That username is taken', 'That player name is taken', 'Invalid password', 'Weird new drasl failure'].flatMap((drasl) => [
         {
