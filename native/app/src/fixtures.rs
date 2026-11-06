@@ -133,8 +133,7 @@ pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), St
         "inflight" => {
             data.launching = true;
             data.phase = "launching".into();
-            data.launch_status = "Обновление файлов модпака".into();
-            data.inflight_file =
+            data.launch_status =
                 "12.3/40.1 MB - blockfield-client-1.56.0+mc1.21.1.jar - Gcore CDN".into();
             data.progress = 8;
         }

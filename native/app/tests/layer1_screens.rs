@@ -280,19 +280,14 @@ fn scenario_inflight_file_leads_launch_status() {
     let data = app.get_main_data();
     assert!(data.launching, "inflight fixture is launching");
     assert!(
-        data.inflight_file
+        data.launch_status
             .to_string()
             .starts_with("12.3/40.1 MB - "),
-        "live file bytes lead while launching"
+        "live file bytes lead the launch status"
     );
     assert!(
-        data.inflight_file.to_string().ends_with("Gcore CDN"),
+        data.launch_status.to_string().ends_with("Gcore CDN"),
         "live file source stays visible"
-    );
-    assert_eq!(
-        data.launch_status.to_string(),
-        "Обновление файлов модпака",
-        "file progress never clobbers the status text"
     );
     assert_eq!(data.progress, 8, "file count drives the progress");
 }

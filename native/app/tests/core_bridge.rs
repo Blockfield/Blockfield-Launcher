@@ -36,7 +36,8 @@ fn worker_events_reach_only_the_ui_thread() {
             let data = app.get_main_data();
             assert_eq!(data.phase, "running");
             assert!(!data.launching);
-            assert_eq!(data.launch_status, "Starting game");
+            // Tauri parity (MainScreen.tsx): a progress event with a file path replaces the status text.
+            assert_eq!(data.launch_status, "a");
             assert_eq!(data.progress, 25);
             let mut bytes = DownloadProgressPayload::files("a".into(), 0, 0);
             bytes.unit = launcher_net::download::ProgressUnit::Bytes;

@@ -260,7 +260,7 @@
     {
       "fn": "selected_game_directory",
       "input": "C:\\Games\\Other\\",
-      "expected": "C:\\Games\\Other\\/Blockfield"
+      "expected": "C:\\Games\\Other\\Blockfield"
     }
   ]
 }
