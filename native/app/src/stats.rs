@@ -148,7 +148,8 @@ impl StatsFilters {
 }
 
 pub fn page_count(total: i64, limit: i64) -> i64 {
-    (total + limit - 1).max(1) / limit.max(1)
+    let limit = limit.max(1);
+    ((total + limit - 1) / limit).max(1)
 }
 
 /// Outcome labels, mirroring `StatsScreen.tsx:390-411` (blockfield-site
