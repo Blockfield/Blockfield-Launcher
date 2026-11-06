@@ -5,6 +5,14 @@ export const CAPTURE_STATES = [
   'login',
   'main',
   'main-launching',
+  'main-pager',
+  'main-verify',
+  'main-status-slice',
+  'main-running',
+  'main-finishing',
+  'main-closed',
+  'main-updating',
+  'main-focus',
   'update-42',
   'stats',
   'settings-general',
@@ -115,7 +123,17 @@ export function fixtureResponse(state: CaptureState, command: string): unknown {
         needsPassword: false,
       }
     case 'game_status':
-      return { phase: state === 'main-launching' ? 'launching' : 'idle', revision: 1 }
+      return {
+        phase:
+          state === 'main-launching'
+            ? 'launching'
+            : state === 'main-running'
+              ? 'running'
+              : state === 'main-finishing'
+                ? 'finishing'
+                : 'idle',
+        revision: 1,
+      }
     case 'check_modpack_version':
       if (state === 'error') throw new Error('Capture fixture: manifest unavailable')
       return {
@@ -133,7 +151,14 @@ export function fixtureResponse(state: CaptureState, command: string): unknown {
             playersOnline: null,
             serverLatencyMs: null,
           }
-        : server
+        : {
+            ...server,
+            gameAvailable: state !== 'main-updating',
+            rooms:
+              state === 'main-closed'
+                ? server.rooms?.map((room) => ({ ...room, admission: 'closed', joinable: false }))
+                : server.rooms,
+          }
     case 'check_launcher_update':
       return {
         currentVersion: '1.0.19',

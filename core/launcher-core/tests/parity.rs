@@ -44,6 +44,25 @@ fn num_eq(actual: f64, expected: &Value) {
     }
 }
 
+/// Emulates the Tauri reference `join(parent, child)` (backend
+/// `plugin:path|join`, tauri 2.12.1 `src/path/plugin.rs`): the platform
+/// separator is appended unless the part is empty or separator-terminated,
+/// then separators are normalized. (No `.`/`..` resolution: no fixture
+/// input needs it.)
+fn tauri_join(parent: &str, child: &str) -> String {
+    let sep = std::path::MAIN_SEPARATOR;
+    let mut out = parent.to_owned();
+    if !parent.is_empty() && !parent.ends_with('/') && !parent.ends_with('\\') {
+        out.push(sep);
+    }
+    out.push_str(child);
+    if sep == '\\' {
+        out.replace('/', "\\")
+    } else {
+        out
+    }
+}
+
 #[test]
 fn fmt_update_parity() {
     for case in load("fmt-update") {
@@ -179,15 +198,19 @@ fn validate_parity() {
                 "case {case}"
             ),
             "selected_game_directory" => {
-                let expected = case["expected"]
-                    .as_str()
-                    .unwrap()
-                    .replace('/', std::path::MAIN_SEPARATOR_STR);
-                assert_eq!(
-                    selected_game_directory(case["input"].as_str().unwrap()),
-                    expected,
-                    "case {case}"
-                );
+                let input = case["input"].as_str().unwrap();
+                let recorded = case["expected"].as_str().unwrap();
+                // The fixture records posix `join`; the Tauri reference on
+                // Windows joins with `\` and collapses a trailing separator,
+                // so emulate `plugin:path|join` instead of swapping
+                // separators in the recorded string. Keep iff the recorder
+                // saw the input returned unchanged.
+                let expected = if recorded == input {
+                    input.to_owned()
+                } else {
+                    tauri_join(input, "Blockfield")
+                };
+                assert_eq!(selected_game_directory(input), expected, "case {case}");
             }
             other => panic!("unknown fn {other}"),
         }

@@ -92,6 +92,20 @@ export async function install() {
     }
     if (command.startsWith('plugin:window|')) return nativeInvoke(command, args)
     if (command === 'preview_skin') return { skin, cape, slim: false, source: 'custom' }
+    if (command === 'verify_files' && selection.state === 'main-verify')
+      return new Promise(() => {})
+    if (command === 'launch_game' && selection.state === 'main-status-slice') {
+      setTimeout(() => {
+        emit('launcher://status', {
+          phase: 'launching',
+          message:
+            'Подготовка файлов: mods/очень-длинный-путь-к-файлу-для-проверки-ограничения.jar',
+          cancelable: false,
+        })
+        emit('download://progress', { filePath: '', totalBytesDownloaded: 42, totalBytesAll: 100 })
+      }, 100)
+      return new Promise(() => {})
+    }
     if (command === 'download_modpack') {
       emit('launcher://status', {
         phase: 'modpack',
@@ -157,6 +171,27 @@ export async function drive() {
     await document.fonts.load('400 16px "IBM Plex Mono"', 'Capture Привіт')
     await document.fonts.ready
     await new Promise((resolve) => setTimeout(resolve, 1200))
+    if (state === 'main-pager') {
+      const next = document.querySelector<HTMLButtonElement>('[aria-label="Следующий матч"]')
+      if (!next) throw new Error('Missing room pager')
+      next.click()
+    }
+    if (state === 'main-verify' && !click('ПРОВЕРИТЬ ФАЙЛЫ')) throw new Error('Missing verify')
+    if (state === 'main-status-slice' && !click('ИГРАТЬПОДКЛЮЧЕНИЕ К СЕРВЕРУ')) {
+      const play = [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+        button.classList.contains('w-[230px]'),
+      )
+      if (!play) throw new Error('Missing deploy')
+      play.click()
+    }
+    if (state === 'main-focus') {
+      const play = [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+        button.classList.contains('w-[230px]'),
+      )
+      if (!play) throw new Error('Missing deploy')
+      play.focus()
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
     const faces = [...document.fonts].map((face) => ({
       family: face.family,
       weight: face.weight,
