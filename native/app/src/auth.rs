@@ -53,6 +53,12 @@ pub fn status_needs_password(status: &account::AccountStatus) -> bool {
     status_flag(status, "needsPassword")
 }
 
+/// Whether this install has never signed in: the stored username is empty.
+/// Read fresh at each auth exit, never cached across submits.
+pub fn first_run_now(state: &LauncherAppState) -> bool {
+    state.config.blocking_read().username.trim().is_empty()
+}
+
 pub fn status_username(status: &account::AccountStatus) -> String {
     status_field(status, "username")
 }
@@ -94,7 +100,7 @@ fn apply_status(app: &AppWindow, status: &account::AccountStatus) {
 }
 
 /// Wire the auth screens to the core runtime (same code path as production).
-pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle, first_run: bool) {
+pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
     let weak = app.as_weak();
     app.on_login_username_edited(move |_| {
         if let Some(app) = weak.upgrade() {
@@ -132,7 +138,6 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle, fir
     let weak = app.as_weak();
     let submit_state = state.clone();
     let submit_handle = handle.clone();
-    let submit_first_run = first_run;
     app.on_login_submit(move || {
         let Some(app) = weak.upgrade() else { return };
         refresh_login(&app);
@@ -174,7 +179,7 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle, fir
                 .await
             };
             let _ = weak.upgrade_in_event_loop(move |app| {
-                on_auth_done(&app, &state, &handle, submit_first_run, result);
+                on_auth_done(&app, &state, &handle, result);
             });
         });
     });
@@ -267,11 +272,10 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle, fir
     });
 }
 
-fn on_auth_done(
+pub fn on_auth_done(
     app: &AppWindow,
     state: &Arc<LauncherAppState>,
     handle: &Handle,
-    first_run: bool,
     result: Result<account::AccountStatus, String>,
 ) {
     app.set_login_busy(false);
@@ -282,9 +286,10 @@ fn on_auth_done(
         }
         Ok(status) => {
             apply_status(app, &status);
+            app.set_login_password("".into());
             if status_needs_password(&status) {
                 show_login(app, "login", true, &status_username(&status));
-            } else if first_run || status_username(&status).is_empty() {
+            } else if first_run_now(state) || status_username(&status).is_empty() {
                 enter_firstrun(app, state.clone(), handle.clone());
             } else {
                 crate::backend::enter_main(app, state.clone(), handle.clone());
@@ -343,7 +348,6 @@ pub fn enter_startup(
     state: Arc<LauncherAppState>,
     handle: Handle,
     status: account::AccountStatus,
-    first_run: bool,
 ) {
     apply_status(app, &status);
     if !status_logged_in(&status) || status_needs_password(&status) {
@@ -353,7 +357,7 @@ pub fn enter_startup(
             status_flag(&status, "needsPassword"),
             &status_field(&status, "username"),
         );
-    } else if first_run || status_field(&status, "username").is_empty() {
+    } else if first_run_now(&state) || status_field(&status, "username").is_empty() {
         enter_firstrun(app, state, handle);
     } else {
         crate::backend::enter_main(app, state, handle);

@@ -95,14 +95,11 @@ impl Backend {
                 .as_str()
                 .unwrap_or_default()
                 .to_string();
-            let first_run = stored_username.is_empty();
             let _ = weak.upgrade_in_event_loop(move |app| {
                 let handle = route_handle.clone();
-                crate::auth::attach(&app, state.clone(), handle.clone(), first_run);
+                crate::auth::attach(&app, state.clone(), handle.clone());
                 match status {
-                    Ok(status) => {
-                        crate::auth::enter_startup(&app, state, handle, status, first_run)
-                    }
+                    Ok(status) => crate::auth::enter_startup(&app, state, handle, status),
                     Err(error) => {
                         app.set_login_mode("login".into());
                         app.set_login_set_password(false);
