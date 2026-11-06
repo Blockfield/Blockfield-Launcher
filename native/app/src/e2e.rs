@@ -61,6 +61,7 @@ pub fn start(
     // come back; settings-skin stays and walks tabs from the skin side.
     let from_settings = app.get_active() == 3;
     let mut frame: u32 = 0;
+    let mut main_step = 0;
     let mut step: usize = 0;
     let mut tab: i32 = 0;
     let mut shot_count = 0u32;
@@ -98,6 +99,19 @@ pub fn start(
                 }
                 // 1..: walk settings tabs 0..=4, one shot each.
                 1 => {
+                    if std::env::var("BLOCKFIELD_E2E_STATE").as_deref() == Ok("main")
+                        && crate::main_e2e::step(
+                            &app,
+                            &out_dir,
+                            &golden_dir,
+                            update,
+                            &mut main_step,
+                            &mut shot_count,
+                            &mut failures,
+                        )
+                    {
+                        return;
+                    }
                     if tab <= 4 {
                         app.invoke_settings_tab_changed(tab);
                         crate::skin::sync_visibility(&app, &host);
