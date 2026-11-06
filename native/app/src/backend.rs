@@ -94,12 +94,7 @@ impl Backend {
                     let message = format!("Cannot initialize launcher: {error}");
                     eprintln!("{message}");
                     let _ = weak.upgrade_in_event_loop(move |app| {
-                        // The settings overlay would otherwise hide this error and block input.
-                        app.global::<crate::SettingsForm>().set_loading(false);
-                        let mut data = app.get_main_data();
-                        data.checking = false;
-                        data.check_error = message.into();
-                        app.set_main_data(data);
+                        apply_init_error(&app, message);
                     });
                     return;
                 }
@@ -127,6 +122,19 @@ impl Backend {
             });
         });
     }
+}
+
+/// Show a fatal init failure on the main screen. Startup hides every
+/// screen until auth resolves, so without this the error would sit in
+/// empty chrome nobody can see.
+pub fn apply_init_error(app: &AppWindow, message: String) {
+    // The settings overlay would otherwise hide this error and block input.
+    app.global::<crate::SettingsForm>().set_loading(false);
+    app.set_show_main(true);
+    let mut data = app.get_main_data();
+    data.checking = false;
+    data.check_error = message.into();
+    app.set_main_data(data);
 }
 
 async fn account_status(state: &LauncherAppState) -> Result<account::AccountStatus, String> {
