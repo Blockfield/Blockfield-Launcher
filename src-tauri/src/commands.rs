@@ -27,9 +27,12 @@ pub struct LauncherAppState {
     pub operation: tokio::sync::Mutex<()>,
 }
 
-/// What `check_modpack_version` learned about the hosted pack.
+/// What `check_modpack_version` learned about the hosted pack, bound to the
+/// profile it was checked for so an update cannot install it into the other
+/// profile's game directory after a profile switch.
 #[derive(Clone)]
 pub struct PackState {
+    pub profile: ClientProfile,
     pub info: LauncherInfo,
     pub meta: PackMeta,
 }
@@ -343,18 +346,23 @@ fn stale_pack_message(installed_hash: &str, meta: &PackMeta) -> Option<String> {
     })
 }
 
-async fn fresh_pack_state() -> Result<PackState, String> {
-    let base = pack_base_url()?;
+async fn fresh_pack_state(profile: ClientProfile) -> Result<PackState, String> {
+    let base = pack_base_url_for(profile)?;
     let info = pack::fetch_launcher_info(&base).await?;
     let meta = pack::fetch_pack_meta(&info.pack).await?;
-    Ok(PackState { info, meta })
+    Ok(PackState {
+        profile,
+        info,
+        meta,
+    })
 }
 
 #[tauri::command]
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
 ) -> Result<VersionCheckResult, String> {
-    let base = pack_base_url()?;
+    let profile = state.config.read().await.active_profile;
+    let base = pack_base_url_for(profile)?;
     let info = pack::fetch_launcher_info(&base).await?;
     let meta = pack::fetch_pack_meta(&info.pack).await?;
 
@@ -418,7 +426,11 @@ pub async fn check_modpack_version(
         java_ok,
         loader_ok,
     };
-    *state.pack.write().await = Some(PackState { info, meta });
+    *state.pack.write().await = Some(PackState {
+        profile,
+        info,
+        meta,
+    });
     Ok(result)
 }
 
@@ -441,6 +453,7 @@ pub async fn download_modpack(
         .clone()
         .ok_or_else(|| "No pack info cached – call check_modpack_version first".to_string())?;
     let mut config = state.config.read().await.validated_active()?;
+    require_pack_profile(&pack, config.active_profile)?;
     let game_dir = PathBuf::from(&config.game_dir);
     std::fs::create_dir_all(&game_dir).map_err(|e| format!("Failed to create game dir: {e}"))?;
     let _tracking = crate::installed_files::begin(&state.app_data_dir, &game_dir)?;
@@ -887,6 +900,7 @@ pub async fn verify_files(
         }
         config.validated_active()?
     };
+    require_pack_profile(&pack, config.active_profile)?;
     let game_dir = PathBuf::from(&config.game_dir);
     let java = resolved_java_path(&config);
     std::fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
@@ -954,8 +968,8 @@ pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), S
 
 #[tauri::command]
 pub async fn server_status(state: State<'_, LauncherAppState>) -> Result<ServerStatus, String> {
-    let base = pack_base_url()?;
     let config = state.config.read().await.clone();
+    let base = pack_base_url_for(config.active_profile)?;
     let game_target = match state.pack.read().await.as_ref() {
         Some(pack) => pack.info.server.clone(),
         None => pack::fetch_launcher_info(&base).await?.server,
@@ -1079,7 +1093,7 @@ pub async fn launch_game(
     // routes to the update screen instead. An unreachable manifest is fail-open
     // (offline launch keeps working); a positive mismatch fails closed.
     let pack = if !crate::dev::freeze_pack() {
-        match fresh_pack_state().await {
+        match fresh_pack_state(config.active_profile).await {
             Ok(fresh) => {
                 let installed_hash = installed_pack(&PathBuf::from(&config.game_dir)).0;
                 if let Some(stale) = stale_pack_message(&installed_hash, &fresh.meta) {
@@ -1163,7 +1177,9 @@ pub async fn launch_game(
     let game_server = match &pack {
         Some(pack) => pack.info.server.clone(),
         None if config.active_profile == ClientProfile::Workshop => {
-            pack::fetch_launcher_info(&pack_base_url()?).await?.server
+            pack::fetch_launcher_info(&pack_base_url_for(ClientProfile::Workshop)?)
+                .await?
+                .server
         }
         None => String::new(),
     };
@@ -1316,14 +1332,51 @@ pub fn dev_status() -> Option<crate::dev::DevStatus> {
 
 /// Base URL of the hosted packwiz pack (directory containing pack.toml and launcher.json).
 fn pack_base_url() -> Result<String, String> {
-    let url = std::env::var("VITE_BLOCKFIELD_PACK_URL")
-        .ok()
+    pack_base_url_for(ClientProfile::Game)
+}
+
+/// The Workshop profile installs a separate pack (second URL) into its own game
+/// directory with the same marker + file hash check; the game profile keeps the
+/// original URL and behavior unchanged.
+fn pack_base_url_for(profile: ClientProfile) -> Result<String, String> {
+    match profile {
+        ClientProfile::Game => select_pack_base_url(
+            "VITE_BLOCKFIELD_PACK_URL",
+            std::env::var("VITE_BLOCKFIELD_PACK_URL").ok().as_deref(),
+            option_env!("VITE_BLOCKFIELD_PACK_URL"),
+        ),
+        ClientProfile::Workshop => select_pack_base_url(
+            "VITE_BLOCKFIELD_WORKSHOP_PACK_URL",
+            std::env::var("VITE_BLOCKFIELD_WORKSHOP_PACK_URL")
+                .ok()
+                .as_deref(),
+            option_env!("VITE_BLOCKFIELD_WORKSHOP_PACK_URL"),
+        ),
+    }
+}
+
+/// A pack checked for one profile must never install into the other profile's
+/// game directory: refuse the cached state after a profile switch.
+fn require_pack_profile(pack: &PackState, profile: ClientProfile) -> Result<(), String> {
+    if pack.profile != profile {
+        return Err("Профиль изменился. Повторите проверку.".to_string());
+    }
+    Ok(())
+}
+
+/// Pure URL selection + validation so unit tests pin both profiles without env mutation.
+fn select_pack_base_url(
+    var: &str,
+    runtime: Option<&str>,
+    compiled: Option<&str>,
+) -> Result<String, String> {
+    let url = runtime
         .filter(|v| !v.trim().is_empty())
-        .or_else(|| option_env!("VITE_BLOCKFIELD_PACK_URL").map(String::from))
-        .ok_or_else(|| "VITE_BLOCKFIELD_PACK_URL is required".to_string())?;
+        .or(compiled)
+        .ok_or_else(|| format!("{var} is required"))?;
     let url = url.trim().trim_end_matches('/').to_string();
     if !url.starts_with("https://") && !(cfg!(debug_assertions) && url.starts_with("http://")) {
-        return Err("VITE_BLOCKFIELD_PACK_URL must use https".to_string());
+        return Err(format!("{var} must use https"));
     }
     Ok(url)
 }
@@ -2011,5 +2064,88 @@ mod tests {
         let stale = stale_pack_message("old-hash", &meta).expect("stale pack must refuse launch");
         assert!(stale.starts_with("PACK_STALE"), "{stale}");
         assert!(stale.contains("2.80.0"), "{stale}");
+    }
+
+    #[test]
+    fn workshop_profile_installs_from_second_pack_url() {
+        let game = "https://blockfield.pro/pack/";
+        let workshop = "https://blockfield.pro/workshop-pack";
+        assert_eq!(
+            select_pack_base_url("VITE_BLOCKFIELD_PACK_URL", Some(game), Some(workshop)).unwrap(),
+            "https://blockfield.pro/pack",
+        );
+        assert_eq!(
+            select_pack_base_url(
+                "VITE_BLOCKFIELD_WORKSHOP_PACK_URL",
+                Some(workshop),
+                Some(game),
+            )
+            .unwrap(),
+            "https://blockfield.pro/workshop-pack",
+        );
+        // Empty runtime falls back to the compiled value, as before.
+        assert_eq!(
+            select_pack_base_url(
+                "VITE_BLOCKFIELD_WORKSHOP_PACK_URL",
+                Some("  "),
+                Some(workshop),
+            )
+            .unwrap(),
+            "https://blockfield.pro/workshop-pack",
+        );
+    }
+
+    #[test]
+    fn pack_url_names_the_missing_profile_var() {
+        assert_eq!(
+            select_pack_base_url("VITE_BLOCKFIELD_WORKSHOP_PACK_URL", None, None).unwrap_err(),
+            "VITE_BLOCKFIELD_WORKSHOP_PACK_URL is required",
+        );
+        assert_eq!(
+            select_pack_base_url("VITE_BLOCKFIELD_PACK_URL", None, None).unwrap_err(),
+            "VITE_BLOCKFIELD_PACK_URL is required",
+        );
+    }
+
+    fn test_pack(profile: ClientProfile) -> PackState {
+        PackState {
+            profile,
+            info: LauncherInfo {
+                pack: "https://blockfield.pro/pack.toml".into(),
+                server: "localhost:25565".into(),
+                skins: None,
+                installer: crate::pack::Artifact {
+                    url: "https://example.com/i.jar".into(),
+                    sha256: "a".into(),
+                },
+                bootstrap: crate::pack::Artifact {
+                    url: "https://example.com/b.jar".into(),
+                    sha256: "b".into(),
+                },
+                java: std::collections::HashMap::new(),
+            },
+            meta: PackMeta {
+                version: "1.0".into(),
+                index_hash: "abc".into(),
+                minecraft: "1.21.1".into(),
+                loader: None,
+            },
+        }
+    }
+
+    #[test]
+    fn cached_pack_is_refused_for_the_other_profile() {
+        require_pack_profile(&test_pack(ClientProfile::Game), ClientProfile::Game).unwrap();
+        require_pack_profile(&test_pack(ClientProfile::Workshop), ClientProfile::Workshop).unwrap();
+        assert_eq!(
+            require_pack_profile(&test_pack(ClientProfile::Game), ClientProfile::Workshop)
+                .unwrap_err(),
+            "Профиль изменился. Повторите проверку.",
+        );
+        assert_eq!(
+            require_pack_profile(&test_pack(ClientProfile::Workshop), ClientProfile::Game)
+                .unwrap_err(),
+            "Профиль изменился. Повторите проверку.",
+        );
     }
 }
