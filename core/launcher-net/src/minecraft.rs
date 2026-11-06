@@ -642,7 +642,12 @@ async fn download_artifacts(
             let label = label.clone();
             async move {
                 let mut downloaded: u64 = 0;
-                let dest = root.join(&artifact.path);
+                let Some(dest) = confined_path(&root, &artifact.path) else {
+                    return Err(format!(
+                        "Refused unsafe download path: {}/{}",
+                        label, artifact.path
+                    ));
+                };
                 let partial = crate::download::partial_path(&dest);
                 let file_label = format!("{}/{}", label, artifact.path);
                 downloader
@@ -714,6 +719,35 @@ fn file_matches_sha1(path: &Path, sha1: &str) -> bool {
         .is_ok_and(|actual| actual.eq_ignore_ascii_case(sha1))
 }
 
+/// A manifest-derived relative path confined to `root` for write/delete:
+/// rejects unsafe relatives, then refuses any existing symlinked ancestor
+/// below `root` — a linked dir would resolve outside `root` and a write or
+/// delete through it would escape. The target itself is judged by the caller:
+/// a symlink there is never verified content (delete the link, never follow
+/// it). Mirrors `installed_files::safe_file` without requiring the target to
+/// exist, so fresh downloads (no file yet) can use it too.
+fn confined_path(root: &Path, relative: &str) -> Option<PathBuf> {
+    if !crate::installed_files::valid_relative(relative) {
+        return None;
+    }
+    let joined = root.join(relative);
+    if !joined.starts_with(root) {
+        return None;
+    }
+    let mut current = root.to_path_buf();
+    let mut parts = relative.split('/').peekable();
+    while let Some(part) = parts.next() {
+        current.push(part);
+        if parts.peek().is_none() {
+            break;
+        }
+        if std::fs::symlink_metadata(&current).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return None;
+        }
+    }
+    Some(joined)
+}
+
 /// Every runtime file the local metadata pins with a hash, reported when it
 /// exists but its bytes no longer match (size-only checks call it healthy).
 /// Missing files are not listed: the downloader already fetches those.
@@ -747,8 +781,13 @@ pub fn find_corrupt_runtime_files(
             let Some(expected) = artifact.sha1.as_deref() else {
                 continue;
             };
-            let path = libs_root.join(&artifact.path);
-            if !path.starts_with(&libs_root) {
+            let Some(path) = confined_path(&libs_root, &artifact.path) else {
+                continue;
+            };
+            // A symlink is never verified content: remove the link itself,
+            // never follow it.
+            if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+                corrupt.push(path);
                 continue;
             }
             if path.is_file() && !file_matches_sha1(&path, expected) {
@@ -769,8 +808,14 @@ pub fn find_corrupt_runtime_files(
                 let Some(expected) = artifact.sha1.as_deref() else {
                     continue;
                 };
-                let path = objects_root.join(&artifact.path);
-                if !path.starts_with(&objects_root) {
+                let Some(path) = confined_path(&objects_root, &artifact.path) else {
+                    continue;
+                };
+                // A symlink is never verified content: remove the link itself,
+                // never follow it.
+                if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink())
+                {
+                    corrupt.push(path);
                     continue;
                 }
                 if path.is_file() && !file_matches_sha1(&path, expected) {
@@ -1868,6 +1913,71 @@ mod tests {
             "evil": { "hash": "../traversal-victim", "size": 7 }
         }});
         assert!(collect_asset_artifacts(&index).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_library_dir_cannot_pull_deletes_outside() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().join("game");
+        let version = "1.20.1";
+        let version_dir = root.join("versions").join(version);
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(
+            version_dir.join(format!("{version}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "downloads": { "client": {
+                    "url": "https://example.invalid/client.jar",
+                    "size": 7,
+                    "sha1": hex(b"correct")
+                }},
+                "libraries": [
+                    { "downloads": { "artifact": {
+                        "path": "evil/real.jar",
+                        "url": "https://example.invalid/evil.jar",
+                        "size": 7,
+                        "sha1": hex(b"correct")
+                    }}},
+                    { "downloads": { "artifact": {
+                        "path": "link.jar",
+                        "url": "https://example.invalid/link.jar",
+                        "size": 7,
+                        "sha1": hex(b"correct")
+                    }}}
+                ],
+                "assetIndex": { "id": "test", "url": "https://example.invalid/assets.json" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let index_dir = root.join("assets").join("indexes");
+        std::fs::create_dir_all(&index_dir).unwrap();
+        std::fs::write(index_dir.join("test.json"), r#"{"objects": {}}"#).unwrap();
+
+        // Outside dir with a real jar of wrong bytes; a symlinked dir inside
+        // libraries/ points at it.
+        let outside = scratch.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("real.jar"), b"corrupt").unwrap();
+        let libs = root.join("libraries");
+        std::fs::create_dir_all(&libs).unwrap();
+        std::os::unix::fs::symlink(&outside, libs.join("evil")).unwrap();
+        // A symlinked file target: the link itself, never its content.
+        std::os::unix::fs::symlink(outside.join("real.jar"), libs.join("link.jar")).unwrap();
+
+        assert!(confined_path(&libs, "evil/real.jar").is_none());
+        assert!(confined_path(&libs, "link.jar").is_some());
+        assert!(confined_path(&libs, "../x").is_none());
+
+        // Only the link is reported; the file behind the linked dir is not.
+        let corrupt = find_corrupt_runtime_files(&root, version, None).unwrap();
+        assert_eq!(corrupt, vec![libs.join("link.jar")]);
+        heal_corrupt_runtime_files(&root, version, None).unwrap();
+        // The link is gone, the outside file survives untouched.
+        assert!(std::fs::symlink_metadata(libs.join("link.jar")).is_err());
+        assert_eq!(std::fs::read(outside.join("real.jar")).unwrap(), b"corrupt");
     }
 
     #[tokio::test]
