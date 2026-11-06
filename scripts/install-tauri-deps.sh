@@ -5,7 +5,8 @@ set -euo pipefail
 sudo python3 - <<'PYTHON'
 from pathlib import Path
 
-sources = [Path("/etc/apt/sources.list"), Path("/etc/apt/blacksmith-ubuntu-mirrors.txt")]
+# GitHub runners resolve mirror+file:/etc/apt/apt-mirrors.txt, so the azure host lives there.
+sources = [Path("/etc/apt/sources.list"), Path("/etc/apt/apt-mirrors.txt"), Path("/etc/apt/blacksmith-ubuntu-mirrors.txt")]
 for pattern in ("*.list", "*.sources"):
     sources.extend(Path("/etc/apt/sources.list.d").glob(pattern))
 for path in sources:
@@ -37,7 +38,8 @@ apt_install() {
 switch_azure_mirror() {
     sudo python3 - <<'PYEOF_INNER'
 from pathlib import Path
-sources = [Path("/etc/apt/sources.list"), Path("/etc/apt/blacksmith-ubuntu-mirrors.txt")]
+# GitHub runners resolve mirror+file:/etc/apt/apt-mirrors.txt, so the azure host lives there.
+sources = [Path("/etc/apt/sources.list"), Path("/etc/apt/apt-mirrors.txt"), Path("/etc/apt/blacksmith-ubuntu-mirrors.txt")]
 for pattern in ("*.list", "*.sources"):
     sources.extend(Path("/etc/apt/sources.list.d").glob(pattern))
 for path in sources:
