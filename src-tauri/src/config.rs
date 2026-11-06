@@ -76,7 +76,9 @@ impl Default for LauncherConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .or_else(|| option_env!("BLOCKFIELD_DEFAULT_RAM_MB").and_then(|v| v.parse().ok()))
-                .unwrap_or(4096),
+                // Overrides keep their value (validated on save); the shipped
+                // default must fit this host or a fresh install cannot save.
+                .unwrap_or_else(default_ram_mb),
             auto_update: std::env::var("BLOCKFIELD_AUTO_UPDATE")
                 .ok()
                 .map(|v| v == "true" || v == "1")
@@ -398,10 +400,7 @@ fn configured_directory(directory: &str) -> Result<PathBuf, String> {
 }
 
 fn validate_runtime(config: &LauncherConfig) -> Result<(), String> {
-    let max_ram = max_ram_mb();
-    if config.ram_mb < 2_048 || config.ram_mb > max_ram {
-        return Err(format!("RAM must be between 2048 and {max_ram} MB"));
-    }
+    validate_ram(config.ram_mb, total_memory_mb())?;
 
     if !config.username.trim().is_empty()
         && !crate::commands::valid_username(config.username.trim())
@@ -427,7 +426,33 @@ fn validate_runtime(config: &LauncherConfig) -> Result<(), String> {
 }
 
 pub fn max_ram_mb() -> u32 {
-    total_memory_mb().map_or(32_768, |total| total.saturating_mul(3) / 4)
+    max_ram_for_total(total_memory_mb())
+}
+
+/// Shipped 4 GiB default clamped to what this host allows.
+fn default_ram_mb() -> u32 {
+    default_ram_for_total(total_memory_mb())
+}
+
+/// Hardcoded default clamped to an explicit host total; pure so tests stay host-independent.
+fn default_ram_for_total(total_mb: Option<u32>) -> u32 {
+    4096.min(max_ram_for_total(total_mb))
+}
+
+/// Three quarters of physical RAM, never below the 2048 MB minimum.
+fn max_ram_for_total(total_mb: Option<u32>) -> u32 {
+    total_mb
+        .map_or(32_768, |total| total.saturating_mul(3) / 4)
+        .max(2_048)
+}
+
+/// Pure RAM check against an explicit host total so tests never read the host.
+fn validate_ram(ram_mb: u32, total_mb: Option<u32>) -> Result<(), String> {
+    let max_ram = max_ram_for_total(total_mb);
+    if ram_mb < 2_048 || ram_mb > max_ram {
+        return Err(format!("RAM must be between 2048 and {max_ram} MB"));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -585,8 +610,6 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let game = scratch.path().join("game");
         let mut config = LauncherConfig {
-            // Host-independent: default 4096 exceeds the host-derived max on small machines.
-            ram_mb: 2048,
             game_dir: game.to_string_lossy().into_owned(),
             workshop_game_dir: game.to_string_lossy().into_owned(),
             ..LauncherConfig::default()
@@ -615,8 +638,6 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let missing = scratch.path().join("java").join("bin").join("java");
         let config = LauncherConfig {
-            // Host-independent: default 4096 exceeds the host-derived max on small machines.
-            ram_mb: 2048,
             game_dir: scratch.path().join("game").to_string_lossy().into_owned(),
             workshop_game_dir: scratch
                 .path()
@@ -640,8 +661,6 @@ mod tests {
         let game = scratch.path().join("game");
         let workshop = scratch.path().join("not-created").join("workshop");
         let mut config = LauncherConfig {
-            // Host-independent: default 4096 exceeds the host-derived max on small machines.
-            ram_mb: 2048,
             game_dir: game.to_string_lossy().into_owned(),
             workshop_game_dir: workshop.to_string_lossy().into_owned(),
             ..LauncherConfig::default()
@@ -743,5 +762,46 @@ mod tests {
                 .as_deref(),
             Some("raknet;game.example:25566")
         );
+    }
+
+    #[test]
+    fn ram_bounds_follow_explicit_host_totals() {
+        assert_eq!(max_ram_for_total(None), 32_768);
+        assert_eq!(max_ram_for_total(Some(16_384)), 12_288);
+        // 4 GiB host: three quarters of 4096 MB.
+        assert_eq!(max_ram_for_total(Some(4096)), 3072);
+        // Below ~2.7 GiB the 2048 MB minimum still leaves one valid choice.
+        assert_eq!(max_ram_for_total(Some(2048)), 2048);
+        assert_eq!(max_ram_for_total(Some(1024)), 2048);
+        assert_eq!(default_ram_for_total(Some(4096)), 3072);
+        assert_eq!(default_ram_for_total(Some(2048)), 2048);
+        assert_eq!(default_ram_for_total(None), 4096);
+    }
+
+    #[test]
+    fn default_ram_validates_on_small_hosts() {
+        // A fresh install on a 4 GiB host defaults to 3072 MB and saves cleanly.
+        validate_ram(default_ram_for_total(Some(4096)), Some(4096)).unwrap();
+        assert!(validate_ram(4096, Some(4096)).is_err());
+        // On a 2 GiB host the minimum itself is accepted.
+        validate_ram(2048, Some(2048)).unwrap();
+        assert!(validate_ram(2047, Some(2048)).is_err());
+        assert!(validate_ram(1024, Some(1024)).is_err());
+    }
+
+    #[test]
+    fn default_config_passes_full_validation() {
+        let scratch = tempfile::tempdir().unwrap();
+        let config = LauncherConfig {
+            game_dir: scratch.path().join("game").to_string_lossy().into_owned(),
+            workshop_game_dir: scratch
+                .path()
+                .join("workshop")
+                .to_string_lossy()
+                .into_owned(),
+            ..LauncherConfig::default()
+        };
+        validate_config(&config).unwrap();
+        assert!((2048..=max_ram_mb()).contains(&config.ram_mb));
     }
 }
