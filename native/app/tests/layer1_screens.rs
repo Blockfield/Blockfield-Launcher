@@ -78,8 +78,9 @@ fn layer1_screen_walk() {
     scenario_settings_each_tab();
     scenario_skin_tab_controls();
     scenario_main_deploy_states();
+    scenario_inflight_file_leads_launch_status();
     scenario_minimize_probe();
-    println!("PASS layer1 screen walk (5 scenarios)");
+    println!("PASS layer1 screen walk (6 scenarios)");
 }
 
 /// Navigate main → settings → each tab label → back, through the UI tree.
@@ -270,6 +271,30 @@ fn scenario_main_deploy_states() {
         Some("Мастерская"),
         "workshop profile selected"
     );
+}
+
+/// Inflight installer file (PR #64, core ops::install): the main screen shows
+/// the live file, bytes and source in the launch status while launching.
+fn scenario_inflight_file_leads_launch_status() {
+    let (app, _host) = given_app("main", "inflight");
+    let data = app.get_main_data();
+    assert!(data.launching, "inflight fixture is launching");
+    assert!(
+        data.inflight_file
+            .to_string()
+            .starts_with("12.3/40.1 MB - "),
+        "live file bytes lead while launching"
+    );
+    assert!(
+        data.inflight_file.to_string().ends_with("Gcore CDN"),
+        "live file source stays visible"
+    );
+    assert_eq!(
+        data.launch_status.to_string(),
+        "Обновление файлов модпака",
+        "file progress never clobbers the status text"
+    );
+    assert_eq!(data.progress, 8, "file count drives the progress");
 }
 
 /// Minimize must stop animation timers (idle self-check logic, headless form).

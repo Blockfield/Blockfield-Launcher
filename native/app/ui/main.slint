@@ -9,7 +9,7 @@ export struct MainData {
     players: string, ping: string, region: string, location: string,
     installed: string, latest: string, size: string, checked: bool, checking: bool,
     needs-setup: bool, needs-update: bool, check-error: string,
-    phase: string, launching: bool, launch-status: string, progress: int, launch-error: string,
+    phase: string, launching: bool, launch-status: string, inflight-file: string, progress: int, launch-error: string,
     can-workshop: bool, profile-changing: bool, profile-blocked: bool, profile-error: string, pending-room: bool,
 }
 
@@ -80,7 +80,7 @@ export component MainScreen inherits Rectangle {
     private property <string> state-text: root.data.checking ? "ПРОВЕРКА..." : root.data.check-error != "" ? "НЕ ПРОВЕРЕН" : root.data.needs-setup ? (root.data.needs-update ? "ДОСТУПНО ОБНОВЛЕНИЕ" : "ТРЕБУЕТСЯ ПОДГОТОВКА") : "АКТУАЛЕН";
     private property <color> state-color: root.data.checking ? Tokens.secondary-foreground : root.data.check-error != "" || root.data.needs-setup ? Tokens.primary : Tokens.success;
     private property <string> launch-label: root.game-busy ? (root.data.phase == "running" ? "В ИГРЕ" : root.data.phase == "finishing" ? "ЗАВЕРШЕНИЕ" : root.data.phase == "unknown" ? "ПРОВЕРКА…" : "ЗАПУСК") : root.data.launching ? "ЗАПУСК" : root.data.launch-error != "" ? "ПОВТОРИТЬ" : !root.data.checked ? "..." : root.data.needs-setup ? (root.data.needs-update ? "ОБНОВИТЬ" : "ПОДГОТОВИТЬ") : "ИГРАТЬ";
-    private property <string> launch-sub: root.data.phase == "running" ? "Игра запущена" : root.data.phase == "finishing" ? "Команды после выхода" : root.data.launching ? ((root.data.launch-status != "" ? root.data.launch-status : "ЗАПУСК") + (root.data.progress < 0 ? "" : " · " + root.data.progress + "%")) : root.data.launch-error != "" ? "Подробности ниже" : !root.data.checked ? "ПРОВЕРКА..." : root.data.needs-setup ? (root.data.needs-update ? "ДОСТУПНО ОБНОВЛЕНИЕ" : "ТРЕБУЕТСЯ ПОДГОТОВКА") : "ПОДКЛЮЧЕНИЕ К СЕРВЕРУ";
+    private property <string> launch-sub: root.data.phase == "running" ? "Игра запущена" : root.data.phase == "finishing" ? "Команды после выхода" : root.data.launching ? ((root.data.inflight-file != "" ? root.data.inflight-file : (root.data.launch-status != "" ? root.data.launch-status : "ЗАПУСК")) + (root.data.progress < 0 ? "" : " · " + root.data.progress + "%")) : root.data.launch-error != "" ? "Подробности ниже" : !root.data.checked ? "ПРОВЕРКА..." : root.data.needs-setup ? (root.data.needs-update ? "ДОСТУПНО ОБНОВЛЕНИЕ" : "ТРЕБУЕТСЯ ПОДГОТОВКА") : "ПОДКЛЮЧЕНИЕ К СЕРВЕРУ";
     background: Tokens.background;
     TopoBackdrop { x: 0px; y: 0px;}
     GridBackdrop { x: 0px; y: 0px;intensity: 0.5; }

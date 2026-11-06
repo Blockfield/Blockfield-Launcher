@@ -46,6 +46,7 @@ pub const SCENARIOS: &[&str] = &[
     "update",
     "setup",
     "retry",
+    "inflight",
     "closed",
 ];
 
@@ -127,6 +128,16 @@ pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), St
         }
         "setup" => data.needs_setup = true,
         "retry" => data.launch_error = "Fixture: launch failed".into(),
+        // Mirrors PR #64 inflight progress (core ops::install): while a large
+        // jar still downloads, the live file leads the launch status.
+        "inflight" => {
+            data.launching = true;
+            data.phase = "launching".into();
+            data.launch_status = "Обновление файлов модпака".into();
+            data.inflight_file =
+                "12.3/40.1 MB - blockfield-client-1.56.0+mc1.21.1.jar - Gcore CDN".into();
+            data.progress = 8;
+        }
         _ => {}
     }
     let no_rooms = state == "offline"
