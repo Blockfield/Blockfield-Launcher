@@ -1,9 +1,10 @@
 import { Tokens } from "tokens.slint";
 import { ActionArea, StatusDot } from "controls.slint";
 import { GridBackdrop, TopoBackdrop, GlowPanel } from "backdrop.slint";
-import { MainButton, MainSelect, Spinner, MainMotion, MainText } from "main-controls.slint";
+import { MainButton, Spinner, MainMotion, MainText } from "main-controls.slint";
+import { MainSelect } from "select.slint";
+import { RoomList, Room } from "rooms.slint";
 
-export struct Room {id: string, name: string, description: string, players: int, ready: string, join: string, joinable: bool }
 export struct MainData {
     online: bool, updating: bool, maintenance: string, rooms-available: bool,
     players: string, ping: string, region: string, location: string,
@@ -76,7 +77,6 @@ export component MainScreen inherits Rectangle {
     private property <bool> disabled: !root.data.checked || root.data.checking || root.data.launching || root.game-busy || root.data.profile-changing || root.data.profile-blocked;
     private property <bool> room-disabled: root.data.launching || (root.data.phase != "running" && (root.data.checking || !root.data.checked || root.game-busy));
     private property <bool> banner: root.room-message != "" || (root.workshop && root.data.pending-room);
-    private property <Room> room: root.rooms[root.room-index];
     private property <string> state-text: root.data.checking ? "ПРОВЕРКА..." : root.data.check-error != "" ? "НЕ ПРОВЕРЕН" : root.data.needs-setup ? (root.data.needs-update ? "ДОСТУПНО ОБНОВЛЕНИЕ" : "ТРЕБУЕТСЯ ПОДГОТОВКА") : "АКТУАЛЕН";
     private property <color> state-color: root.data.checking ? Tokens.secondary-foreground : root.data.check-error != "" || root.data.needs-setup ? Tokens.primary : Tokens.success;
     private property <string> launch-label: root.game-busy ? (root.data.phase == "running" ? "В ИГРЕ" : root.data.phase == "finishing" ? "ЗАВЕРШЕНИЕ" : root.data.phase == "unknown" ? "ПРОВЕРКА…" : "ЗАПУСК") : root.data.launching ? "ЗАПУСК" : root.data.launch-error != "" ? "ПОВТОРИТЬ" : !root.data.checked ? "..." : root.data.needs-setup ? (root.data.needs-update ? "ОБНОВИТЬ" : "ПОДГОТОВИТЬ") : "ИГРАТЬ";
@@ -210,28 +210,16 @@ export component MainScreen inherits Rectangle {
                 body := Rectangle {
                     x: 16px; y: 56px + 1phx; width: parent.width - 32px; height: parent.height - 72px - 1phx;
                     if root.details-view == 0 && root.workshop: Text { x: 0px; y: 0px; width: parent.width; text: "Вход доступен участникам мастерской во время открытой сессии. Адрес подключения задаётся в настройках этого профиля."; color: Tokens.secondary-foreground; font-size: 13px; wrap: word-wrap; line-height-factor: 1.625 * 2048 / 2478; }
-                    if root.details-view == 0 && !root.workshop: Rectangle { x: 0px; y: 0px;
-                        if root.rooms.length > 0: Rectangle { x: 0px; y: 0px;
-                            MainSelect { x: 0px; y: 0px;width: parent.width - join-button.width - 12px; label: "Выбрать матч"; options: root.room-names; selected <=> root.room-index; }
-                            join-button := MainButton { y: 0px;x: parent.width - self.width; label: root.room.join + ": " + root.room.name; text: root.room.join; selected: true; enabled: !root.room-disabled && !root.data.updating && root.room.joinable; clicked => { if self.enabled { root.join(root.room.id); } } }
-                            Text { x: 0px;y: 40px; height: 18px; width: parent.width; text: root.room.description; color: Tokens.secondary-foreground; font-size: 12px; overflow: elide; }
-                            HorizontalLayout { x: 0px;y: 66px; height: 18px; alignment: start; spacing: 20px;
-                                Text { text: "Игроков: " + root.room.players; color: Tokens.secondary-foreground; font-size: 12px; }
-                                Text { text: root.room.ready; color: Tokens.secondary-foreground; font-size: 12px; }
-                            }
-                        }
-                        if root.rooms.length == 0: Text { x: 0px; y: 0px;
-                            width: parent.width; text: root.data.maintenance != "" ? "Идут технические работы: " + root.data.maintenance + " Матчи откроются после завершения работ." : root.data.updating ? "Игровой сервер обновляется — лобби открыто. Нажмите «Играть» — вас перенесут в игру, когда сервер запустится." : !root.data.rooms-available ? "Список матчей недоступен. Повторим запрос автоматически." : "Сейчас матчей нет. Нажмите «Играть» и выберите режим в хабе: Casual или Рейтинг.";
-                            color: Tokens.secondary-foreground; font-size: 12px; wrap: word-wrap; line-height-factor: 1.625 * 2048 / 2478;
-                        }
-                        Rectangle { x: 0px;y: parent.height - 41px; height: 1px; background: Tokens.border; }
-                        if root.rooms.length > 0: HorizontalLayout { x: 0px;
-                            y: parent.height - 32px; height: 32px; width: self.preferred-width; alignment: start; spacing: 8px;
-                            MainButton { label: "Предыдущий матч"; text: ""; icon: @image-url("../assets/icons/chevron-left.svg"); enabled: root.room-index > 0; clicked => { if self.enabled { root.room-index -= 1; } } }
-                            Text { text: (root.room-index + 1) + " / " + root.rooms.length; color: Tokens.secondary-foreground; font-size: 12px; vertical-alignment: center; }
-                            MainButton { label: "Следующий матч"; text: ""; icon: @image-url("../assets/icons/chevron-right.svg"); enabled: root.room-index + 1 < root.rooms.length; clicked => { if self.enabled { root.room-index += 1; } } }
-                        }
-                        MainButton { x: parent.width - self.width; y: parent.height - 32px; label: "Войти в лобби"; enabled: !root.room-disabled; clicked => { if self.enabled { root.join("lobby"); } } }
+                    if root.details-view == 0 && !root.workshop: RoomList {
+                        x: 0px; y: 0px; width: parent.width; height: parent.height;
+                        rooms: root.rooms;
+                        room-names: root.room-names;
+                        room-index <=> root.room-index;
+                        rooms-available: root.data.rooms-available;
+                        maintenance: root.data.maintenance;
+                        updating: root.data.updating;
+                        room-disabled: root.room-disabled;
+                        join(id) => { root.join(id); }
                     }
                     if root.details-view == 1: GridLayout { x: 0px; y: 0px;
                         width: parent.width; height: self.preferred-height;

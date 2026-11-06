@@ -16,7 +16,7 @@ use launcher_net::{account, minecraft, status::ServerStatus};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use tokio::runtime::Handle;
 
-use crate::{AppWindow, MainData, Room, bridge, runtime};
+use crate::{AppWindow, BattlePoint, MainData, Room, bridge, runtime};
 
 /// Starts the never-ending background loops (10s server poll, presence)
 /// exactly once per process: every enter_main re-runs only the one-shot
@@ -63,6 +63,7 @@ impl Backend {
         app.set_show_login(false);
         app.set_show_firstrun(false);
         app.set_dev_build(launcher_core::dev::is_dev_build());
+        apply_dev_status(app);
         app.set_update_label("".into());
         app.set_main_data(MainData {
             checking: true,
@@ -156,6 +157,7 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
     app.set_show_firstrun(false);
     app.set_show_main(true);
     app.set_dev_build(launcher_core::dev::is_dev_build());
+    apply_dev_status(app);
     app.set_update_label("".into());
     app.set_main_data(MainData {
         checking: true,
@@ -288,6 +290,40 @@ async fn presence(state: Arc<LauncherAppState>) {
     }
 }
 
+/// Dev panel data (Tauri `dev_status` parity): `None` in production builds,
+// so the panel stays invisible exactly like the Tauri DevPanel.
+pub fn apply_dev_status(app: &AppWindow) {
+    let status = launcher_app::status_ops::dev_status(
+        &launcher_app::ops::pack_check::pack_base_url().unwrap_or_default(),
+    );
+    app.set_dev_data(crate::DevData {
+        server: status.as_ref().map_or_else(slint::SharedString::new, |s| {
+            if s.server.is_empty() {
+                "сервер пака".into()
+            } else {
+                s.server.as_str().into()
+            }
+        }),
+        freeze: status.as_ref().map_or_else(slint::SharedString::new, |s| {
+            if s.freeze_pack {
+                "пак заморожен".into()
+            } else {
+                "выкл".into()
+            }
+        }),
+        jvm_args: status.as_ref().map_or_else(slint::SharedString::new, |s| {
+            if s.jvm_args.is_empty() {
+                "—".into()
+            } else {
+                s.jvm_args.as_str().into()
+            }
+        }),
+        pack_url: status
+            .as_ref()
+            .map_or_else(slint::SharedString::new, |s| s.pack_url.as_str().into()),
+    });
+}
+
 fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
     let selected = app
         .get_rooms()
@@ -338,24 +374,66 @@ fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
         .rooms
         .unwrap_or_default()
         .into_iter()
-        .map(|room| Room {
-            id: room.id.into(),
-            name: room.name.into(),
-            description: format!("{} · {} · {}", room.mode, room.map, room.phase).into(),
-            players: room.players.min(i32::MAX as u32) as i32,
-            ready: room
-                .ready
-                .map_or(String::new(), |r| {
-                    format!("Готовы: {}/{}", r.ready, r.required)
-                })
+        .map(|room| {
+            let battle = room.battle.as_ref();
+            Room {
+                id: room.id.into(),
+                name: room.name.into(),
+                description: format!("{} · {} · {}", room.mode, room.map, room.phase).into(),
+                players: room.players.min(i32::MAX as u32) as i32,
+                ready: room
+                    .ready
+                    .map_or(String::new(), |r| {
+                        format!("Готовы: {}/{}", r.ready, r.required)
+                    })
+                    .into(),
+                join: match room.admission.as_deref() {
+                    Some("waiting") => "Встать в очередь",
+                    Some("closed") => "Мест нет",
+                    _ => "Войти",
+                }
                 .into(),
-            join: match room.admission.as_deref() {
-                Some("waiting") => "Встать в очередь",
-                Some("closed") => "Мест нет",
-                _ => "Войти",
+                joinable: room.joinable && room.admission.as_deref() != Some("closed"),
+                has_battle: battle.is_some(),
+                battle_red: battle.map_or(0, |b| b.red.min(i32::MAX as u32) as i32),
+                battle_blue: battle.map_or(0, |b| b.blue.min(i32::MAX as u32) as i32),
+                points: slint::ModelRc::new(slint::VecModel::from(battle.map_or(vec![], |b| {
+                    b.points
+                        .iter()
+                        .map(|point| {
+                            let team = if point.owner == "NEUTRAL" {
+                                point.claiming.clone()
+                            } else {
+                                point.owner.clone()
+                            };
+                            let owner = match team.as_str() {
+                                "RED" => "Красные",
+                                "BLUE" => "Синие",
+                                _ => "Нейтральная",
+                            };
+                            let action = if point.capturing != "NONE" && point.capturing != team {
+                                match point.capturing.as_str() {
+                                    "RED" => " · Красные нейтрализуют",
+                                    "BLUE" => " · Синие нейтрализуют",
+                                    _ => "",
+                                }
+                            } else {
+                                ""
+                            };
+                            BattlePoint {
+                                label: format!("{} · {}", point.name, owner).into(),
+                                sub: format!("{}%{}", point.progress, action).into(),
+                                progress: i32::from(point.progress.min(100)),
+                                tone: match team.as_str() {
+                                    "RED" => 1,
+                                    "BLUE" => 2,
+                                    _ => 0,
+                                },
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                }))),
             }
-            .into(),
-            joinable: room.joinable && room.admission.as_deref() != Some("closed"),
         })
         .collect();
     app.set_room_index(
