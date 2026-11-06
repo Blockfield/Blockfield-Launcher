@@ -557,18 +557,47 @@ pub async fn heal_runtime_manifests(
     Ok(())
 }
 
+/// Final delete-time gate: `path` must stay under `game_dir` with no
+/// symlinked ancestor below it. A symlink at `path` itself is allowed —
+/// `remove_file` on a link deletes only the link, never its target.
+fn confined_under(game_dir: &Path, path: &Path) -> bool {
+    if !path.starts_with(game_dir) {
+        return false;
+    }
+    let mut current = path;
+    while let Some(parent) = current.parent() {
+        if parent == game_dir || !parent.starts_with(game_dir) {
+            break;
+        }
+        if std::fs::symlink_metadata(parent).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return false;
+        }
+        current = parent;
+    }
+    true
+}
+
 /// Blocking hash scan plus deletion, designed for `spawn_blocking`: removes
 /// every same-size-corrupt runtime file and returns what was removed.
+/// Re-checks confinement at delete time, so a path built without
+/// `confined_path` (or a symlink planted after the scan) can never pull a
+/// delete outside `game_dir`: it is skipped and logged, not removed.
 pub fn heal_corrupt_runtime_files(
     game_dir: &Path,
     minecraft_version: &str,
     loader_version_id: Option<&str>,
 ) -> Result<Vec<PathBuf>, String> {
     let corrupt = find_corrupt_runtime_files(game_dir, minecraft_version, loader_version_id)?;
+    let mut removed = Vec::new();
     for path in &corrupt {
+        if !confined_under(game_dir, path) {
+            log::warn!("heal: skipping delete outside game dir: {}", path.display());
+            continue;
+        }
         let _ = std::fs::remove_file(path);
+        removed.push(path.clone());
     }
-    Ok(corrupt)
+    Ok(removed)
 }
 /// Version metadata, loader profiles and the asset index are each fetched with
 /// a single attempt elsewhere; bulk file downloads retry 3x. One lost packet
@@ -761,9 +790,14 @@ pub fn find_corrupt_runtime_files(
 
     let client = &vanilla_json["downloads"]["client"];
     if let Some(expected) = client["sha1"].as_str() {
-        let jar = version_jar_path(game_dir, minecraft_version);
-        if jar.is_file() && !file_matches_sha1(&jar, expected) {
-            corrupt.push(jar);
+        // Fixed-format but still manifest-adjacent: route through the same
+        // confinement, so a symlinked versions/ dir cannot pull the client
+        // jar outside game_dir into the delete set.
+        let relative = format!("versions/{minecraft_version}/{minecraft_version}.jar");
+        if let Some(jar) = confined_path(game_dir, &relative) {
+            if jar.is_file() && !file_matches_sha1(&jar, expected) {
+                corrupt.push(jar);
+            }
         }
     }
 
@@ -1913,6 +1947,47 @@ mod tests {
             "evil": { "hash": "../traversal-victim", "size": 7 }
         }});
         assert!(collect_asset_artifacts(&index).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_versions_dir_cannot_pull_deletes_outside() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().join("game");
+        let version = "1.20.1";
+        std::fs::create_dir_all(&root).unwrap();
+        // Real layout outside the game dir; versions/ inside it is a symlink.
+        let outside = scratch.path().join("outside");
+        let over = outside.join("versions").join(version);
+        std::fs::create_dir_all(&over).unwrap();
+        std::fs::write(over.join(format!("{version}.jar")), b"corrupt").unwrap();
+        std::fs::write(
+            over.join(format!("{version}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "downloads": { "client": {
+                    "url": "https://example.invalid/client.jar",
+                    "size": 7,
+                    "sha1": hex(b"correct")
+                }},
+                "libraries": [],
+                "assetIndex": { "id": "test", "url": "https://example.invalid/assets.json" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(outside.join("versions"), root.join("versions")).unwrap();
+
+        // The client jar behind the linked dir is never reported or deleted.
+        let corrupt = find_corrupt_runtime_files(&root, version, None).unwrap();
+        assert!(corrupt.is_empty(), "escape reported: {corrupt:?}");
+        let removed = heal_corrupt_runtime_files(&root, version, None).unwrap();
+        assert!(removed.is_empty());
+        assert_eq!(
+            std::fs::read(over.join(format!("{version}.jar"))).unwrap(),
+            b"corrupt"
+        );
     }
 
     #[cfg(unix)]
