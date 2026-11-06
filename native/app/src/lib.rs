@@ -4,6 +4,8 @@ pub mod capture;
 pub mod e2e;
 pub mod fixtures;
 pub mod idle_self_check;
+mod main_e2e;
+pub mod main_ops;
 pub mod runtime;
 pub mod skin;
 pub mod window_activity;
@@ -89,6 +91,7 @@ pub fn wire_app(
     app.on_skin_drag_by(move |dx, dy| drag_by_host.on_drag_by(dx, dy));
     app.global::<SelectSearch>()
         .on_find(|options, search| fixtures::find_option(&options, &search));
+    app.global::<MainText>().on_launch_sub(main_ops::launch_sub);
     let weak = app.as_weak();
     app.on_deploy(move || {
         if let Some(app) = weak.upgrade() {
