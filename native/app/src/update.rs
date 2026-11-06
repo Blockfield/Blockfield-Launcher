@@ -95,9 +95,9 @@ pub fn attach_fixtures(app: &AppWindow) {
                 return;
             }
             if data.update_version.is_empty() {
-                data.phase = "current".into();
+                set_panel_phase(&mut data, "current");
             } else {
-                data.phase = "available".into();
+                set_panel_phase(&mut data, "available");
             }
             app.set_launcher_update_data(data);
         }
@@ -109,7 +109,7 @@ pub fn attach_fixtures(app: &AppWindow) {
             if data.update_version.is_empty() || data.installed {
                 return;
             }
-            data.phase = "installed".into();
+            set_panel_phase(&mut data, "installed");
             data.installed = true;
             app.set_launcher_update_data(data);
         }
@@ -122,7 +122,7 @@ pub fn attach_fixtures(app: &AppWindow) {
                 return;
             }
             // Fixture backend cannot relaunch the process; record the intent.
-            data.phase = "restarting".into();
+            set_panel_phase(&mut data, "restarting");
             app.set_launcher_update_data(data);
         }
     });
@@ -132,7 +132,6 @@ pub fn attach_fixtures(app: &AppWindow) {
 /// Cancel reuses the real installer call, like the main screen does.
 pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
     app.on_update_retry(|| eprintln!("POC update: retry needs the U4/U5 install ops"));
-    let weak = app.as_weak();
     app.on_update_cancel(move || {
         let state = state.clone();
         handle.spawn(async move {
@@ -140,7 +139,6 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
                 eprintln!("cancel_download: {error}");
             }
         });
-        let _ = weak;
     });
     app.on_update_launch(|| eprintln!("POC update: launch needs the U4/U5 install ops"));
     app.on_launcher_check(|| eprintln!("POC launcher-update: check needs the U14 updater"));
@@ -189,8 +187,17 @@ pub fn default_data() -> crate::UpdateData {
 
 pub fn default_launcher_data() -> crate::LauncherUpdateData {
     crate::LauncherUpdateData {
+        phase: "idle".into(),
         current_version: "—".into(),
         ..Default::default()
+    }
+}
+
+/// One place for panel phase changes: any non-error phase drops a stale error.
+fn set_panel_phase(data: &mut crate::LauncherUpdateData, phase: &str) {
+    data.phase = phase.into();
+    if phase != "error" {
+        data.error = "".into();
     }
 }
 
@@ -216,6 +223,12 @@ mod tests {
         // Cancel is a no-op outside a cancelable download.
         app.invoke_update_cancel();
         assert_eq!(app.get_update_data().phase, "checking");
+        // Cancel stays callable: invoking twice settles on error, never moves.
+        crate::fixtures::apply_update(&app, "default").unwrap();
+        app.invoke_update_cancel();
+        assert_eq!(app.get_update_data().phase, "error");
+        app.invoke_update_cancel();
+        assert_eq!(app.get_update_data().phase, "error");
         // Launch is a no-op until the pack is complete.
         app.invoke_update_launch();
         assert!(!app.get_update_data().launching);
@@ -233,5 +246,20 @@ mod tests {
         assert_eq!(panel.phase, "installed");
         app.invoke_launcher_restart();
         assert_eq!(app.get_launcher_update_data().phase, "restarting");
+        // Fresh defaults carry no stale phase: a new panel starts idle.
+        let fresh = crate::update::default_launcher_data();
+        assert_eq!(fresh.phase, "idle");
+        // A prior panel error clears on the next successful transition.
+        crate::fixtures::apply_launcher_update(&app, "error").unwrap();
+        assert_ne!(app.get_launcher_update_data().error, "");
+        app.invoke_launcher_check();
+        let panel = app.get_launcher_update_data();
+        assert_eq!(panel.phase, "available");
+        assert_eq!(panel.error, "");
+        crate::fixtures::apply_launcher_update(&app, "error").unwrap();
+        app.invoke_launcher_install();
+        let panel = app.get_launcher_update_data();
+        assert_eq!(panel.phase, "installed");
+        assert_eq!(panel.error, "");
     }
 }

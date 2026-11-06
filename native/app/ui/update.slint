@@ -163,7 +163,10 @@ export component UpdateScreen inherits Rectangle {
                 SmallLabel { x: 12px; y: 6px; height: 12px; text: "ЗЕРКАЛО"; font-size: 9px; letter-spacing: 1.6px; }
                 Text { x: 12px; y: 18px; width: parent.width - 24px; height: 16px; text: root.data.mirror-name;
                     font-size: 13px; letter-spacing: 2.34px; color: Tokens.neutral-100; overflow: elide; }
-                Text { x: 12px; y: 34px; width: parent.width - 24px; height: 14px; text: "▸ " + root.mirror-status;
+                Path { x: 12px; y: 38px; width: 7px; height: 7px; viewbox-width: 7; viewbox-height: 7;
+                    fill: root.data.mirror-bad ? #c98b8b : root.transferring ? Tokens.primary : Tokens.success;
+                    commands: "M 0 0 L 7 3.5 L 0 7 Z"; }
+                Text { x: 25px; y: 34px; width: parent.width - 37px; height: 14px; text: root.mirror-status;
                     font-size: 11px; letter-spacing: 2.42px; color: root.data.mirror-bad ? #c98b8b : root.transferring ? Tokens.primary : Tokens.success; overflow: elide; }
             }
         }
