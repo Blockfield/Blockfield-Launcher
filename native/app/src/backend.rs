@@ -1,5 +1,11 @@
 //! Fixture selection is explicit; a plain launch reads the shared launcher core.
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use launcher_app::{
     LauncherAppState, LauncherEvent,
@@ -11,6 +17,14 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use tokio::runtime::Handle;
 
 use crate::{AppWindow, MainData, Room, bridge, runtime};
+
+/// Starts the never-ending background loops (10s server poll, presence)
+/// exactly once per process: every enter_main re-runs only the one-shot
+/// checks. Tauri starts both loops once at setup the same way.
+fn claim_background_loops() -> bool {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    !STARTED.swap(true, Ordering::SeqCst)
+}
 
 pub enum Backend {
     Fixtures,
@@ -220,6 +234,11 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
                 app.set_main_data(data);
             });
         });
+        // Never-ending loops start once per process; re-logins only re-run
+        // the one-shot pack check above, never piling up duplicate loops.
+        if !claim_background_loops() {
+            return;
+        }
         let server_state = state.clone();
         tokio::spawn(async move {
             let mut timer = tokio::time::interval(Duration::from_secs(10));
@@ -345,6 +364,12 @@ fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn background_loops_start_exactly_once() {
+        assert!(super::claim_background_loops());
+        assert!(!super::claim_background_loops());
+    }
+
     #[test]
     fn server_refresh_preserves_game_state_and_clears_stale_rooms() {
         use launcher_net::status::{GameRoom, ServerStatus};

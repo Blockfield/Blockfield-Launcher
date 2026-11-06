@@ -82,6 +82,13 @@ fn refresh_login(app: &AppWindow) {
     );
 }
 
+/// Single busy guard for every auth operation that spawns work: refuses
+/// while one is already running, so submit/logout/continue can never race
+/// each other on the same config and tokens.
+pub fn try_begin(app: &AppWindow) -> bool {
+    !(app.get_login_busy() || app.get_firstrun_saving())
+}
+
 fn show_login(app: &AppWindow, mode: &str, set_password: bool, username: &str) {
     app.set_show_main(false);
     app.set_show_firstrun(false);
@@ -141,7 +148,7 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
     app.on_login_submit(move || {
         let Some(app) = weak.upgrade() else { return };
         refresh_login(&app);
-        if !app.get_login_can_submit() {
+        if !app.get_login_can_submit() || !try_begin(&app) {
             return;
         }
         app.set_login_busy(true);
@@ -188,6 +195,9 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
     let logout_handle = handle.clone();
     app.on_login_logout(move || {
         let Some(app) = weak.upgrade() else { return };
+        if !try_begin(&app) {
+            return;
+        }
         app.set_login_busy(true);
         let weak = weak.clone();
         let state = logout_state.clone();
@@ -235,7 +245,7 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
     let continue_handle = handle.clone();
     app.on_firstrun_continue(move || {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_firstrun_saving() || app.get_firstrun_maxram() < RAM_MIN_GB {
+        if !try_begin(&app) || app.get_firstrun_maxram() < RAM_MIN_GB {
             return;
         }
         app.set_firstrun_saving(true);
@@ -403,6 +413,9 @@ pub fn attach_fixtures(app: &AppWindow) {
     let weak = app.as_weak();
     app.on_login_logout(move || {
         if let Some(app) = weak.upgrade() {
+            if !try_begin(&app) {
+                return;
+            }
             show_login(&app, "login", false, "");
         }
     });
@@ -410,7 +423,7 @@ pub fn attach_fixtures(app: &AppWindow) {
     app.on_login_submit(move || {
         let Some(app) = weak.upgrade() else { return };
         refresh_login(&app);
-        if !app.get_login_can_submit() {
+        if !app.get_login_can_submit() || !try_begin(&app) {
             return;
         }
         let name = app.get_login_username().to_string();
@@ -442,7 +455,7 @@ pub fn attach_fixtures(app: &AppWindow) {
     let weak = app.as_weak();
     app.on_firstrun_continue(move || {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_firstrun_saving() || app.get_firstrun_maxram() < RAM_MIN_GB {
+        if !try_begin(&app) || app.get_firstrun_maxram() < RAM_MIN_GB {
             return;
         }
         app.set_show_firstrun(false);

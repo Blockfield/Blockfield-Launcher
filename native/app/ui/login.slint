@@ -74,6 +74,7 @@ export component LoginScreen inherits Rectangle {
             if root.set-password: LinkButton {
                 text: "Выйти";
                 accessible-label: "Выйти";
+                enabled: !root.busy;
                 clicked => { root.logout(); }
             }
             if !root.set-password: LinkButton {
