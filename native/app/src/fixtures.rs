@@ -47,6 +47,7 @@ pub const SCENARIOS: &[&str] = &[
     "setup",
     "retry",
     "inflight",
+    "stale",
     "closed",
 ];
 
@@ -136,6 +137,12 @@ pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), St
             data.launch_status =
                 "12.3/40.1 MB - blockfield-client-1.56.0+mc1.21.1.jar - Gcore CDN".into();
             data.progress = 8;
+        }
+        // Mirrors the PACK_STALE launch refusal (core ops::launch): the main
+        // screen shows the friendly update prompt instead of a raw error.
+        "stale" => {
+            data.launch_error = "PACK_STALE: installed pack is outdated (remote 2.80.0). Open Updates to install it, then launch again.".into();
+            data.launch_stale = true;
         }
         _ => {}
     }
