@@ -156,7 +156,8 @@ export component MainScreen inherits Rectangle {
                         alignment: center; spacing: 16px;
                         Rectangle {
                             width: 18px; height: 64px;
-                            if root.data.launching && root.data.phase != "running": Spinner { x: 0px; y: 23px; width: 18px; height: 18px; }
+                            // Determinate progress replaces the indeterminate spinner (Tauri shows a bar, not a spinner, in files-phase); it also never starts an animation the minimized window would keep running.
+                            if root.data.launching && root.data.phase != "running" && root.data.progress < 0: Spinner { x: 0px; y: 23px; width: 18px; height: 18px; }
                             if !root.data.launching || root.data.phase == "running": Image { x: 0px; y: 23px; width: 18px; height: 18px; source: root.data.phase == "running" ? @image-url("../assets/icons/gamepad-2.svg") : @image-url("../assets/icons/play.svg"); colorize: root.data.phase == "running" ? Tokens.success : root.disabled ? Tokens.faint : Tokens.foreground; }
                         }
                         VerticalLayout { alignment: center; spacing: 4px;
