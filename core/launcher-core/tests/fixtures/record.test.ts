@@ -8,7 +8,11 @@
  * formatBytes (UpdateScreen.tsx) and gameStateLabel (game-state.ts) are module-
  * private or pull React/Tauri in, so their bodies are extracted verbatim from
  * src and evaluated — same rounding, same strings. The only mock is the Tauri
- * IPC behind `join` (node:path/posix join has identical normalization).
+ * IPC behind `join` emulates the Tauri backend (`plugin:path|join`, tauri
+ * 2.12.1 `src/path/plugin.rs`): the separator is appended unless the part is
+ * empty or separator-terminated, then the path is normalized. posix `join`
+ * cannot be used: it appends `/` after a trailing `\`, which the backend
+ * (and the Rust port) never emit. parity.rs re-emulates this per platform.
  * formatTime (StatsScreen, Intl locale + local tz) and timestamp() (clock)
  * are intentionally NOT recorded; see HANDOFF in the unit report.
  */
@@ -19,7 +23,20 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tauri-apps/api/path', async () => {
   const posix = await import('node:path/posix')
-  return { join: (...parts: string[]) => Promise.resolve(posix.join(...parts)) }
+  // Tauri backend `join` (tauri 2.12.1 `src/path/plugin.rs`), emulated on the
+  // recording platform: append the separator unless the part is empty or
+  // separator-terminated, then normalize.
+  const join = (...parts: string[]): string => {
+    let s = ''
+    for (const p of parts) {
+      s += p !== '' && !p.endsWith('/') && !p.endsWith('\\') ? `${p}/` : p
+    }
+    // Tauri normalizes then drops the separator the mapping above appends to
+    // the last part (`a/ + b -> a/b` in the backend's own test vectors).
+    const out = posix.normalize(s).replace(/\/$/, '')
+    return out === '' ? '.' : out
+  }
+  return { join: (...parts: string[]) => Promise.resolve(join(...parts)) }
 })
 
 import { friendlyError } from '@/lib/errors'
@@ -191,6 +208,7 @@ describe('record fixtures', () => {
         })),
       ),
       { fn: 'friendly_error', input: { raw: 'x SESSION_EXPIRED y', context: 'launch' }, expected: friendlyError('x SESSION_EXPIRED y', 'launch').message },
+      { fn: "friendly_error", input: { raw: "PACK_STALE: installed pack is outdated (remote 2.80.0). Open Updates to install it, then launch again.", context: "launch" }, expected: friendlyError("PACK_STALE: installed pack is outdated (remote 2.80.0). Open Updates to install it, then launch again.", "launch").message },
       { fn: 'friendly_error', input: { raw: 'Drasl account server unavailable', context: 'account' }, expected: friendlyError('Drasl account server unavailable', 'account').message },
       ...['Invalid credentials', 'That username is taken', 'That player name is taken', 'Invalid password', 'Weird new drasl failure'].flatMap((drasl) => [
         {
