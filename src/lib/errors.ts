@@ -98,6 +98,12 @@ export function friendlyError(raw: unknown, context: ErrorContext): FriendlyErro
       raw: text,
     }
   }
+  if (text.includes('PACK_REPAIR')) {
+    return {
+      message: 'Файлы игры повреждены — откройте «Обновления», чтобы восстановить их.',
+      raw: text,
+    }
+  }
   if (text.includes('Drasl account server unavailable')) {
     return { message: 'Сервер аккаунтов недоступен, попробуйте позже.', raw: text }
   }

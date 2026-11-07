@@ -66,4 +66,12 @@ describe('stale pack', () => {
     )
     expect(result.message).toContain('Обновления')
   })
+  it('points a damaged pack at Updates instead of a generic launch failure', () => {
+    const result = friendlyError(
+      'PACK_REPAIR: pack files changed or are missing. Open Updates to repair them, then launch again.',
+      'launch',
+    )
+    expect(result.message).toContain('Обновления')
+    expect(result.message).toContain('повреждены')
+  })
 })

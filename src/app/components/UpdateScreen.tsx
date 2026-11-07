@@ -472,9 +472,11 @@ export function UpdateScreen({
       setStep(3, 'done')
       setPhase('complete')
     } catch (e) {
-      // A newer pack published mid-download: re-run the sync instead of dying
-      // on a stale launch.
-      if (String(e).includes('PACK_STALE')) {
+      // A newer pack published mid-download, or a failed launch file check:
+      // re-run the sync instead of dying. One-shot via the consumed
+      // auto-launch request, so a heal that keeps failing ends in the error
+      // phase instead of looping.
+      if (String(e).includes('PACK_STALE') || String(e).includes('PACK_REPAIR')) {
         addLog('A newer pack appeared — re-syncing.', 'info')
         handleRetry()
         return

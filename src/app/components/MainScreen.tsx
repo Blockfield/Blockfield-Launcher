@@ -159,9 +159,11 @@ export function MainScreen({
       } catch (e) {
         console.error('Launch failed:', e)
         // The backend re-checks the manifest at launch: a pack that went stale
-        // since the tab's check routes to the update screen, which installs it
-        // itself before joining — no manual step.
-        if (String(e).includes('PACK_STALE')) {
+        // since the tab's check, or failed its file check, routes to the
+        // update screen, which installs/repairs it itself before joining —
+        // no manual step. The update screen's auto-launch is one-shot, so a
+        // heal that keeps failing ends in a visible error, not a retry loop.
+        if (String(e).includes('PACK_STALE') || String(e).includes('PACK_REPAIR')) {
           onPlay()
           return
         }

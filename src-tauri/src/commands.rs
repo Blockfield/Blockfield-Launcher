@@ -534,6 +534,34 @@ pub async fn download_modpack(
     } else {
         ensure_jar(&state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
         ensure_jar(&state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
+        // packwiz trusts its own cached hashes and reports "already up to
+        // date" without touching a corrupted file: delete the bad files and
+        // drop their index entries first, so the installer downloads them
+        // again. A no-op when the check fails only on the marker. A frozen dev
+        // pack is never touched, like the installer itself.
+        let frozen = crate::dev::freeze_pack();
+        let repaired = if frozen {
+            Vec::new()
+        } else {
+            let (repair_data, repair_dir) = (state.app_data_dir.clone(), game_dir.clone());
+            tokio::task::spawn_blocking(move || {
+                crate::installed_files::drop_bad_pack_files(&repair_dir, &repair_data)
+            })
+            .await
+            .map_err(|e| format!("Pack repair task failed: {e}"))?
+        };
+        if !repaired.is_empty() {
+            // The dropped entries leave the launch check; without the marker an
+            // interrupted install cannot pass as a complete pack.
+            let _ = std::fs::remove_file(game_dir.join(INSTALLED_VERSION_FILE));
+            log::info!("[download_modpack] repairing {} files", repaired.len());
+            emit_status(
+                &app_handle,
+                "modpack",
+                format!("Восстановление {} файлов", repaired.len()),
+                true,
+            );
+        }
         let cancel = state.cancel_flag.clone();
         let app = app_handle.clone();
         let (java_for_installer, dir, pack_url) =
@@ -548,6 +576,15 @@ pub async fn download_modpack(
             format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
         )
         .map_err(|e| format!("Failed to record installed version: {e}"))?;
+        // Single pass, no loop: a pack that is still bad after a repair +
+        // reinstall needs eyes, not another installer run.
+        if !frozen && !pack_files_valid_blocking(state.app_data_dir.clone(), game_dir.clone()).await
+        {
+            return Err(
+                "Pack files are still damaged after the repair. Open Updates to retry, and report the failing files from the log."
+                    .to_string(),
+            );
+        }
         emit_status(&app_handle, "modpack", "Файлы модпака готовы", false);
     }
 
@@ -1127,8 +1164,9 @@ pub async fn launch_game(
     let game_dir_path = PathBuf::from(&game_dir);
     std::fs::create_dir_all(&game_dir_path).map_err(|e| e.to_string())?;
     let _tracking = crate::installed_files::begin(&state.app_data_dir, &game_dir_path)?;
-    // A same-size-corrupted pack must not survive a launch: refuse and point
-    // at Updates, where the installer heals it. Skipped for frozen dev packs.
+    // A same-size-corrupted pack must not survive a launch: refuse with a
+    // stable prefix so the UI routes into the sync (which heals) instead of
+    // showing a dead-end error. Skipped for frozen dev packs.
     if !crate::dev::freeze_pack() {
         let pack_ok = match &pack {
             Some(pack) => {
@@ -1145,7 +1183,7 @@ pub async fn launch_game(
         };
         if !pack_ok {
             return Err(
-                "Pack files changed or are missing. Open Updates to repair them, then launch again."
+                "PACK_REPAIR: pack files changed or are missing. Open Updates to repair them, then launch again."
                     .to_string(),
             );
         }
