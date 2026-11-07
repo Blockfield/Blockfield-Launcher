@@ -167,6 +167,12 @@ Unit tests are not evidence of live RakNet handshakes, DNS or production deploym
 Install Node.js 24.21.0 LTS (see `.nvmrc`), Python 3.12.15+, Just 1.58.0, Rust 1.99.0, and the platform dependencies required by Tauri.
 
 `just setup` installs the pinned pnpm, formatters, and linters into `.cache/quality`.
+Версионированные хуки (`.githooks` через `core.hooksPath`): pre-commit форматирует
+staged-файлы теми же закреплёнными форматтерами и пере-stage'ит их, поэтому коммит
+всегда отформатирован (`just format-staged`); проверки хука и pre-push
+(`just lint`, `just format-check`, без Gradle) видят отформатированное дерево.
+Хуки включаются автоматически при любом `just`-вызове: свежий клон получает хуки
+на первом `just` (обход только через `--no-verify`).
 Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux/Windows and Apple's zlib 1.2.12
 on macOS. Each platform's interpreter and compressor are verified; stale cached tool
 versions are replaced automatically.
