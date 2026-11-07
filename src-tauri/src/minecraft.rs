@@ -1436,8 +1436,14 @@ fn classpath_separator() -> &'static str {
 mod tests {
     use super::*;
 
+    /// RUNTIME_VERIFIED is process-global and flush_runtime_caches writes every
+    /// dirty root, so a parallel test would flush (or write into) another
+    /// test's root mid-assertion. Tests touching that cache take this lock.
+    static RUNTIME_CACHE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[tokio::test]
     async fn runtime_plan_counts_missing_client_libraries_and_assets_once() {
+        let _cache = RUNTIME_CACHE_LOCK.lock().await;
         // Planning is hash-aware: fixtures must carry the real digests of
         // their contents, or size-matching files count as missing.
         use sha1::Digest as _;
@@ -1596,6 +1602,7 @@ mod tests {
 
     #[test]
     fn fabric_maven_libraries_resolve_to_repository_paths() {
+        let _cache = RUNTIME_CACHE_LOCK.blocking_lock();
         let json = serde_json::json!({"libraries": [
             {"name": "org.ow2.asm:asm:9.10.1", "url": "https://maven.fabricmc.net/", "size": 126151},
             {"name": "net.fabricmc:fabric-loader:0.19.3", "url": "https://maven.fabricmc.net/"},
@@ -1627,6 +1634,7 @@ mod tests {
 
     #[test]
     fn has_launch_dependencies_passes_when_no_native_libraries() {
+        let _cache = RUNTIME_CACHE_LOCK.blocking_lock();
         let root = std::env::temp_dir().join("blockfield_has_launch_deps_test");
         let _ = std::fs::remove_dir_all(&root);
         let version = "1.21.1";
@@ -2020,6 +2028,7 @@ mod tests {
 
     #[test]
     fn same_size_corrupt_runtime_file_fails_readiness_probe() {
+        let _cache = RUNTIME_CACHE_LOCK.blocking_lock();
         use sha1::Digest as _;
         let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
         let dir = tempfile::tempdir().unwrap();
@@ -2087,6 +2096,7 @@ mod tests {
 
     #[test]
     fn uncached_same_size_corruption_needs_download() {
+        let _cache = RUNTIME_CACHE_LOCK.blocking_lock();
         use sha1::Digest as _;
         let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
         let dir = tempfile::tempdir().unwrap();
@@ -2112,6 +2122,7 @@ mod tests {
 
     #[test]
     fn verifying_pass_stages_in_memory_and_flushes_once() {
+        let _cache = RUNTIME_CACHE_LOCK.blocking_lock();
         use sha1::Digest as _;
         let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
         let dir = tempfile::tempdir().unwrap();
@@ -2160,6 +2171,7 @@ mod tests {
 
     #[test]
     fn corrupt_cache_falls_back_to_rehashing() {
+        let _cache = RUNTIME_CACHE_LOCK.blocking_lock();
         use sha1::Digest as _;
         let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
         let dir = tempfile::tempdir().unwrap();
