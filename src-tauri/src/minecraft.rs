@@ -111,7 +111,19 @@ pub async fn ensure_loader_profile(
     download_text_to(&url, &path).await
 }
 
+/// Readiness probe over every runtime artifact; markers staged along the way
+/// flush to disk once at the end (see flush_runtime_caches).
 pub fn has_launch_dependencies(
+    game_dir: &Path,
+    minecraft_version: &str,
+    loader_version_id: Option<&str>,
+) -> bool {
+    let ok = has_launch_dependencies_inner(game_dir, minecraft_version, loader_version_id);
+    flush_runtime_caches();
+    ok
+}
+
+fn has_launch_dependencies_inner(
     game_dir: &Path,
     minecraft_version: &str,
     loader_version_id: Option<&str>,
@@ -662,6 +674,9 @@ async fn download_artifacts(
         .collect()
         .await;
 
+    // One write per root for every marker staged above, even when some files failed.
+    flush_runtime_caches();
+
     results.into_iter().collect()
 }
 
@@ -708,10 +723,33 @@ struct RuntimeVerifiedEntry {
     ok: bool,
 }
 
-// ponytail: one in-memory copy per cache root, reloaded only when the file
-// mtime moves; a global app-data cache would need threading through every probe.
-static RUNTIME_VERIFIED: LazyLock<Mutex<HashMap<PathBuf, (u128, RuntimeVerifiedCache)>>> =
+// ponytail: one in-memory copy per cache root; a global app-data cache
+// would need threading through every probe. Stores only mark the copy dirty;
+// flush_runtime_caches persists once per probe/download pass, so a pass over
+// thousands of assets is one small write per root, not quadratic I/O.
+static RUNTIME_VERIFIED: LazyLock<Mutex<HashMap<PathBuf, CachedDir>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+struct CachedDir {
+    file_mtime: u128,
+    cache: RuntimeVerifiedCache,
+    dirty: bool,
+}
+
+fn load_cached_dir(root: &Path) -> CachedDir {
+    let cache_path = runtime_cache_path(root);
+    // A torn or foreign file reads as empty, never as an error: the pass
+    // simply re-hashes and overwrites it on flush.
+    let (file_mtime, cache) = match file_identity(&cache_path) {
+        Some((mtime, _)) => (mtime, read_runtime_cache(&cache_path)),
+        None => (0, RuntimeVerifiedCache::default()),
+    };
+    CachedDir {
+        file_mtime,
+        cache,
+        dirty: false,
+    }
+}
 
 fn runtime_cache_path(root: &Path) -> PathBuf {
     root.join(RUNTIME_VERIFIED_FILE)
@@ -739,39 +777,70 @@ fn read_runtime_cache(path: &Path) -> RuntimeVerifiedCache {
 }
 
 fn cached_runtime_entry(root: &Path, rel: &str) -> Option<RuntimeVerifiedEntry> {
-    let cache_path = runtime_cache_path(root);
-    let (cache_mtime, _) = file_identity(&cache_path)?;
     let mut guard = RUNTIME_VERIFIED
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let (known_mtime, cache) = guard.entry(root.to_path_buf()).or_default();
-    if *known_mtime != cache_mtime {
-        *cache = read_runtime_cache(&cache_path);
-        *known_mtime = cache_mtime;
+    let dir = guard
+        .entry(root.to_path_buf())
+        .or_insert_with(|| load_cached_dir(root));
+    // A clean copy tracks the file: reload when something else rewrote it. A
+    // dirty copy is newer than the file by definition, so it wins.
+    if !dir.dirty {
+        let cache_path = runtime_cache_path(root);
+        if let Some((mtime, _)) = file_identity(&cache_path) {
+            if mtime != dir.file_mtime {
+                dir.cache = read_runtime_cache(&cache_path);
+                dir.file_mtime = mtime;
+            }
+        }
     }
-    cache.files.get(rel).cloned()
+    dir.cache.files.get(rel).cloned()
 }
 
 fn store_runtime_entry(root: &Path, rel: &str, entry: RuntimeVerifiedEntry) {
-    let cache_path = runtime_cache_path(root);
     let mut guard = RUNTIME_VERIFIED
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let (known_mtime, cache) = guard.entry(root.to_path_buf()).or_default();
-    if let Some((cache_mtime, _)) = file_identity(&cache_path) {
-        if *known_mtime != cache_mtime {
-            *cache = read_runtime_cache(&cache_path);
+    let dir = guard
+        .entry(root.to_path_buf())
+        .or_insert_with(|| load_cached_dir(root));
+    dir.cache.files.insert(rel.to_string(), entry);
+    dir.dirty = true;
+}
+
+/// Persist every staged marker once. Atomic temp-file + rename (the same
+/// helper downloads use): a crash keeps the previous complete copy, never a
+/// torn one. Best-effort — a failed write just means re-hashing next pass.
+fn flush_runtime_caches() {
+    let mut guard = RUNTIME_VERIFIED
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    for (root, dir) in guard.iter_mut() {
+        if !dir.dirty {
+            continue;
+        }
+        if write_runtime_cache(root, &dir.cache) {
+            dir.file_mtime = file_identity(&runtime_cache_path(root))
+                .map(|(mtime, _)| mtime)
+                .unwrap_or(0);
+            dir.dirty = false;
         }
     }
-    cache.files.insert(rel.to_string(), entry);
-    if std::fs::create_dir_all(root).is_ok() {
-        if let Ok(bytes) = serde_json::to_vec(&*cache) {
-            let _ = std::fs::write(&cache_path, bytes);
-        }
+}
+
+fn write_runtime_cache(root: &Path, cache: &RuntimeVerifiedCache) -> bool {
+    let Ok(bytes) = serde_json::to_vec(cache) else {
+        return false;
+    };
+    if std::fs::create_dir_all(root).is_err() {
+        return false;
     }
-    *known_mtime = file_identity(&cache_path)
-        .map(|(mtime, _)| mtime)
-        .unwrap_or(0);
+    let path = runtime_cache_path(root);
+    let partial = crate::download::partial_path(&path);
+    if std::fs::write(&partial, bytes).is_err() {
+        return false;
+    }
+    crate::download::activate_partial(&partial, &path).is_ok()
 }
 
 /// Size already matched: a cached verified marker keeps the probe to a stat
@@ -2039,5 +2108,82 @@ mod tests {
         std::fs::write(&path, b"correct").unwrap();
         touch_mtime(&path);
         assert!(!artifact_needs_download(&root, &artifact));
+    }
+
+    #[test]
+    fn verifying_pass_stages_in_memory_and_flushes_once() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("libraries");
+        std::fs::create_dir_all(&root).unwrap();
+        let artifacts: Vec<Artifact> = (0..8)
+            .map(|i| {
+                let contents = format!("artifact-{i}-contents");
+                let rel = format!("com/example/lib{i}.jar");
+                let path = root.join(&rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, &contents).unwrap();
+                Artifact {
+                    path: rel,
+                    url: "https://example.invalid/lib.jar".into(),
+                    size: contents.len() as u64,
+                    sha1: Some(hex(contents.as_bytes())),
+                }
+            })
+            .collect();
+        for artifact in &artifacts {
+            assert!(runtime_file_verified(&root, artifact));
+        }
+        // Batched: the whole pass staged markers without touching the disk.
+        assert!(!runtime_cache_path(&root).exists());
+        flush_runtime_caches();
+        let path = runtime_cache_path(&root);
+        let cache: RuntimeVerifiedCache =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(cache.files.len(), artifacts.len());
+        assert!(cache.files.values().all(|entry| entry.ok));
+        // A repeat pass is served from the markers: flushing again rewrites nothing.
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        let pinned = file_identity(&path).unwrap();
+        for artifact in &artifacts {
+            assert!(runtime_file_verified(&root, artifact));
+        }
+        flush_runtime_caches();
+        assert_eq!(file_identity(&path).unwrap(), pinned);
+    }
+
+    #[test]
+    fn corrupt_cache_falls_back_to_rehashing() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("libraries");
+        std::fs::create_dir_all(&root).unwrap();
+        let artifact = Artifact {
+            path: "com/example/lib.jar".into(),
+            url: "https://example.invalid/lib.jar".into(),
+            size: 7,
+            sha1: Some(hex(b"correct")),
+        };
+        let path = root.join(&artifact.path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"correct").unwrap();
+        // A torn write from a crashed older run: garbage reads as empty, never as an error.
+        std::fs::write(runtime_cache_path(&root), b"{truncated").unwrap();
+        assert!(runtime_file_verified(&root, &artifact));
+        std::fs::write(&path, b"corrupt").unwrap();
+        touch_mtime(&path);
+        assert!(!runtime_file_verified(&root, &artifact));
+        flush_runtime_caches();
+        // The flush healed the cache file: valid JSON again.
+        let cache: RuntimeVerifiedCache =
+            serde_json::from_slice(&std::fs::read(runtime_cache_path(&root)).unwrap()).unwrap();
+        assert_eq!(cache.files.len(), 1);
     }
 }
