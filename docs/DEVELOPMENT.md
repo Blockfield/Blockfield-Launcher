@@ -263,10 +263,14 @@ whether on the bad or the good build, then updates forward onto good code.
 just rollback --good 1.0.22 --bad 1.0.23 --new 1.0.24
 ```
 
-The dry run prints the steps; re-run with `--apply` on a branch cut from the
-good tag. End to end:
+The dry run prints the steps; the branch must be cut from `main` with its
+tree restored to the good tag, otherwise the merge keeps the bad code. End
+to end:
 
-1. `git checkout -b rollback/launcher-v<new> launcher-v<good>`.
+1. `git switch -c rollback/launcher-v<new> origin/main`, then
+   `git restore --source=launcher-v<good> --staged --worktree -- .` — the
+   tree now equals the good tag; everything `main` gained after it,
+   including the bad release, is gone from the branch.
 2. `just rollback --good <good> --bad <bad> --new <new> --apply` — refuses
    unless the tree is at `<good>`, then bumps the three version files to
    `<new>`.
@@ -274,7 +278,9 @@ good tag. End to end:
    merge it after review. The rollback must land on `main`: the release
    workflow only publishes tags whose commit belongs to `main`, and `main`
    must stop carrying the bad code.
-4. On the updated `main`, `git tag launcher-v<new>` and push the tag. The tag
+4. On the updated `main`, `just rollback --good <good> --bad <bad> --new <new> --verify` —
+   refuses unless `main` differs from the good tag only in the version
+   files — then `git tag launcher-v<new>` and push the tag. The tag
    must equal the `package.json` version and the commit must belong to
    `main` — the tag run checks both before it builds, signs and publishes.
 5. Download `latest.json` from the new release and confirm its `version` is

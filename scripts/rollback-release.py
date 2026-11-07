@@ -11,6 +11,7 @@ good build) updates forward onto good code.
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -49,12 +50,16 @@ def plan_rollback(good, bad, new):
         "branch": f"rollback/launcher-v{new}",
         "tag": f"launcher-v{new}",
         "steps": [
-            f"git checkout -b rollback/launcher-v{new} launcher-v{good}",
+            f"git switch -c rollback/launcher-v{new} origin/main",
+            f"git restore --source=launcher-v{good} --staged --worktree -- . "
+            "# tree now equals the good tag; main's later commits are gone",
             f"scripts/rollback-release.py --good {good} --bad {bad} --new {new} --apply",
             "pnpm version:check",
             f"git commit -am 'Rollback launcher to {good} code as v{new}'",
             f"git push -u origin rollback/launcher-v{new}  # open a PR to main and merge it",
             "git checkout main && git pull  # main now carries the rollback commit",
+            f"scripts/rollback-release.py --good {good} --bad {bad} --new {new} "
+            "--verify  # refuses unless main differs from the good tag only in version files",
             f"git tag launcher-v{new}  # tag the main commit: the tag run only publishes main commits",
             f"git push origin launcher-v{new}  # tag run builds, signs and publishes",
             f"gh release download launcher-v{new} --pattern latest.json "
@@ -115,6 +120,27 @@ def apply_version(root, good, new):
     return sorted(VERSION_FILES)
 
 
+def verify_rollback_tree(root, good):
+    """Refuse unless HEAD differs from the good tag only in version files."""
+    tag = f"launcher-v{good}"
+    proc = subprocess.run(
+        ["git", "-C", str(root), "diff", "--name-only", tag, "HEAD", "--"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise ValueError(f"Cannot diff against {tag}: {proc.stderr.strip()}")
+    changed = sorted(line for line in proc.stdout.splitlines() if line.strip())
+    extra = [path for path in changed if path not in VERSION_FILES]
+    if extra:
+        raise ValueError(
+            f"Rollback tree still carries non-version changes vs {tag}, refusing:"
+            f" {extra}"
+        )
+    return changed
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--good", required=True, help="Last-good released version")
@@ -127,11 +153,19 @@ def main(argv):
         action="store_true",
         help="Edit the version files in the current checkout",
     )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Refuse unless HEAD differs from the good tag only in version files",
+    )
     args = parser.parse_args(argv)
     plan = plan_rollback(args.good, args.bad, args.new)
     if args.apply:
         changed = apply_version(Path.cwd(), args.good, args.new)
         print("Bumped: " + ", ".join(changed))
+    if args.verify:
+        changed = verify_rollback_tree(Path.cwd(), args.good)
+        print(f"Tree matches launcher-v{args.good} except: " + ", ".join(changed))
     for step in plan["steps"]:
         print(step)
     return plan
