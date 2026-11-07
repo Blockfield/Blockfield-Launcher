@@ -366,34 +366,22 @@ pub async fn check_modpack_version(
     let info = pack::fetch_launcher_info(&base).await?;
     let meta = pack::fetch_pack_meta(&info.pack).await?;
 
-    // No operation lock across the network fetches above: holding it there
-    // starves select_profile/save_settings (and the UI retry that waits on a
-    // busy->idle game transition) whenever a probe is in flight. The lock only
-    // guards the pack-state write below.
-    let _operation = state
-        .operation
-        .try_lock()
-        .map_err(|_| "Дождитесь завершения текущей операции.")?;
-    let config = state.config.read().await.active();
-    let game_dir = PathBuf::from(&config.game_dir);
+    // No operation lock across the checks below either: they (re-)hash
+    // changed files on the blocking pool, and a background check must not
+    // starve Play or profile clicks while it does (#69). The lock only guards
+    // the pack-state write at the end; the profile is re-verified there, so a
+    // switch mid-check fails closed instead of binding a stale game dir.
+    let (game_dir, app_data) = {
+        let config = state.config.read().await.active();
+        (PathBuf::from(&config.game_dir), state.app_data_dir.clone())
+    };
     let (installed_hash, installed) = installed_pack(&game_dir);
     // A frozen dev pack must not turn "Играть" into "Обновить": the developer manages these files.
     // A same-size-corrupted pack must not look current either: the hash check
     // (cached, stats only for unchanged files) forces the update screen.
-    let pack_done = pack_phase_done(
-        state.app_data_dir.clone(),
-        game_dir.clone(),
-        meta.index_hash.clone(),
-    )
-    .await;
+    let pack_done = pack_phase_done(app_data, game_dir.clone(), meta.index_hash.clone()).await;
     let needs_update =
         (installed_hash != meta.index_hash || !pack_done) && !crate::dev::freeze_pack();
-    log::info!(
-        "[check_modpack_version] pack={} remote={} installed={} needs_update={needs_update}",
-        info.pack,
-        meta.version,
-        installed
-    );
 
     let java = info.java_for_this_platform();
     let java_ok = java
@@ -408,6 +396,21 @@ pub async fn check_modpack_version(
         }
         None => crate::minecraft::has_launch_dependencies(&game_dir, &meta.minecraft, None),
     };
+
+    let _operation = state
+        .operation
+        .try_lock()
+        .map_err(|_| "Дождитесь завершения текущей операции.")?;
+    let config = state.config.read().await.active();
+    if config.active_profile != profile {
+        return Err("Профиль изменился. Повторите проверку.".into());
+    }
+    log::info!(
+        "[check_modpack_version] pack={} remote={} installed={} needs_update={needs_update}",
+        info.pack,
+        meta.version,
+        installed
+    );
 
     let result = VersionCheckResult {
         needs_update,
@@ -1197,6 +1200,16 @@ pub async fn launch_game(
         // Floor so the frontend always has a non-zero denominator for progress.
         state.downloader.set_grand_total(16 * 1024 * 1024);
         emit_status(&app_handle, "launch", "Проверка компонентов игры", false);
+        // A profile truncated by a killed update must heal here, not die in
+        // build_launch_args with a parse error (#68).
+        if let Some((minecraft, loader)) = pack.as_ref().and_then(|pack| {
+            pack.meta
+                .loader
+                .as_deref()
+                .map(|loader| (pack.meta.minecraft.as_str(), loader))
+        }) {
+            crate::minecraft::ensure_loader_profile(&game_dir_path, minecraft, loader).await?;
+        }
         crate::minecraft::ensure_launch_dependencies(
             &state.downloader,
             &app_handle,
