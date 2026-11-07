@@ -33,14 +33,6 @@ PYTHON_ASSETS = {
         "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15%2B20261003-x86_64-pc-windows-msvc-install_only.tar.gz",
         "4b6f0beebbb695a0f3ea237b8c3eaa5bd424f47a7bc25b2fbe3a43390c770f08",
     ],
-    "darwin-arm64": [
-        "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15%2B20261003-aarch64-apple-darwin-install_only.tar.gz",
-        "316a463172740e71d8dca1f2730784e325f3f720941137b5d674d5801a632213",
-    ],
-    "darwin-amd64": [
-        "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15%2B20261003-x86_64-apple-darwin-install_only.tar.gz",
-        "a8fd7a91852f19b6d959793ef41fad048631ccb2a334a9ecdf573255298f7978",
-    ],
 }
 BINARY_ASSETS = {
     "actionlint-linux-amd64": [
@@ -59,14 +51,6 @@ BINARY_ASSETS = {
         "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_windows_arm64.zip",
         "cadcf7ea4efe3a68728893813643cebe1185e5b1d4be5b96245f65c9a4d5ea41",
     ],
-    "actionlint-darwin-amd64": [
-        "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_darwin_amd64.tar.gz",
-        "5b44c3bc2255115c9b69e30efc0fecdf498fdb63c5d58e17084fd5f16324c644",
-    ],
-    "actionlint-darwin-arm64": [
-        "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_darwin_arm64.tar.gz",
-        "aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f",
-    ],
     "shfmt-linux-amd64": [
         "https://github.com/mvdan/sh/releases/download/v3.14.1/shfmt_v3.14.1_linux_amd64",
         "76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf",
@@ -79,14 +63,6 @@ BINARY_ASSETS = {
         "https://github.com/mvdan/sh/releases/download/v3.14.1/shfmt_v3.14.1_windows_amd64.exe",
         "13629ce28442ca80b6b5a819f7574ab39e1c28c6e26734ca816c9714e04851df",
     ],
-    "shfmt-darwin-amd64": [
-        "https://github.com/mvdan/sh/releases/download/v3.14.1/shfmt_v3.14.1_darwin_amd64",
-        "d33eee0da0f92835b3562e9767a05cee7e4eaeef47daa03bfd09da17b4b590a6",
-    ],
-    "shfmt-darwin-arm64": [
-        "https://github.com/mvdan/sh/releases/download/v3.14.1/shfmt_v3.14.1_darwin_arm64",
-        "b7c872db63553ccffc7253aba3ed7d4885a27d83f1ba567b1138c6315a5847e5",
-    ],
     "shellcheck-linux-arm64": [
         "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.aarch64.tar.gz",
         "68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc",
@@ -98,14 +74,6 @@ BINARY_ASSETS = {
     "shellcheck-windows-amd64": [
         "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.zip",
         "8a4e35ab0b331c85d73567b12f2a444df187f483e5079ceffa6bda1faa2e740e",
-    ],
-    "shellcheck-darwin-arm64": [
-        "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.darwin.aarch64.tar.gz",
-        "339b930feb1ea764467013cc1f72d09cd6b869ebf1013296ba9055ab2ffbd26f",
-    ],
-    "shellcheck-darwin-amd64": [
-        "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.darwin.x86_64.tar.gz",
-        "c2c15e08df0e8fbc374c335b230a7ee958c313fa5714817a59aa59f1aa594f51",
     ],
     "just-windows-arm64": [
         "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-aarch64-pc-windows-msvc.zip",
@@ -122,14 +90,6 @@ BINARY_ASSETS = {
     "just-linux-amd64": [
         "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-x86_64-unknown-linux-musl.tar.gz",
         "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d",
-    ],
-    "just-darwin-arm64": [
-        "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-aarch64-apple-darwin.tar.gz",
-        "50ae3e996c974a0bf32ea7d10f495070df33f1b43e0616b2769e3d4821ed8f48",
-    ],
-    "just-darwin-amd64": [
-        "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-x86_64-apple-darwin.tar.gz",
-        "9a09cfef66aaa79da58203970103a0684307716caaabd3e9844cacc4dc0f4023",
     ],
 }
 
@@ -198,7 +158,7 @@ def host():
         "arm64": "arm64",
         "aarch64": "arm64",
     }.get(machine)
-    if system not in ("linux", "windows", "darwin") or arch is None:
+    if system not in ("linux", "windows") or arch is None:
         raise RuntimeError(f"Unsupported platform: {system}/{machine}")
     return system, arch
 
@@ -234,8 +194,8 @@ def canonical_python():
     if sys.version_info < (3, 12):
         raise RuntimeError("Install native Python 3.12 or later to run project tools")
     system, arch = host()
-    # Darwin builds use Apple's system zlib; pin its fingerprint independently.
-    compressor = "1.2.12" if system == "darwin" else "1.3.2"
+    # Pinned Python 3.12.15 uses zlib 1.3.2 on every supported platform.
+    compressor = "1.3.2"
     fingerprint = f"(3, 12, 15) {compressor} {compressor}"
     if sys.version_info[:3] == (3, 12, 15) and (
         zlib.ZLIB_VERSION,

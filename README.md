@@ -2,7 +2,7 @@
 
 <img src="assets/icon.png" alt="Blockfield" width="64" height="64" />
 
-Лаунчер для установки, обновления и запуска Blockfield на Windows, Linux и macOS.
+Лаунчер для установки, обновления и запуска Blockfield на Windows и Linux.
 
 [Скачать](https://github.com/Blockfield/Blockfield-Launcher/releases/latest) ·
 [Сайт](https://blockfield.pro) · [Сообщить об ошибке](https://github.com/Blockfield/Blockfield-Launcher/issues)
@@ -19,10 +19,6 @@
 | :-------------------- | :---------- | :-------------------------- |
 | Windows               | x86_64      | `.exe` или `.msi`           |
 | Linux                 | x86_64      | `.AppImage`, `.deb`, `.rpm` |
-| macOS · Intel         | x86_64      | `_x64.dmg`                  |
-| macOS · Apple Silicon | M1 и новее  | `_aarch64.dmg`              |
-
-> **На Mac:** выберите файл под свой процессор. Приложение пока не нотарифицировано Apple; после переноса в «Программы» первый запуск может потребовать разрешения в «Системные настройки → Конфиденциальность и безопасность».
 
 ## Что умеет лаунчер
 

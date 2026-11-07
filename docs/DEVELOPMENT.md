@@ -44,7 +44,7 @@ memory choices remain unchanged. Java chooses its GC tuning; initial heap is 512
 
 **Settings → Launch commands** supports a shell command before Minecraft and after its process
 exits (including a nonzero exit). A failing pre-launch command shows a warning; the game still starts. Commands run
-in the game directory with `sh -c` on Linux/macOS or `cmd /D /S /C` on Windows. Environment:
+in the game directory with `sh -c` on Linux or `cmd /D /S /C` on Windows. Environment:
 `INST_DIR`, `INST_MC_DIR`, `INST_JAVA`, and `INST_EXIT_CODE` (post-exit only; empty for termination
 without an exit code). Keep the launcher open for post-exit commands. Command output is appended
 to `logs/launcher-hooks.log`; the current game's stdout/stderr goes to `logs/launcher-game.log`.
@@ -176,8 +176,8 @@ staged-файлы теми же закреплёнными форматтера�
 Если git уже берёт хуки из другого места (`core.hooksPath` в любом конфиге или
 активные хуки в `.git/hooks`), `just` их не трогает и только предупреждает.
 Если записать `core.hooksPath` не удалось, `just setup` завершается ошибкой.
-Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux/Windows and Apple's zlib 1.2.12
-on macOS. Each platform's interpreter and compressor are verified; stale cached tool
+Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux/Windows.
+Each platform's interpreter and compressor are verified; stale cached tool
 versions are replaced automatically.
 
 ```sh
@@ -234,21 +234,23 @@ The [archived API/CMS reports](legacy/README.md) are historical only.
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) publishes stable releases from `main`:
 
 1. Run frontend and Rust checks, dependency audits, and the Git history secret scan.
-2. Build and sign Linux, Windows, and macOS (Intel and Apple Silicon) bundles under the versioned `launcher-v<version>` tag.
+2. Build and sign Linux and Windows bundles under the versioned `launcher-v<version>` tag.
 3. Validate all signed updater assets, then publish the completed draft in [this repository](https://github.com/Blockfield/Blockfield-Launcher/releases).
 
-Quality checks cover Linux, Windows, Apple Silicon, and Intel Macs. Checks, secret scanning, and platform builds run in parallel. Standard GitHub-hosted runners build Linux on `ubuntu-22.04` (preserving the glibc baseline), Windows on `windows-2025`, Apple Silicon on `macos-15`, and Intel Macs on `macos-15-intel`. Platform builds have a 60-minute limit and upload to a draft release. Publication waits for every check, all four builds, and updater validation. No self-hosted runner is required.
+Quality checks cover Linux and Windows. Checks, secret scanning, and platform builds run in parallel. Standard GitHub-hosted runners build Linux on `ubuntu-22.04` (preserving the glibc baseline) and Windows on `windows-2025`. Platform builds have a 60-minute limit and upload to a draft release. Publication waits for every check, both builds, and updater validation. No self-hosted runner is required.
 
 CI generates `release-notes.md` and, when available, `announcement.json` from the last published launcher release and merged PRs. The public repository uses its pinned local copy of the shared `release-text` action; without an AI key, it produces validated notes from facts. New release notes are not committed in the release PR.
 
-The pinned Tauri release action uses versioned macOS updater archives
-(`blockfield-launcher_<version>_x64.app.tar.gz` and `_aarch64.app.tar.gz`). The
+The pinned Tauri release action produces versioned updater archives
+for both platforms (`blockfield-launcher_<version>_x64_en-US.msi` and
+`blockfield-launcher_<version>_amd64.AppImage`, plus the NSIS, `.deb` and `.rpm`
+installers). The
 publication check requires every installer and its nonempty signature before
 rebuilding `latest.json` with public release download URLs.
 
 Actions caches are scoped per ref, so a tag run cannot read caches saved by earlier tags. The same workflow runs on `main` every Monday (and on demand via `workflow_dispatch`): it runs the checks and builds, publishes nothing and saves the Rust and pnpm caches that tag runs restore read-only. Run it by hand after a dependency or Rust toolchain update.
 
-macOS apps are ad-hoc signed, without Apple notarization. After copying the app from the DMG into Applications, allow its first launch in System Settings → Privacy & Security. Updater archives are separately signed with the existing Tauri key. The hosted pack provides Java 21 downloads for Windows, Linux and both macOS architectures. The launcher selects, downloads, verifies and configures its runtime automatically; no manual Java installation or path selection is required.
+Updater archives are signed with the existing Tauri key. The hosted pack provides Java 21 downloads for Windows and Linux. The launcher selects, downloads, verifies and configures its runtime automatically; no manual Java installation or path selection is required.
 
 Before releasing, update `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together, then run `pnpm version:check`. The signing secrets (`TAURI_PRIVATE_KEY`, `TAURI_KEY_PASSWORD`) and build variables remain in the existing GitHub environment named `dev`; its deployment policy must permit `main` and `launcher-v*` tags only. Tag builds also verify that the commit belongs to `main`. Publishing uses this repository’s `GITHUB_TOKEN`; no cross-repository token is needed.
 
