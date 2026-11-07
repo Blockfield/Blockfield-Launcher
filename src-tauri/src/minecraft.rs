@@ -1,9 +1,10 @@
 use crate::download::Downloader;
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 use tauri::{AppHandle, Emitter};
 
 // Runtime first (dotenvy for local dev), then compile-time (CI build), then hardcoded.
@@ -110,7 +111,19 @@ pub async fn ensure_loader_profile(
     download_text_to(&url, &path).await
 }
 
+/// Readiness probe over every runtime artifact; markers staged along the way
+/// flush to disk once at the end (see flush_runtime_caches).
 pub fn has_launch_dependencies(
+    game_dir: &Path,
+    minecraft_version: &str,
+    loader_version_id: Option<&str>,
+) -> bool {
+    let ok = has_launch_dependencies_inner(game_dir, minecraft_version, loader_version_id);
+    flush_runtime_caches();
+    ok
+}
+
+fn has_launch_dependencies_inner(
     game_dir: &Path,
     minecraft_version: &str,
     loader_version_id: Option<&str>,
@@ -121,7 +134,7 @@ pub fn has_launch_dependencies(
         Err(_) => return false,
     };
 
-    if !version_jar_path(game_dir, minecraft_version).exists() {
+    if !version_jar_ready(game_dir, minecraft_version, &vanilla_json) {
         return false;
     }
 
@@ -651,6 +664,9 @@ async fn download_artifacts(
                 verify_downloaded_hash(&partial, &artifact, &file_label)?;
                 crate::download::activate_partial(&partial, &dest)
                     .map_err(|e| format!("Failed to activate {}: {}", dest.display(), e))?;
+                if let Some(expected) = artifact.sha1.as_deref() {
+                    mark_runtime_verified(&root, &artifact.path, expected);
+                }
                 Ok(())
             }
         })
@@ -658,15 +674,223 @@ async fn download_artifacts(
         .collect()
         .await;
 
+    // One write per root for every marker staged above, even when some files failed.
+    flush_runtime_caches();
+
     results.into_iter().collect()
 }
 
 fn artifact_needs_download(root: &Path, artifact: &Artifact) -> bool {
     let path = root.join(&artifact.path);
     match path.metadata() {
-        Ok(metadata) if artifact.size == 0 => !metadata.is_file(),
-        Ok(metadata) => !metadata.is_file() || metadata.len() != artifact.size,
-        Err(_) => true,
+        Ok(metadata) if artifact.size == 0 => return !metadata.is_file(),
+        Ok(metadata) => {
+            if !metadata.is_file() || metadata.len() != artifact.size {
+                return true;
+            }
+        }
+        Err(_) => return true,
+    }
+    // Size matches: reject same-size corruption against the metadata hash.
+    // The verified-marker cache keeps repeat probes to a stat call; files the
+    // metadata does not hash (Fabric maven coordinates) keep the size check.
+    !runtime_file_verified(root, artifact)
+}
+
+/// Verified-marker cache for runtime artifacts (#67).
+///
+/// Hashing every asset on each readiness probe would stall startup and the
+/// 60-second background re-check. Files verified against the metadata hashes
+/// (on download, or by an explicit verify) record (mtime, size, sha1) in a
+/// small JSON next to them; the probe re-hashes only when the stats or the
+/// expected hash changed. A same-size corruption flips mtime in practice, so
+/// it is caught on the next probe; an mtime-preserving swap is caught on the
+/// next explicit verify. Cache roots (libraries/, assets/objects/,
+/// versions/<mc>/) are launcher-managed, never pack-managed, so the packwiz
+/// installer cannot prune them.
+const RUNTIME_VERIFIED_FILE: &str = ".blockfield-verified.json";
+
+#[derive(Default, Serialize, Deserialize)]
+struct RuntimeVerifiedCache {
+    files: HashMap<String, RuntimeVerifiedEntry>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct RuntimeVerifiedEntry {
+    mtime_ns: u128,
+    size: u64,
+    sha1: String,
+    ok: bool,
+}
+
+// ponytail: one in-memory copy per cache root; a global app-data cache
+// would need threading through every probe. Stores only mark the copy dirty;
+// flush_runtime_caches persists once per probe/download pass, so a pass over
+// thousands of assets is one small write per root, not quadratic I/O.
+static RUNTIME_VERIFIED: LazyLock<Mutex<HashMap<PathBuf, CachedDir>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+struct CachedDir {
+    file_mtime: u128,
+    cache: RuntimeVerifiedCache,
+    dirty: bool,
+}
+
+fn load_cached_dir(root: &Path) -> CachedDir {
+    let cache_path = runtime_cache_path(root);
+    // A torn or foreign file reads as empty, never as an error: the pass
+    // simply re-hashes and overwrites it on flush.
+    let (file_mtime, cache) = match file_identity(&cache_path) {
+        Some((mtime, _)) => (mtime, read_runtime_cache(&cache_path)),
+        None => (0, RuntimeVerifiedCache::default()),
+    };
+    CachedDir {
+        file_mtime,
+        cache,
+        dirty: false,
+    }
+}
+
+fn runtime_cache_path(root: &Path) -> PathBuf {
+    root.join(RUNTIME_VERIFIED_FILE)
+}
+
+fn file_identity(path: &Path) -> Option<(u128, u64)> {
+    let metadata = path.metadata().ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let mtime_ns = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some((mtime_ns, metadata.len()))
+}
+
+fn read_runtime_cache(path: &Path) -> RuntimeVerifiedCache {
+    std::fs::read(path)
+        .ok()
+        .and_then(|data| serde_json::from_slice(&data).ok())
+        .unwrap_or_default()
+}
+
+fn cached_runtime_entry(root: &Path, rel: &str) -> Option<RuntimeVerifiedEntry> {
+    let mut guard = RUNTIME_VERIFIED
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let dir = guard
+        .entry(root.to_path_buf())
+        .or_insert_with(|| load_cached_dir(root));
+    // A clean copy tracks the file: reload when something else rewrote it. A
+    // dirty copy is newer than the file by definition, so it wins.
+    if !dir.dirty {
+        let cache_path = runtime_cache_path(root);
+        if let Some((mtime, _)) = file_identity(&cache_path) {
+            if mtime != dir.file_mtime {
+                dir.cache = read_runtime_cache(&cache_path);
+                dir.file_mtime = mtime;
+            }
+        }
+    }
+    dir.cache.files.get(rel).cloned()
+}
+
+fn store_runtime_entry(root: &Path, rel: &str, entry: RuntimeVerifiedEntry) {
+    let mut guard = RUNTIME_VERIFIED
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let dir = guard
+        .entry(root.to_path_buf())
+        .or_insert_with(|| load_cached_dir(root));
+    dir.cache.files.insert(rel.to_string(), entry);
+    dir.dirty = true;
+}
+
+/// Persist every staged marker once. Atomic temp-file + rename (the same
+/// helper downloads use): a crash keeps the previous complete copy, never a
+/// torn one. Best-effort — a failed write just means re-hashing next pass.
+fn flush_runtime_caches() {
+    let mut guard = RUNTIME_VERIFIED
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    for (root, dir) in guard.iter_mut() {
+        if !dir.dirty {
+            continue;
+        }
+        if write_runtime_cache(root, &dir.cache) {
+            dir.file_mtime = file_identity(&runtime_cache_path(root))
+                .map(|(mtime, _)| mtime)
+                .unwrap_or(0);
+            dir.dirty = false;
+        }
+    }
+}
+
+fn write_runtime_cache(root: &Path, cache: &RuntimeVerifiedCache) -> bool {
+    let Ok(bytes) = serde_json::to_vec(cache) else {
+        return false;
+    };
+    if std::fs::create_dir_all(root).is_err() {
+        return false;
+    }
+    let path = runtime_cache_path(root);
+    let partial = crate::download::partial_path(&path);
+    if std::fs::write(&partial, bytes).is_err() {
+        return false;
+    }
+    crate::download::activate_partial(&partial, &path).is_ok()
+}
+
+/// Size already matched: a cached verified marker keeps the probe to a stat
+/// call, otherwise the bytes are hashed against the metadata sha1 now and the
+/// marker is stored, so the next probe is cheap again.
+fn runtime_file_verified(root: &Path, artifact: &Artifact) -> bool {
+    let Some(expected) = artifact.sha1.as_deref() else {
+        return true;
+    };
+    let path = root.join(&artifact.path);
+    let Some((mtime_ns, size)) = file_identity(&path) else {
+        return false;
+    };
+    if let Some(entry) = cached_runtime_entry(root, &artifact.path) {
+        if entry.mtime_ns == mtime_ns
+            && entry.size == size
+            && entry.sha1.eq_ignore_ascii_case(expected)
+        {
+            return entry.ok;
+        }
+    }
+    let ok = file_matches_sha1(&path, expected);
+    store_runtime_entry(
+        root,
+        &artifact.path,
+        RuntimeVerifiedEntry {
+            mtime_ns,
+            size,
+            sha1: expected.to_string(),
+            ok,
+        },
+    );
+    ok
+}
+
+/// A download already proved these bytes against the metadata hash: record the
+/// marker without re-hashing so the next probe is stat-only.
+fn mark_runtime_verified(root: &Path, rel: &str, sha1: &str) {
+    let path = root.join(rel);
+    if let Some((mtime_ns, size)) = file_identity(&path) {
+        store_runtime_entry(
+            root,
+            rel,
+            RuntimeVerifiedEntry {
+                mtime_ns,
+                size,
+                sha1: sha1.to_string(),
+                ok: true,
+            },
+        );
     }
 }
 
@@ -863,6 +1087,36 @@ fn dedupe_artifacts(artifacts: Vec<Artifact>) -> Vec<Artifact> {
         .into_iter()
         .filter(|artifact| seen.insert(artifact.path.clone()))
         .collect()
+}
+
+/// The client jar carries a metadata sha1 like every library: a same-size
+/// corrupt jar must fail readiness, not just be missing.
+fn version_jar_ready(game_dir: &Path, minecraft_version: &str, version_json: &Value) -> bool {
+    let jar = version_jar_path(game_dir, minecraft_version);
+    if !jar.is_file() {
+        return false;
+    }
+    let client = &version_json["downloads"]["client"];
+    match (
+        client["url"].as_str(),
+        client["size"].as_u64(),
+        client["sha1"].as_str(),
+    ) {
+        (Some(url), Some(size), Some(sha1)) => {
+            let root = game_dir.join("versions").join(minecraft_version);
+            !artifact_needs_download(
+                &root,
+                &Artifact {
+                    path: format!("{minecraft_version}.jar"),
+                    url: url.to_string(),
+                    size,
+                    sha1: Some(sha1.to_string()),
+                },
+            )
+        }
+        // No usable metadata pin: existence is all there is.
+        _ => true,
+    }
 }
 
 fn artifacts_exist(game_dir: &Path, jsons: &[&Value]) -> bool {
@@ -1184,6 +1438,16 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_plan_counts_missing_client_libraries_and_assets_once() {
+        // Planning is hash-aware: fixtures must carry the real digests of
+        // their contents, or size-matching files count as missing.
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let client = vec![10u8; 10];
+        let lib = vec![20u8; 20];
+        let asset = vec![30u8; 30];
+        let lang = vec![5u8; 5];
+        let asset_hash = hex(&asset);
+        let lang_hash = hex(&lang);
         let root =
             std::env::temp_dir().join(format!("blockfield-runtime-plan-{}", std::process::id()));
         let version = "1.20.1";
@@ -1194,12 +1458,17 @@ mod tests {
         std::fs::write(
             &version_path,
             serde_json::to_vec(&serde_json::json!({
-                "downloads": { "client": { "url": "https://example.invalid/client.jar", "size": 10 } },
+                "downloads": { "client": {
+                    "url": "https://example.invalid/client.jar",
+                    "size": client.len(),
+                    "sha1": hex(&client),
+                } },
                 "libraries": [{
                     "downloads": { "artifact": {
                         "path": "com/example/lib.jar",
                         "url": "https://example.invalid/lib.jar",
-                        "size": 20
+                        "size": lib.len(),
+                        "sha1": hex(&lib),
                     }}
                 }],
                 "assetIndex": { "id": "test", "url": "https://example.invalid/assets.json" }
@@ -1211,9 +1480,9 @@ mod tests {
             &index_path,
             serde_json::to_vec(&serde_json::json!({
                 "objects": {
-                    "test": { "hash": "aabb", "size": 30 },
-                    "test-copy": { "hash": "aabb", "size": 30 },
-                    "minecraft/lang/ru_ru.json": { "hash": "ccdd", "size": 5 },
+                    "test": { "hash": asset_hash, "size": asset.len() },
+                    "test-copy": { "hash": asset_hash, "size": asset.len() },
+                    "minecraft/lang/ru_ru.json": { "hash": lang_hash, "size": lang.len() },
                     "minecraft/lang/de_de.json": { "hash": "eeff", "size": 500 }
                 }
             }))
@@ -1227,14 +1496,22 @@ mod tests {
         );
 
         let files = [
-            (root.join("versions/1.20.1/1.20.1.jar"), 10),
-            (root.join("libraries/com/example/lib.jar"), 20),
-            (root.join("assets/objects/aa/aabb"), 30),
-            (root.join("assets/objects/cc/ccdd"), 5),
+            (root.join("versions/1.20.1/1.20.1.jar"), client),
+            (root.join("libraries/com/example/lib.jar"), lib),
+            (
+                root.join("assets/objects")
+                    .join(format!("{}/{}", &asset_hash[..2], asset_hash)),
+                asset,
+            ),
+            (
+                root.join("assets/objects")
+                    .join(format!("{}/{}", &lang_hash[..2], lang_hash)),
+                lang,
+            ),
         ];
-        for (path, size) in &files {
+        for (path, contents) in &files {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, vec![0; *size]).unwrap();
+            std::fs::write(path, contents).unwrap();
         }
         assert_eq!(
             prepare_download_plan(&root, version, None).await.unwrap(),
@@ -1727,5 +2004,186 @@ mod tests {
         assert!(!scratch.path().join("evil").exists());
         assert!(!root.join("evil").exists());
         assert!(!root.join("natives/evil").exists());
+    }
+
+    fn touch_mtime(path: &std::path::Path) {
+        // Real corruption lands long after install; pin a distinct mtime so the
+        // verified-marker cache cannot match a stale entry where filesystem
+        // timestamp granularity is coarse.
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(60))
+            .unwrap();
+    }
+
+    #[test]
+    fn same_size_corrupt_runtime_file_fails_readiness_probe() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let version = "1.20.1";
+        let digest = hex(b"correct");
+        let version_dir = root.join("versions").join(version);
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(
+            version_dir.join(format!("{version}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "downloads": { "client": {
+                    "url": "https://example.invalid/client.jar",
+                    "size": 7,
+                    "sha1": digest
+                }},
+                "libraries": [{
+                    "downloads": { "artifact": {
+                        "path": "com/example/lib.jar",
+                        "url": "https://example.invalid/lib.jar",
+                        "size": 7,
+                        "sha1": digest
+                    }}
+                }],
+                "assetIndex": { "id": "test", "url": "https://example.invalid/assets.json" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let index_dir = root.join("assets").join("indexes");
+        std::fs::create_dir_all(&index_dir).unwrap();
+        std::fs::write(
+            index_dir.join("test.json"),
+            serde_json::to_vec(&serde_json::json!({ "objects": {
+                "file": { "hash": digest, "size": 7 }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        let jar = version_dir.join(format!("{version}.jar"));
+        let lib = root.join("libraries/com/example/lib.jar");
+        let asset = root
+            .join("assets/objects")
+            .join(format!("{}/{}", &digest[..2], digest));
+        for path in [&jar, &lib, &asset] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"correct").unwrap();
+        }
+        assert!(has_launch_dependencies(root, version, None));
+
+        // Same byte sizes, wrong bytes: a size-only probe calls each of these healthy.
+        for path in [&jar, &lib, &asset] {
+            std::fs::write(path, b"corrupt").unwrap();
+            touch_mtime(path);
+            assert!(
+                !has_launch_dependencies(root, version, None),
+                "{} must fail the probe",
+                path.display()
+            );
+            std::fs::write(path, b"correct").unwrap();
+            touch_mtime(path);
+        }
+        assert!(has_launch_dependencies(root, version, None));
+    }
+
+    #[test]
+    fn uncached_same_size_corruption_needs_download() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("libraries");
+        std::fs::create_dir_all(&root).unwrap();
+        let digest = hex(b"correct");
+        let artifact = Artifact {
+            path: "com/example/lib.jar".into(),
+            url: "https://example.invalid/lib.jar".into(),
+            size: 7,
+            sha1: Some(digest),
+        };
+        assert!(artifact_needs_download(&root, &artifact));
+        let path = root.join(&artifact.path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Same size, wrong bytes, never verified: the planner must not skip it.
+        std::fs::write(&path, b"corrupt").unwrap();
+        assert!(artifact_needs_download(&root, &artifact));
+        std::fs::write(&path, b"correct").unwrap();
+        touch_mtime(&path);
+        assert!(!artifact_needs_download(&root, &artifact));
+    }
+
+    #[test]
+    fn verifying_pass_stages_in_memory_and_flushes_once() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("libraries");
+        std::fs::create_dir_all(&root).unwrap();
+        let artifacts: Vec<Artifact> = (0..8)
+            .map(|i| {
+                let contents = format!("artifact-{i}-contents");
+                let rel = format!("com/example/lib{i}.jar");
+                let path = root.join(&rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, &contents).unwrap();
+                Artifact {
+                    path: rel,
+                    url: "https://example.invalid/lib.jar".into(),
+                    size: contents.len() as u64,
+                    sha1: Some(hex(contents.as_bytes())),
+                }
+            })
+            .collect();
+        for artifact in &artifacts {
+            assert!(runtime_file_verified(&root, artifact));
+        }
+        // Batched: the whole pass staged markers without touching the disk.
+        assert!(!runtime_cache_path(&root).exists());
+        flush_runtime_caches();
+        let path = runtime_cache_path(&root);
+        let cache: RuntimeVerifiedCache =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(cache.files.len(), artifacts.len());
+        assert!(cache.files.values().all(|entry| entry.ok));
+        // A repeat pass is served from the markers: flushing again rewrites nothing.
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        let pinned = file_identity(&path).unwrap();
+        for artifact in &artifacts {
+            assert!(runtime_file_verified(&root, artifact));
+        }
+        flush_runtime_caches();
+        assert_eq!(file_identity(&path).unwrap(), pinned);
+    }
+
+    #[test]
+    fn corrupt_cache_falls_back_to_rehashing() {
+        use sha1::Digest as _;
+        let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("libraries");
+        std::fs::create_dir_all(&root).unwrap();
+        let artifact = Artifact {
+            path: "com/example/lib.jar".into(),
+            url: "https://example.invalid/lib.jar".into(),
+            size: 7,
+            sha1: Some(hex(b"correct")),
+        };
+        let path = root.join(&artifact.path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"correct").unwrap();
+        // A torn write from a crashed older run: garbage reads as empty, never as an error.
+        std::fs::write(runtime_cache_path(&root), b"{truncated").unwrap();
+        assert!(runtime_file_verified(&root, &artifact));
+        std::fs::write(&path, b"corrupt").unwrap();
+        touch_mtime(&path);
+        assert!(!runtime_file_verified(&root, &artifact));
+        flush_runtime_caches();
+        // The flush healed the cache file: valid JSON again.
+        let cache: RuntimeVerifiedCache =
+            serde_json::from_slice(&std::fs::read(runtime_cache_path(&root)).unwrap()).unwrap();
+        assert_eq!(cache.files.len(), 1);
     }
 }
