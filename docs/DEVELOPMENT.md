@@ -119,9 +119,9 @@ and hook commands remain shared; hooks execute in the selected game directory.
 
 Game keeps the published `launcher.json.server` Quick Play target. Workshop uses
 **Настройки → Адрес мастерской** (`workshopServer`), default
-`raknet;workshop.blockfield.pro:25566`; a runtime or build-time `BLOCKFIELD_WORKSHOP_SERVER`
-overrides it. On load, an empty saved value or the old TCP default
-`workshop.blockfield.pro:25565` (trimmed, case-insensitive) is replaced by the current default;
+`raknet;workshop.blockfield.pro:25567` (the proxy routes UDP 25567 to the Workshop, 25566 to the game); a runtime or build-time `BLOCKFIELD_WORKSHOP_SERVER`
+overrides it. On load, an empty saved value or an old default
+(`workshop.blockfield.pro:25565`, `raknet;workshop.blockfield.pro:25566`; trimmed, case-insensitive) is replaced by the current default;
 any other saved value is kept. An empty value refuses launch with instructions to configure it. The target accepts a host with an optional port and
 `raknet;` transport prefix, including bracketed IPv6. It must have a **different host**
 from Game after transport/port, DNS case/trailing dot and numeric IPv6 normalization.
