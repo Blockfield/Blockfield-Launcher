@@ -537,14 +537,23 @@ pub async fn download_modpack(
         // packwiz trusts its own cached hashes and reports "already up to
         // date" without touching a corrupted file: delete the bad files and
         // drop their index entries first, so the installer downloads them
-        // again. A no-op when the check fails only on the marker.
-        let (repair_data, repair_dir) = (state.app_data_dir.clone(), game_dir.clone());
-        let repaired = tokio::task::spawn_blocking(move || {
-            crate::installed_files::drop_bad_pack_files(&repair_dir, &repair_data)
-        })
-        .await
-        .map_err(|e| format!("Pack repair task failed: {e}"))?;
+        // again. A no-op when the check fails only on the marker. A frozen dev
+        // pack is never touched, like the installer itself.
+        let frozen = crate::dev::freeze_pack();
+        let repaired = if frozen {
+            Vec::new()
+        } else {
+            let (repair_data, repair_dir) = (state.app_data_dir.clone(), game_dir.clone());
+            tokio::task::spawn_blocking(move || {
+                crate::installed_files::drop_bad_pack_files(&repair_dir, &repair_data)
+            })
+            .await
+            .map_err(|e| format!("Pack repair task failed: {e}"))?
+        };
         if !repaired.is_empty() {
+            // The dropped entries leave the launch check; without the marker an
+            // interrupted install cannot pass as a complete pack.
+            let _ = std::fs::remove_file(game_dir.join(INSTALLED_VERSION_FILE));
             log::info!("[download_modpack] repairing {} files", repaired.len());
             emit_status(
                 &app_handle,
@@ -569,7 +578,8 @@ pub async fn download_modpack(
         .map_err(|e| format!("Failed to record installed version: {e}"))?;
         // Single pass, no loop: a pack that is still bad after a repair +
         // reinstall needs eyes, not another installer run.
-        if !pack_files_valid_blocking(state.app_data_dir.clone(), game_dir.clone()).await {
+        if !frozen && !pack_files_valid_blocking(state.app_data_dir.clone(), game_dir.clone()).await
+        {
             return Err(
                 "Pack files are still damaged after the repair. Open Updates to retry, and report the failing files from the log."
                     .to_string(),
