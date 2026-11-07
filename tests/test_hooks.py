@@ -13,6 +13,7 @@ spec = importlib.util.spec_from_file_location(
 )
 launcher_quality = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher_quality)
+HQ_MOD = launcher_quality
 HQ_ROOT = ROOT
 
 
@@ -111,6 +112,18 @@ class PreCommitHook(unittest.TestCase):
                 ).returncode,
                 0,
             )
+
+    def test_wire_hooks_reports_already_wired_as_success(self):
+        with tempfile.TemporaryDirectory(prefix="bf hooks ") as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "--quiet", tmp], check=True)
+            (root / ".githooks").mkdir()
+            subprocess.run(
+                ["git", "config", "core.hooksPath", ".githooks"],
+                cwd=root,
+                check=True,
+            )
+            self.assertTrue(HQ_MOD.wire_hooks(root))
 
     def test_commit_leaves_partially_staged_files_alone(self):
         # Fail-before: the old hook formatted the worktree copy and staged it
