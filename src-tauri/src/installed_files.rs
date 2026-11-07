@@ -832,6 +832,14 @@ mod tests {
         assert!(pack_files_valid(&root, &data));
         // Pinned data outside config/ is still checked, whatever its type.
         fs::write(&gun, b"{\"damage\": 9}").unwrap();
+        // Same size within one mtime tick would hit the stat cache: move the
+        // mtime so the edit is seen, as a real edit later in time would be.
+        std::fs::File::options()
+            .write(true)
+            .open(&gun)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
         assert!(!pack_files_valid(&root, &data));
         fs::write(&gun, b"{\"damage\": 5}").unwrap();
         assert!(pack_files_valid(&root, &data));
