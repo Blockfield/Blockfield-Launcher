@@ -78,6 +78,11 @@ version-check *args:
     sys.argv = ["scripts/quality.py", "run", 'pnpm', 'run', 'version:check', *sys.argv[1:]]
     runpy.run_path("scripts/quality.py", run_name="__main__")
 
+rollback *args:
+    import runpy, sys
+    sys.argv = ["scripts/rollback-release.py", *sys.argv[1:]]
+    runpy.run_path("scripts/rollback-release.py", run_name="__main__")
+
 config-check *args:
     import runpy, sys
     sys.argv = ["scripts/quality.py", "run", 'pnpm', 'run', 'config:check', *sys.argv[1:]]

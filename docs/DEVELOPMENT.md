@@ -252,6 +252,35 @@ macOS apps are ad-hoc signed, without Apple notarization. After copying the app 
 
 Before releasing, update `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together, then run `pnpm version:check`. The signing secrets (`TAURI_PRIVATE_KEY`, `TAURI_KEY_PASSWORD`) and build variables remain in the existing GitHub environment named `dev`; its deployment policy must permit `main` and `launcher-v*` tags only. Tag builds also verify that the commit belongs to `main`. Publishing uses this repository’s `GITHUB_TOKEN`; no cross-repository token is needed.
 
+## Rollback of a bad launcher update
+
+The updater only moves forward: a client updates when `latest.json` carries a
+higher version than the installed one, never down. There is no downgrade path,
+so a rollback republishes the last-good code as a HIGHER version. Every client,
+whether on the bad or the good build, then updates forward onto good code.
+
+```
+just rollback --good 1.0.22 --bad 1.0.23 --new 1.0.24
+```
+
+The dry run prints the steps; re-run with `--apply` on a branch cut from the
+good tag. End to end:
+
+1. `git checkout -b rollback/launcher-v<new> launcher-v<good>`.
+2. `just rollback --good <good> --bad <bad> --new <new> --apply` — bumps the
+   three version files, refusing when they disagree.
+3. `pnpm version:check`, commit, `git tag launcher-v<new>`,
+   `git push -u origin HEAD --tags`. The tag run builds, signs and publishes.
+4. Download `latest.json` from the new release and confirm its `version` is
+   `<new>`; the `--latest` move points the update channel at it.
+
+Limits: clients stay on the bad build until the rollback release finishes, and
+the rollback version must stay higher than the bad one, or the updater ignores
+it. The planner rejects anything else than good < bad < new. Keep the bad tag
+and release in place for forensics; do not delete or reuse version numbers.
+`scripts/test-rollback-release.py` covers the ordering, the version bump and
+the updater behaviour against a mocked feed.
+
 The launcher tracks the game through preparation, running, and post-exit commands. Both launch
 buttons use that shared status, and the backend rejects overlapping launches. Opening the
 launcher again focuses its existing window. While a game session is active, closing the window
