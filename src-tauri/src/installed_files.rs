@@ -236,13 +236,11 @@ fn file_stat(path: &Path) -> Option<PackStat> {
     })
 }
 
-/// Real hash check of the installed pack archives against the installer's
-/// index (packwiz.json): only `.jar`/`.zip` entries (mods, resourcepacks,
-/// shaderpacks) are checked, because those are what corruption breaks. Text
-/// configs and options are mutable by design — mods rewrite them at game
-/// start — so they are not checked at all. Unchanged archives (mtime+size
-/// match the cache) are not re-hashed. False when there is nothing to verify
-/// (fresh dir) or an archive is missing or mismatched.
+/// Real hash check of the installed pack files against the installer's index
+/// (packwiz.json): a same-size corruption is detected, while unchanged files
+/// (mtime+size match the cache) are not re-hashed. Game-mutable files are
+/// skipped (see `game_mutable`). False when there is nothing to verify (fresh
+/// dir) or a checked file is missing or mismatched.
 pub fn pack_files_valid(root: &Path, app_data: &Path) -> bool {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let files = pack_files(&root);
@@ -264,9 +262,7 @@ pub fn pack_files_valid(root: &Path, app_data: &Path) -> bool {
     }
     let mut ok = true;
     for (relative, expected) in &files {
-        // Mods rewrite their configs at game start, so only archives can
-        // ever fail this check for a real reason.
-        if !is_archive(relative) {
+        if game_mutable(relative) {
             continue;
         }
         let entry_ok = match safe_file(&root, relative) {
@@ -335,11 +331,12 @@ pub fn cleanup_partials(root: &Path) {
     }
 }
 
-/// Only mod/resourcepack/shaderpack archives can fail the launch check for
-/// a real reason; everything else is mutable by design.
-fn is_archive(relative: &str) -> bool {
-    let lower = relative.to_ascii_lowercase();
-    lower.ends_with(".jar") || lower.ends_with(".zip")
+/// Files the game itself rewrites: mods add default keys to their configs at
+/// start, the client saves options and the server list. packwiz keeps their
+/// index hash and reports "up to date", so checking them would block every
+/// launch after the first one.
+fn game_mutable(relative: &str) -> bool {
+    relative.starts_with("config/") || matches!(relative, "options.txt" | "servers.dat")
 }
 
 fn pack_hash_matches(path: &Path, expected: &serde_json::Value) -> bool {
@@ -684,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn only_mod_archives_are_hash_checked() {
+    fn game_mutable_files_are_not_hash_checked() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("game");
         let data = temp.path().join("app-data");
@@ -696,6 +693,9 @@ mod tests {
         fs::write(&good, b"correct-bytes!").unwrap();
         fs::write(&options, b"installed-defaults").unwrap();
         fs::write(&config, b"default-keys: 1\n").unwrap();
+        fs::create_dir_all(root.join("tacz")).unwrap();
+        let gun = root.join("tacz/gun.json");
+        fs::write(&gun, b"{\"damage\": 5}").unwrap();
         fs::write(
             root.join("packwiz.json"),
             serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
@@ -713,6 +713,13 @@ mod tests {
                         "value": Downloader::sha256_file(&options).unwrap()
                     }
                 },
+                "tacz/gun.pw.toml": {
+                    "cachedLocation": "tacz/gun.json",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&gun).unwrap()
+                    }
+                },
                 "config/kiwi-client.pw.toml": {
                     "cachedLocation": "config/kiwi-client.yaml",
                     "hash": {
@@ -727,6 +734,11 @@ mod tests {
         // Mods rewrite their configs at game start: not a corrupt pack.
         fs::write(&options, b"player-settings!").unwrap();
         fs::write(&config, b"default-keys: 1\ngained-keys: 2\n").unwrap();
+        assert!(pack_files_valid(&root, &data));
+        // Pinned data outside config/ is still checked, whatever its type.
+        fs::write(&gun, b"{\"damage\": 9}").unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        fs::write(&gun, b"{\"damage\": 5}").unwrap();
         assert!(pack_files_valid(&root, &data));
         // A corrupted mod archive still fails the check.
         fs::write(&good, b"corrupt-bytes!").unwrap();
