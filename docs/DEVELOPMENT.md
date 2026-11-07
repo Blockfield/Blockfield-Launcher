@@ -267,11 +267,17 @@ The dry run prints the steps; re-run with `--apply` on a branch cut from the
 good tag. End to end:
 
 1. `git checkout -b rollback/launcher-v<new> launcher-v<good>`.
-2. `just rollback --good <good> --bad <bad> --new <new> --apply` — bumps the
-   three version files, refusing when they disagree.
-3. `pnpm version:check`, commit, `git tag launcher-v<new>`,
-   `git push -u origin HEAD --tags`. The tag run builds, signs and publishes.
-4. Download `latest.json` from the new release and confirm its `version` is
+2. `just rollback --good <good> --bad <bad> --new <new> --apply` — refuses
+   unless the tree is at `<good>`, then bumps the three version files to
+   `<new>`.
+3. `pnpm version:check`, commit, push the branch, open a PR to `main` and
+   merge it after review. The rollback must land on `main`: the release
+   workflow only publishes tags whose commit belongs to `main`, and `main`
+   must stop carrying the bad code.
+4. On the updated `main`, `git tag launcher-v<new>` and push the tag. The tag
+   must equal the `package.json` version and the commit must belong to
+   `main` — the tag run checks both before it builds, signs and publishes.
+5. Download `latest.json` from the new release and confirm its `version` is
    `<new>`; the `--latest` move points the update channel at it.
 
 Limits: clients stay on the bad build until the rollback release finishes, and

@@ -53,8 +53,10 @@ def plan_rollback(good, bad, new):
             f"scripts/rollback-release.py --good {good} --bad {bad} --new {new} --apply",
             "pnpm version:check",
             f"git commit -am 'Rollback launcher to {good} code as v{new}'",
-            f"git tag launcher-v{new}",
-            "git push -u origin HEAD --tags  # tag run builds, signs and publishes",
+            f"git push -u origin rollback/launcher-v{new}  # open a PR to main and merge it",
+            "git checkout main && git pull  # main now carries the rollback commit",
+            f"git tag launcher-v{new}  # tag the main commit: the tag run only publishes main commits",
+            f"git push origin launcher-v{new}  # tag run builds, signs and publishes",
             f"gh release download launcher-v{new} --pattern latest.json "
             "--output /tmp/rollback-latest.json && "
             "python -c \"import json;print(json.load(open('/tmp/rollback-latest.json'))['version'])\"  "
@@ -76,12 +78,18 @@ def read_current_versions(root):
     }
 
 
-def apply_version(root, new):
-    """Bump the three version files to `new`; refuse on a mismatch."""
+def apply_version(root, good, new):
+    """Bump the three version files from `good` to `new`; refuse otherwise."""
+    parse_version(good)
     parse_version(new)
     current = read_current_versions(root)
     if len(set(current.values())) != 1:
         raise ValueError(f"Version files disagree, refusing: {current}")
+    if next(iter(current.values())) != good:
+        raise ValueError(
+            f"Tree is at {next(iter(current.values()))}, not the good version"
+            f" {good}: refusing"
+        )
     (root / "package.json").write_text(
         re.sub(
             r'"version":\s*"[^"]+"',
@@ -122,7 +130,7 @@ def main(argv):
     args = parser.parse_args(argv)
     plan = plan_rollback(args.good, args.bad, args.new)
     if args.apply:
-        changed = apply_version(Path.cwd(), args.new)
+        changed = apply_version(Path.cwd(), args.good, args.new)
         print("Bumped: " + ", ".join(changed))
     for step in plan["steps"]:
         print(step)

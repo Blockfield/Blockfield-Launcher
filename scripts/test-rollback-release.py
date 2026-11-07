@@ -37,6 +37,15 @@ class RollbackReleaseTests(unittest.TestCase):
         self.assertTrue(any("launcher-v1.0.22" in step for step in plan["steps"]))
         self.assertTrue(any("launcher-v1.0.24" in step for step in plan["steps"]))
 
+    def test_plan_lands_rollback_on_main_before_tagging(self):
+        plan = rollback.plan_rollback("1.0.22", "1.0.23", "1.0.24")
+        steps = plan["steps"]
+        tag_at = next(i for i, step in enumerate(steps) if step.startswith("git tag "))
+        self.assertIn("launcher-v1.0.24", steps[tag_at])
+        earlier = " ".join(steps[:tag_at])
+        self.assertIn("main", earlier)
+        self.assertTrue(any("PR to main" in step for step in steps[:tag_at]))
+
     def test_plan_rejects_non_rollback_ordering(self):
         for good, bad, new in (
             ("1.0.23", "1.0.22", "1.0.24"),  # bad older than good
@@ -64,10 +73,25 @@ class RollbackReleaseTests(unittest.TestCase):
         (root / "src-tauri/tauri.conf.json").write_text(
             json.dumps({"version": "1.0.22"}) + "\n"
         )
-        changed = rollback.apply_version(root, "1.0.24")
+        changed = rollback.apply_version(root, "1.0.22", "1.0.24")
         self.assertEqual(changed, sorted(rollback.VERSION_FILES))
         current = rollback.read_current_versions(root)
         self.assertEqual(set(current.values()), {"1.0.24"})
+
+    def test_apply_refuses_tree_at_bad_version(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "src-tauri").mkdir()
+        (root / "package.json").write_text(json.dumps({"version": "1.0.23"}) + "\n")
+        (root / "src-tauri/Cargo.toml").write_text('[package]\nversion = "1.0.23"\n')
+        (root / "src-tauri/tauri.conf.json").write_text(
+            json.dumps({"version": "1.0.23"}) + "\n"
+        )
+        with self.assertRaisesRegex(ValueError, "not the good version"):
+            rollback.apply_version(root, "1.0.22", "1.0.24")
+        # Nothing was bumped: the bad tree is untouched.
+        self.assertEqual(set(rollback.read_current_versions(root).values()), {"1.0.23"})
 
     def test_apply_refuses_disagreeing_version_files(self):
         temporary = tempfile.TemporaryDirectory()
@@ -80,7 +104,7 @@ class RollbackReleaseTests(unittest.TestCase):
             json.dumps({"version": "1.0.22"}) + "\n"
         )
         with self.assertRaisesRegex(ValueError, "disagree"):
-            rollback.apply_version(root, "1.0.24")
+            rollback.apply_version(root, "1.0.22", "1.0.24")
 
     def test_dry_run_prints_steps_without_touching_files(self):
         script = Path(__file__).with_name("rollback-release.py")
