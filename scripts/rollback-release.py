@@ -11,6 +11,7 @@ good build) updates forward onto good code.
 import argparse
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +21,29 @@ VERSION_FILES = (
     "src-tauri/Cargo.toml",
     "src-tauri/tauri.conf.json",
 )
+
+# Rollback tooling that must survive a rollback. The good tag predates it, so
+# the restore step excludes these paths and verify allows them to differ.
+PRESERVED_TOOLING = (
+    "justfile",
+    "scripts/rollback-release.py",
+    "scripts/test-rollback-release.py",
+    "docs/DEVELOPMENT.md",
+)
+
+
+def restore_args(good):
+    """git-restore argv resetting the tree to the good tag, keeping tooling."""
+    return [
+        "restore",
+        f"--source=launcher-v{good}",
+        "--staged",
+        "--worktree",
+        "--",
+        ".",
+        *(f":(exclude){path}" for path in PRESERVED_TOOLING),
+    ]
+
 
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
@@ -46,20 +70,21 @@ def plan_rollback(good, bad, new):
         raise ValueError(
             f"Rollback needs good < bad < new, got good={good} bad={bad} new={new}"
         )
+    restore = "git " + " ".join(shlex.quote(arg) for arg in restore_args(good))
     return {
         "branch": f"rollback/launcher-v{new}",
         "tag": f"launcher-v{new}",
         "steps": [
             f"git switch -c rollback/launcher-v{new} origin/main",
-            f"git restore --source=launcher-v{good} --staged --worktree -- . "
-            "# tree now equals the good tag; main's later commits are gone",
+            f"{restore} "
+            "# tree now equals the good tag except the preserved rollback tooling",
             f"scripts/rollback-release.py --good {good} --bad {bad} --new {new} --apply",
             "pnpm version:check",
             f"git commit -am 'Rollback launcher to {good} code as v{new}'",
             f"git push -u origin rollback/launcher-v{new}  # open a PR to main and merge it",
             "git checkout main && git pull  # main now carries the rollback commit",
             f"scripts/rollback-release.py --good {good} --bad {bad} --new {new} "
-            "--verify  # refuses unless main differs from the good tag only in version files",
+            "--verify  # refuses unless main differs from the good tag only in version files and the preserved tooling",
             f"git tag launcher-v{new}  # tag the main commit: the tag run only publishes main commits",
             f"git push origin launcher-v{new}  # tag run builds, signs and publishes",
             f"gh release download launcher-v{new} --pattern latest.json "
@@ -121,7 +146,7 @@ def apply_version(root, good, new):
 
 
 def verify_rollback_tree(root, good):
-    """Refuse unless HEAD differs from the good tag only in version files."""
+    """Refuse unless HEAD differs from the good tag only in allowed paths."""
     tag = f"launcher-v{good}"
     proc = subprocess.run(
         ["git", "-C", str(root), "diff", "--name-only", tag, "HEAD", "--"],
@@ -132,7 +157,8 @@ def verify_rollback_tree(root, good):
     if proc.returncode != 0:
         raise ValueError(f"Cannot diff against {tag}: {proc.stderr.strip()}")
     changed = sorted(line for line in proc.stdout.splitlines() if line.strip())
-    extra = [path for path in changed if path not in VERSION_FILES]
+    allowed = set(VERSION_FILES) | set(PRESERVED_TOOLING)
+    extra = [path for path in changed if path not in allowed]
     if extra:
         raise ValueError(
             f"Rollback tree still carries non-version changes vs {tag}, refusing:"
@@ -156,7 +182,7 @@ def main(argv):
     parser.add_argument(
         "--verify",
         action="store_true",
-        help="Refuse unless HEAD differs from the good tag only in version files",
+        help="Refuse unless HEAD differs from the good tag only in allowed paths",
     )
     args = parser.parse_args(argv)
     plan = plan_rollback(args.good, args.bad, args.new)

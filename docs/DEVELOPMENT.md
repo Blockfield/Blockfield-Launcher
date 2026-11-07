@@ -268,9 +268,11 @@ tree restored to the good tag, otherwise the merge keeps the bad code. End
 to end:
 
 1. `git switch -c rollback/launcher-v<new> origin/main`, then
-   `git restore --source=launcher-v<good> --staged --worktree -- .` — the
-   tree now equals the good tag; everything `main` gained after it,
-   including the bad release, is gone from the branch.
+   `git restore --source=launcher-v<good> --staged --worktree -- . ':(exclude)justfile' ':(exclude)scripts/rollback-release.py' ':(exclude)scripts/test-rollback-release.py' ':(exclude)docs/DEVELOPMENT.md'` —
+   the tree now equals the good tag except the preserved rollback tooling;
+   everything else `main` gained after it, including the bad release, is
+   gone from the branch. The tooling must survive: the good tag predates it,
+   and a bare restore would delete `just rollback` itself mid-runbook.
 2. `just rollback --good <good> --bad <bad> --new <new> --apply` — refuses
    unless the tree is at `<good>`, then bumps the three version files to
    `<new>`.
@@ -280,7 +282,9 @@ to end:
    must stop carrying the bad code.
 4. On the updated `main`, `just rollback --good <good> --bad <bad> --new <new> --verify` —
    refuses unless `main` differs from the good tag only in the version
-   files — then `git tag launcher-v<new>` and push the tag. The tag
+   files and the preserved rollback tooling (`justfile`,
+   `scripts/rollback-release.py`, `scripts/test-rollback-release.py`,
+   `docs/DEVELOPMENT.md`) — then `git tag launcher-v<new>` and push the tag. The tag
    must equal the `package.json` version and the commit must belong to
    `main` — the tag run checks both before it builds, signs and publishes.
 5. Download `latest.json` from the new release and confirm its `version` is

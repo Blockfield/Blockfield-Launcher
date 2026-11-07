@@ -234,6 +234,33 @@ class RollbackRecipeRepoTests(unittest.TestCase):
             sorted(rollback.VERSION_FILES),
         )
 
+    def test_new_recipe_preserves_tooling_added_after_good_tag(self):
+        # The good tag predates the rollback tooling: main gained the tooling
+        # (and the bad release) afterwards. The documented flow must keep it.
+        for path in rollback.PRESERVED_TOOLING:
+            full = self.root / path
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(f"# rollback tooling placeholder: {path}\n")
+        self._git("add", "-A")
+        self._git("commit", "-qm", "add rollback tooling")
+        self._git("checkout", "-qb", "rollback/launcher-v1.0.24", "main")
+        proc = subprocess.run(
+            ["git", "-C", str(self.root), *rollback.restore_args("1.0.22")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        for path in rollback.PRESERVED_TOOLING:
+            self.assertTrue((self.root / path).is_file(), path)
+        rollback.apply_version(self.root, "1.0.22", "1.0.24")
+        self._git("commit", "-qam", "rollback to 1.0.22 code as v1.0.24")
+        self.assertFalse((self.root / "bad-feature.txt").exists())
+        self.assertEqual(
+            rollback.verify_rollback_tree(self.root, "1.0.22"),
+            sorted(set(rollback.VERSION_FILES) | set(rollback.PRESERVED_TOOLING)),
+        )
+
     def test_verify_refuses_tree_carrying_bad_code(self):
         with self.assertRaisesRegex(ValueError, "bad-feature.txt"):
             rollback.verify_rollback_tree(self.root, "1.0.22")
