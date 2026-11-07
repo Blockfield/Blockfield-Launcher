@@ -43,7 +43,7 @@ the current check and keeps an ongoing installation alive. Default maximum heap 
 memory choices remain unchanged. Java chooses its GC tuning; initial heap is 512 MiB.
 
 **Settings → Launch commands** supports a shell command before Minecraft and after its process
-exits (including a nonzero exit). A failing pre-launch command cancels the launch. Commands run
+exits (including a nonzero exit). A failing pre-launch command shows a warning; the game still starts. Commands run
 in the game directory with `sh -c` on Linux/macOS or `cmd /D /S /C` on Windows. Environment:
 `INST_DIR`, `INST_MC_DIR`, `INST_JAVA`, and `INST_EXIT_CODE` (post-exit only; empty for termination
 without an exit code). Keep the launcher open for post-exit commands. Command output is appended

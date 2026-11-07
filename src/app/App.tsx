@@ -357,9 +357,7 @@ export default function App() {
               role="alert"
               className="absolute bottom-4 inset-x-4 z-50 flex items-start gap-4 border border-[#c98b8b] bg-[#11100D] p-4 text-[12px] text-[#F3E7D0]"
             >
-              <span className="min-w-0 flex-1 break-words">
-                Ошибка команды после выхода: {commandError}
-              </span>
+              <span className="min-w-0 flex-1 break-words">{commandError}</span>
               <button
                 onClick={() => setCommandError(null)}
                 className="shrink-0 underline underline-offset-4"

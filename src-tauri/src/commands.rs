@@ -1243,7 +1243,7 @@ pub async fn launch_game(
         );
         let hook_config = config.clone();
         let hook_java = java.clone();
-        tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             crate::launch_hooks::run_hook(
                 &hook_config.pre_launch_command,
                 &hook_config,
@@ -1252,7 +1252,18 @@ pub async fn launch_game(
             )
         })
         .await
-        .map_err(|e| format!("Pre-launch task failed: {e}"))??;
+        .map_err(|e| format!("Pre-launch task failed: {e}"))
+        .and_then(|result| result);
+        // A user hook (e.g. display switching) must not block the game itself.
+        if let Err(error) = result {
+            log::warn!("Pre-launch command failed: {error}");
+            emit_status(
+                &app_handle,
+                "hook-error",
+                format!("Команда перед запуском: {error}"),
+                false,
+            );
+        }
     }
     emit_status(&app_handle, "launch", "Запуск игры", false);
     let log_dir = game_dir_path.join("logs");
@@ -1317,7 +1328,12 @@ pub async fn launch_game(
                 let message = match result {
                     Ok(()) => format!("Game exited ({exit})"),
                     Err(error) => {
-                        emit_status(&app_handle, "hook-error", &error, false);
+                        emit_status(
+                            &app_handle,
+                            "hook-error",
+                            format!("Команда после выхода: {error}"),
+                            false,
+                        );
                         format!("Post-exit command failed: {error}")
                     }
                 };
