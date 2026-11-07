@@ -37,6 +37,18 @@ has_files() {
     echo "$STAGED" | grep -qE "$1"
 }
 
+# ── Auto-format ─────────────────────────────────────────────────────────────
+# Format the staged files with the repo's own pinned formatters and re-stage
+# them, so the checks below see the formatted tree. Unstaged work is untouched.
+if [ -n "$STAGED" ]; then
+    command -v just >/dev/null 2>&1 || {
+        echo -e "${RED}pre-commit: 'just' not found on PATH; run just setup first${NC}" >&2
+        exit 1
+    }
+    just format-staged
+    STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+fi
+
 # ── Rust (native launcher + shared contracts) ────────────────────────────────────────────────────
 if has_files '\.rs$|Cargo\.(toml|lock)$'; then
     section "Rust — native launcher & shared contracts"
