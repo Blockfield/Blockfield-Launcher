@@ -275,7 +275,7 @@ jobs:
           key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
       - name: Release text
-        uses: ./.github/actions/release-text
+        uses: Blockfield/blockfield-workspace/.github/actions/release-text@cdb1c24c5b88a18221c2d927d3f684c64c4472d
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           RELEASE_TEXT_MODEL: ${{ vars.RELEASE_TEXT_MODEL }}
@@ -284,6 +284,15 @@ jobs:
           version: ${{ github.ref_name }}
           kind: launcher
           out-dir: rn
+      - name: Fetch pinned release-notes check tool
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Blockfield/blockfield-workspace
+          ref: cdb1c24c5b88a18221c2d927d3f684c64c4472d
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout: .github/actions/release-text/release_notes_tool.py
+          path: vendor/release-text
       - name: Validate updater assets and publish the completed draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -291,7 +300,7 @@ jobs:
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
           tag="launcher-v$version"
-          just python .github/actions/release-text/release_notes_tool.py check rn/release-notes.md \
+          just python vendor/release-text/.github/actions/release-text/release_notes_tool.py check rn/release-notes.md \
             --repository Blockfield/Blockfield-Launcher --version "$tag" --kind launcher
           mkdir -p release
           gh release download "$tag" --dir release
