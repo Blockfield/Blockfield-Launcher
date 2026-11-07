@@ -173,6 +173,8 @@ staged-файлы теми же закреплёнными форматтера�
 (`just lint`, `just format-check`, без Gradle) видят отформатированное дерево.
 Хуки включаются автоматически при любом `just`-вызове: свежий клон получает хуки
 на первом `just` (обход только через `--no-verify`).
+Если git уже берёт хуки из другого места (`core.hooksPath` в любом конфиге или
+активные хуки в `.git/hooks`), `just` их не трогает и только предупреждает.
 Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux/Windows and Apple's zlib 1.2.12
 on macOS. Each platform's interpreter and compressor are verified; stale cached tool
 versions are replaced automatically.
