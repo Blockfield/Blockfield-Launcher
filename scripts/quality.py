@@ -45,7 +45,12 @@ def wire_hooks(root=ROOT, strict=False):
         )
 
     try:
-        current = git("config", "--get", "core.hooksPath").stdout.strip()
+        read = git("config", "--get", "core.hooksPath")
+        # 1 = unset. Today git's later rev-parse fails on the same configs, but
+        # strict setup must not rely on that.
+        if read.returncode not in (0, 1):
+            raise subprocess.CalledProcessError(read.returncode, read.args)
+        current = read.stdout.strip()
         if current == ".githooks":
             return True
         if current:
