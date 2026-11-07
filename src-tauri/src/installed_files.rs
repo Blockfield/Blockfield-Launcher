@@ -7,13 +7,6 @@ use std::sync::Mutex;
 
 const RECORD: &str = "installed-files.json";
 
-/// Game-dir marker holding the installed `[index] hash` on its first line.
-pub const PACK_VERSION_FILE: &str = ".blockfield-pack-version";
-
-/// Preserved game-editable paths per pack `[index] hash`, so the offline
-/// launch check knows what the installer marked `preserve = true`.
-const PRESERVED_CACHE: &str = ".blockfield-preserved.json";
-
 #[derive(Default, Serialize, Deserialize)]
 struct Record {
     directories: BTreeMap<PathBuf, BTreeMap<String, String>>,
@@ -243,49 +236,13 @@ fn file_stat(path: &Path) -> Option<PackStat> {
     })
 }
 
-/// Installed `[index] hash` from the game-dir marker, if present.
-fn installed_index_hash(root: &Path) -> Option<String> {
-    fs::read_to_string(root.join(PACK_VERSION_FILE))
-        .ok()?
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(String::from)
-}
-
-/// Preserved paths recorded for this pack hash; empty when unknown.
-fn load_preserved(app_data: &Path, index_hash: &str) -> BTreeSet<String> {
-    fs::read(app_data.join(PRESERVED_CACHE))
-        .ok()
-        .and_then(|data| serde_json::from_slice::<BTreeMap<String, Vec<String>>>(&data).ok())
-        .and_then(|map| map.get(index_hash).cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .collect()
-}
-
-/// Records the installer's `preserve = true` paths for a pack hash.
-pub fn save_preserved(app_data: &Path, index_hash: &str, files: &[String]) -> Result<(), String> {
-    let path = app_data.join(PRESERVED_CACHE);
-    let mut map: BTreeMap<String, Vec<String>> = fs::read(&path)
-        .ok()
-        .and_then(|data| serde_json::from_slice(&data).ok())
-        .unwrap_or_default();
-    let mut sorted = files.to_vec();
-    sorted.sort();
-    map.insert(index_hash.into(), sorted);
-    fs::create_dir_all(app_data).map_err(|e| e.to_string())?;
-    fs::write(&path, serde_json::to_vec(&map).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
-}
-
-/// Real hash check of the installed pack files against the installer's index
-/// (packwiz.json): a same-size corruption is detected, while unchanged files
-/// (mtime+size match the cache) are not re-hashed. Entries the pack index
-/// marks `preserve = true` (player/game-edited configs) are not checked at
-/// all — not even for existence: packwiz recreates a missing one on the next
-/// update. False when there is nothing to verify (fresh dir) or a file is
-/// missing or mismatched.
+/// Real hash check of the installed pack archives against the installer's
+/// index (packwiz.json): only `.jar`/`.zip` entries (mods, resourcepacks,
+/// shaderpacks) are checked, because those are what corruption breaks. Text
+/// configs and options are mutable by design — mods rewrite them at game
+/// start — so they are not checked at all. Unchanged archives (mtime+size
+/// match the cache) are not re-hashed. False when there is nothing to verify
+/// (fresh dir) or an archive is missing or mismatched.
 pub fn pack_files_valid(root: &Path, app_data: &Path) -> bool {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let files = pack_files(&root);
@@ -305,14 +262,11 @@ pub fn pack_files_valid(root: &Path, app_data: &Path) -> bool {
         dir.files.clear();
         dir.packwiz_mtime_ns = packwiz_mtime;
     }
-    let preserved = installed_index_hash(&root)
-        .map(|hash| load_preserved(app_data, &hash))
-        .unwrap_or_default();
     let mut ok = true;
     for (relative, expected) in &files {
-        // Player/game-edited by design: the pack index marks these
-        // `preserve = true`, so their hash never matches the installer cache.
-        if preserved.contains(relative) {
+        // Mods rewrite their configs at game start, so only archives can
+        // ever fail this check for a real reason.
+        if !is_archive(relative) {
             continue;
         }
         let entry_ok = match safe_file(&root, relative) {
@@ -379,6 +333,13 @@ pub fn cleanup_partials(root: &Path) {
             }
         }
     }
+}
+
+/// Only mod/resourcepack/shaderpack archives can fail the launch check for
+/// a real reason; everything else is mutable by design.
+fn is_archive(relative: &str) -> bool {
+    let lower = relative.to_ascii_lowercase();
+    lower.ends_with(".jar") || lower.ends_with(".zip")
 }
 
 fn pack_hash_matches(path: &Path, expected: &serde_json::Value) -> bool {
@@ -723,18 +684,28 @@ mod tests {
     }
 
     #[test]
-    fn edited_preserved_files_pass_but_corrupt_mods_still_fail() {
+    fn only_mod_archives_are_hash_checked() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("game");
         let data = temp.path().join("app-data");
         fs::create_dir_all(root.join("mods")).unwrap();
-        let options = root.join("options.txt");
+        fs::create_dir_all(root.join("config")).unwrap();
         let good = root.join("mods/mod.jar");
-        fs::write(&options, b"installed-defaults").unwrap();
+        let options = root.join("options.txt");
+        let config = root.join("config/kiwi-client.yaml");
         fs::write(&good, b"correct-bytes!").unwrap();
+        fs::write(&options, b"installed-defaults").unwrap();
+        fs::write(&config, b"default-keys: 1\n").unwrap();
         fs::write(
             root.join("packwiz.json"),
             serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/mod.pw.toml": {
+                    "cachedLocation": "mods/mod.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&good).unwrap()
+                    }
+                },
                 "options.pw.toml": {
                     "cachedLocation": "options.txt",
                     "hash": {
@@ -742,33 +713,22 @@ mod tests {
                         "value": Downloader::sha256_file(&options).unwrap()
                     }
                 },
-                "mods/mod.pw.toml": {
-                    "cachedLocation": "mods/mod.jar",
+                "config/kiwi-client.pw.toml": {
+                    "cachedLocation": "config/kiwi-client.yaml",
                     "hash": {
                         "type": "sha256",
-                        "value": Downloader::sha256_file(&good).unwrap()
+                        "value": Downloader::sha256_file(&config).unwrap()
                     }
                 }
             }}))
             .unwrap(),
         )
         .unwrap();
-        fs::write(root.join(PACK_VERSION_FILE), "H\n9.9.9\n").unwrap();
-        fs::create_dir_all(&data).unwrap();
-        fs::write(
-            data.join(PRESERVED_CACHE),
-            serde_json::to_vec(&serde_json::json!({ "H": ["options.txt"] })).unwrap(),
-        )
-        .unwrap();
-        // The player changed their settings: not a corrupt pack.
+        // Mods rewrite their configs at game start: not a corrupt pack.
         fs::write(&options, b"player-settings!").unwrap();
+        fs::write(&config, b"default-keys: 1\ngained-keys: 2\n").unwrap();
         assert!(pack_files_valid(&root, &data));
-        // A missing preserved file is recreated by packwiz on the next update:
-        // also not a corrupt pack.
-        fs::remove_file(&options).unwrap();
-        assert!(pack_files_valid(&root, &data));
-        fs::write(&options, b"player-settings!").unwrap();
-        // Same-size corruption of a real mod must still fail the check.
+        // A corrupted mod archive still fails the check.
         fs::write(&good, b"corrupt-bytes!").unwrap();
         std::fs::File::options()
             .write(true)
@@ -776,6 +736,11 @@ mod tests {
             .unwrap()
             .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
             .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        // A healed archive passes again, a missing one fails.
+        fs::write(&good, b"correct-bytes!").unwrap();
+        assert!(pack_files_valid(&root, &data));
+        fs::remove_file(&good).unwrap();
         assert!(!pack_files_valid(&root, &data));
     }
 

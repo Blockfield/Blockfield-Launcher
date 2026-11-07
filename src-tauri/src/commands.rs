@@ -1,6 +1,5 @@
 use crate::config::{ClientProfile, LauncherConfig};
 use crate::download::Downloader;
-use crate::installed_files::PACK_VERSION_FILE;
 use crate::pack::{self, JavaInfo, LauncherInfo, PackMeta};
 use crate::status::ServerStatus;
 use serde::Serialize;
@@ -10,6 +9,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 
+const INSTALLED_VERSION_FILE: &str = ".blockfield-pack-version";
 const INSTALLER_JAR: &str = "packwiz-installer.jar";
 const BOOTSTRAP_JAR: &str = "packwiz-installer-bootstrap.jar";
 
@@ -297,7 +297,7 @@ pub fn save_settings(
 /// The marker holds the installed `[index] hash`, then the pack version for display.
 /// Older markers hold only the version, so they mismatch once and trigger one update.
 fn installed_pack(game_dir: &Path) -> (String, String) {
-    let marker = std::fs::read_to_string(game_dir.join(PACK_VERSION_FILE)).unwrap_or_default();
+    let marker = std::fs::read_to_string(game_dir.join(INSTALLED_VERSION_FILE)).unwrap_or_default();
     let mut lines = marker.lines().map(str::trim).filter(|l| !l.is_empty());
     let hash = lines.next().unwrap_or("none").to_string();
     let version = lines.next().map_or_else(|| hash.clone(), String::from);
@@ -543,17 +543,8 @@ pub async fn download_modpack(
         })
         .await
         .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
-        // The launch check skips `preserve = true` index entries, but packwiz
-        // never reports that flag: persist the published list (verified against
-        // the pack `[index]` hash) before recording the install, so offline
-        // launches keep working. A failed fetch fails the update before the
-        // marker is written, so the next run retries the whole pack phase.
-        let (index_hash, preserved) = pack::fetch_preserved(&pack.info.pack)
-            .await
-            .map_err(|e| format!("Failed to read preserved-file list: {e}"))?;
-        crate::installed_files::save_preserved(&state.app_data_dir, &index_hash, &preserved)?;
         crate::installed_files::write(
-            &game_dir.join(PACK_VERSION_FILE),
+            &game_dir.join(INSTALLED_VERSION_FILE),
             format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
         )
         .map_err(|e| format!("Failed to record installed version: {e}"))?;
@@ -1748,7 +1739,7 @@ mod tests {
         let data = dir.path().join("app-data");
         // No marker: full installer run.
         assert!(!pack_phase_complete(&data, root, "abc"));
-        std::fs::write(root.join(PACK_VERSION_FILE), "abc\n1.0\n").unwrap();
+        std::fs::write(root.join(INSTALLED_VERSION_FILE), "abc\n1.0\n").unwrap();
         // Marker current but no installer cache: full run.
         assert!(!pack_phase_complete(&data, root, "abc"));
         let good = root.join("mods/a.jar");
@@ -2095,7 +2086,6 @@ mod tests {
         let meta = PackMeta {
             version: "2.80.0".into(),
             index_hash: "new-hash".into(),
-            index_file: "index.toml".into(),
             minecraft: "1.21.1".into(),
             loader: None,
         };
@@ -2166,7 +2156,6 @@ mod tests {
             meta: PackMeta {
                 version: "1.0".into(),
                 index_hash: "abc".into(),
-                index_file: "index.toml".into(),
                 minecraft: "1.21.1".into(),
                 loader: None,
             },
