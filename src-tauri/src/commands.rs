@@ -1520,7 +1520,7 @@ fn remove_path(path: &Path) -> Result<(), String> {
     .map_err(|e| format!("Failed to remove {}: {e}", path.display()))
 }
 
-/// Extract a Java runtime archive: ZIP (Windows builds) or tar.gz (Linux/macOS Temurin).
+/// Extract a Java runtime archive: ZIP (Windows builds) or tar.gz (Linux Temurin).
 fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
     if archive_path.to_string_lossy().ends_with(".tar.gz") {
         return extract_tar_gz(archive_path, dest_dir);
@@ -1528,7 +1528,7 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
     extract_archive_with_limits(archive_path, dest_dir, &archive_limits())
 }
 
-/// System `tar` keeps the executable bits; it exists on every Linux/macOS install.
+/// System `tar` keeps the executable bits; it exists on every Linux install.
 fn extract_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
     let output = crate::host_env::command("tar")
         .arg("-xzf")

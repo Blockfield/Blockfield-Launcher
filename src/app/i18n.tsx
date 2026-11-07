@@ -147,7 +147,7 @@ const ru = {
     'Выполняется после завершения процесса Minecraft, в том числе при сбое. Лаунчер должен оставаться открытым.',
   'settings.commandPlaceholder': 'Не выполнять команду',
   'settings.commandsHint':
-    'Команды выполняются в папке игры через sh (Linux/macOS) или cmd (Windows). Доступны INST_DIR, INST_MC_DIR, INST_JAVA и INST_EXIT_CODE после выхода. Обращение к переменным: $INST_DIR в sh, %INST_DIR% в cmd. Вывод: logs/launcher-hooks.log.',
+    'Команды выполняются в папке игры через sh (Linux) или cmd (Windows). Доступны INST_DIR, INST_MC_DIR, INST_JAVA и INST_EXIT_CODE после выхода. Обращение к переменным: $INST_DIR в sh, %INST_DIR% в cmd. Вывод: logs/launcher-hooks.log.',
   'main.verifyFiles': 'ПРОВЕРИТЬ ФАЙЛЫ',
   'main.prepare': 'ПОДГОТОВИТЬ',
   'main.setupRequired': 'ТРЕБУЕТСЯ ПОДГОТОВКА',

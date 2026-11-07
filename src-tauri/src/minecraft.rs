@@ -1409,8 +1409,6 @@ fn natives_dir(game_dir: &Path, minecraft_version: &str) -> PathBuf {
 fn current_os_name() -> &'static str {
     if cfg!(target_os = "windows") {
         "windows"
-    } else if cfg!(target_os = "macos") {
-        "osx"
     } else {
         "linux"
     }
