@@ -53,6 +53,8 @@ pub struct PackMeta {
     pub version: String,
     /// `[index] hash`: changes whenever any client file changes.
     pub index_hash: String,
+    /// `[index] file`: the packwiz index, home of the `preserve` flags.
+    pub index_file: String,
     pub minecraft: String,
     /// Fabric loader version from `[versions] fabric`.
     pub loader: Option<String>,
@@ -65,7 +67,8 @@ pub fn platform_key() -> String {
 /// Minimal TOML reader for the few keys we need; avoids a TOML dependency.
 pub fn parse_pack_toml(text: &str) -> Result<PackMeta, String> {
     let mut section = String::new();
-    let (mut version, mut index_hash, mut minecraft, mut loader) = (None, None, None, None);
+    let (mut version, mut index_hash, mut index_file, mut minecraft, mut loader) =
+        (None, None, None, None, None);
     for raw in text.lines() {
         let line = raw.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
@@ -82,6 +85,7 @@ pub fn parse_pack_toml(text: &str) -> Result<PackMeta, String> {
         match (section.as_str(), key.trim()) {
             ("", "version") => version = Some(value),
             ("index", "hash") => index_hash = Some(value),
+            ("index", "file") => index_file = Some(value),
             ("versions", "minecraft") => minecraft = Some(value),
             ("versions", "fabric") => loader = Some(value),
             _ => {}
@@ -90,9 +94,61 @@ pub fn parse_pack_toml(text: &str) -> Result<PackMeta, String> {
     Ok(PackMeta {
         version: version.ok_or("pack.toml has no version")?,
         index_hash: index_hash.ok_or("pack.toml has no [index].hash")?,
+        index_file: index_file.ok_or("pack.toml has no [index].file")?,
         minecraft: minecraft.ok_or("pack.toml has no [versions].minecraft")?,
         loader,
     })
+}
+
+/// Game-dir-relative paths of the `[[files]]` entries a packwiz `index.toml`
+/// marks `preserve = true`: the game and the player edit these by design, so
+/// their hashes never match the installer cache.
+pub fn parse_index_preserved(text: &str) -> Vec<String> {
+    let mut preserved = Vec::new();
+    let mut in_files = false;
+    let mut file: Option<String> = None;
+    let mut keep = false;
+    let mut commit = |file: &mut Option<String>, keep: &mut bool| {
+        if std::mem::replace(keep, false) {
+            if let Some(path) = file.take().filter(|path| !path.is_empty()) {
+                preserved.push(path);
+            }
+        } else {
+            file.take();
+        }
+    };
+    for raw in text.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            commit(&mut file, &mut keep);
+            in_files = line == "[[files]]";
+            continue;
+        }
+        if !in_files {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "file" => file = Some(value.trim().trim_matches('"').to_string()),
+            "preserve" => keep = value.trim() == "true",
+            _ => {}
+        }
+    }
+    commit(&mut file, &mut keep);
+    preserved
+}
+
+/// Index URL next to the pack manifest: `<pack-dir>/<index file>`.
+fn index_url(pack_toml_url: &str, index_file: &str) -> String {
+    match pack_toml_url.trim_end_matches('/').rsplit_once('/') {
+        Some((root, _)) => format!("{root}/{index_file}"),
+        None => index_file.to_string(),
+    }
 }
 
 fn client() -> reqwest::Client {
@@ -137,6 +193,22 @@ pub async fn fetch_pack_meta(url: &str) -> Result<PackMeta, String> {
     parse_pack_toml(&fetch_text(url).await?)
 }
 
+/// Preserved paths for a pack, with the pack `[index] hash`: fetches the
+/// published index next to `pack.toml` and trusts it only when its sha256
+/// matches the manifest, so a tampered or truncated mirror cannot silently
+/// exempt files from the launch check.
+pub async fn fetch_preserved(pack_toml_url: &str) -> Result<(String, Vec<String>), String> {
+    let meta = parse_pack_toml(&fetch_text(pack_toml_url).await?)?;
+    let url = index_url(pack_toml_url, &meta.index_file);
+    let index = fetch_text(&url).await?;
+    use sha2::Digest;
+    let digest = crate::download::hex_digest(&sha2::Sha256::digest(index.as_bytes()));
+    if !digest.eq_ignore_ascii_case(&meta.index_hash) {
+        return Err(format!("{url}: index hash mismatch"));
+    }
+    Ok((meta.index_hash, parse_index_preserved(&index)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,12 +224,39 @@ mod tests {
             PackMeta {
                 version: "1.2.3".into(),
                 index_hash: "abc123".into(),
+                index_file: "index.toml".into(),
                 minecraft: "1.21.1".into(),
                 loader: Some("0.19.3".into())
             }
         );
         assert!(parse_pack_toml("name = \"x\"").is_err());
         assert!(parse_pack_toml("version = \"1\"\n[versions]\nminecraft = \"1.21.1\"").is_err());
+        assert!(parse_pack_toml(
+            "version = \"1\"\n[index]\nhash = \"abc\"\n[versions]\nminecraft = \"1.21.1\""
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn parses_index_preserved_entries() {
+        let index = "hash-format = \"sha256\"\n\
+            \n[[files]]\nfile = \"config/a.toml\"\nhash = \"00\"\npreserve = true\n\
+            \n[[files]]\npreserve = true\nfile = \"options.txt\" # player name in a comment: \"x\"\nhash = \"11\"\n\
+            \n[[files]]\nfile = \"mods/a.jar\"\nhash = \"22\"\n\
+            \n[[files]]\nfile = \"servers.dat\"\nhash = \"33\"\n";
+        assert_eq!(
+            parse_index_preserved(index),
+            ["config/a.toml", "options.txt"]
+        );
+        assert!(parse_index_preserved("hash-format = \"sha256\"\n").is_empty());
+    }
+
+    #[test]
+    fn index_url_sits_next_to_pack_toml() {
+        assert_eq!(
+            index_url("https://blockfield.pro/pack.toml", "index.toml"),
+            "https://blockfield.pro/index.toml"
+        );
     }
 
     #[test]
