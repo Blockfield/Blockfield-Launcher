@@ -15,11 +15,13 @@ On **Play**, the launcher validates or refreshes the Drasl session, prepares Jav
 runs the pinned packwiz installer, prepares the vanilla runtime and launches Minecraft with the
 account's player name, UUID and access token. The pack's `server` field, including
 `raknet;host:port`, passes unchanged as one `--quickPlayMultiplayer` argument and
-as `BLOCKFIELD_SERVER`. RakNet (`raknet;host:25566`, UDP) is the only login transport:
-the proxy refuses every login that did not arrive over RakNet and keeps TCP 25565 open
-only for status pings. The status/region path therefore strips `raknet;` and uses TCP 25565
-of the same host for SLP. The launcher does not select a transport; every connect address it
-ships or migrates uses the `raknet;` form. `VITE_SERVER_IP` is display-only text and may be a
+as `BLOCKFIELD_SERVER`. RakNet (`raknet;host:25566`, UDP) is the default login transport;
+the proxy also accepts TCP 25565 logins through the same gate and routes them to the
+Game. The status/region path therefore strips `raknet;` and uses TCP 25565
+of the same host for SLP. If the RakNet path is unreachable from the player (a pre-launch
+unconnected ping to the `raknet;` address gets no reply), the launcher hands the game TCP
+`host:25565` instead, remembers the fallback per server for 24 hours, then retries RakNet.
+`VITE_SERVER_IP` is display-only text and may be a
 plain host. The client mod completes authentication through
 Drasl; the Velocity plugin verifies the session before routing the player.
 

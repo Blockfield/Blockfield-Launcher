@@ -1227,6 +1227,31 @@ pub async fn launch_game(
     let quick_play = config.target(&game_server)?;
     // Dev build: another server, or none at all so the game opens on the title screen.
     let quick_play = crate::dev::server_override().unwrap_or(quick_play);
+    // TCP fallback (proxy#74 U3): the proxy routes TCP 25565 logins to the Game.
+    // A remembered RakNet failure (<24 h) skips the probe; otherwise one
+    // unconnected ping decides whether the RakNet path is usable from here.
+    let mut quick_play = quick_play;
+    let mut via_tcp_fallback = false;
+    if let Some(target) = quick_play.clone() {
+        let fallback_state = crate::tcp_fallback::FallbackState::load(&state.app_data_dir);
+        let now = crate::tcp_fallback::now_secs();
+        let resolved = crate::tcp_fallback::resolve_target(&target, &fallback_state, now);
+        if resolved != target {
+            quick_play = Some(resolved);
+            via_tcp_fallback = true;
+        } else if let Some((host, port)) = crate::tcp_fallback::raknet_endpoint(&target) {
+            if !crate::tcp_fallback::raknet_reachable(&host, port) {
+                log::warn!("RakNet path to {host}:{port} unreachable, using TCP fallback");
+                let mut updated = fallback_state;
+                updated.record(&host, now);
+                if let Err(error) = updated.save(&state.app_data_dir, now) {
+                    log::warn!("Cannot persist TCP fallback state: {error}");
+                }
+                quick_play = crate::tcp_fallback::tcp_target_for(&target).or(quick_play);
+                via_tcp_fallback = true;
+            }
+        }
+    }
 
     log::info!(
         "Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}, user={}",
@@ -1303,7 +1328,16 @@ pub async fn launch_game(
             );
         }
     }
-    emit_status(&app_handle, "launch", "Запуск игры", false);
+    emit_status(
+        &app_handle,
+        "launch",
+        if via_tcp_fallback {
+            "Запуск игры: вход по TCP"
+        } else {
+            "Запуск игры"
+        },
+        false,
+    );
     let log_dir = game_dir_path.join("logs");
     std::fs::create_dir_all(&log_dir).map_err(|e| format!("Cannot create log directory: {e}"))?;
     let output = std::fs::File::create(log_dir.join("launcher-game.log"))
