@@ -160,33 +160,43 @@ pub fn raknet_reachable(host: &str, port: u16) -> bool {
         Ok(_) => format!("[{host}]"),
         Err(_) => host.to_string(),
     };
-    let mut addrs = match format!("{host_part}:{port}").to_socket_addrs() {
-        Ok(addrs) => addrs,
-        Err(_) => return false,
-    };
-    let addr = match addrs.next() {
-        Some(addr) => addr,
-        None => return false,
-    };
-    let socket = match UdpSocket::bind("0.0.0.0:0") {
-        Ok(socket) => socket,
-        Err(_) => return false,
-    };
-    if socket.set_read_timeout(Some(PROBE_TIMEOUT)).is_err() {
-        return false;
+    match format!("{host_part}:{port}").to_socket_addrs() {
+        Ok(addrs) => probe_addrs(addrs),
+        Err(_) => false,
     }
+}
+
+/// Probe each resolved address in turn, binding the socket to that address's
+/// family (an IPv4 socket cannot send to an IPv6 address and vice versa).
+/// True on the first valid pong.
+fn probe_addrs(addrs: impl Iterator<Item = std::net::SocketAddr>) -> bool {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos() as i64);
     let packet = build_ping(nanos, nanos ^ 0x5f3759df);
-    if socket.send_to(&packet, addr).is_err() {
-        return false;
+    for addr in addrs {
+        let bind = if addr.is_ipv6() {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        };
+        let socket = match UdpSocket::bind(bind) {
+            Ok(socket) => socket,
+            Err(_) => continue,
+        };
+        if socket.set_read_timeout(Some(PROBE_TIMEOUT)).is_err() {
+            continue;
+        }
+        if socket.send_to(&packet, addr).is_err() {
+            continue;
+        }
+        let mut buf = [0u8; 1500];
+        match socket.recv_from(&mut buf) {
+            Ok((n, _)) if is_valid_pong(&buf[..n], nanos) => return true,
+            _ => continue,
+        }
     }
-    let mut buf = [0u8; 1500];
-    match socket.recv_from(&mut buf) {
-        Ok((n, _)) => is_valid_pong(&buf[..n], nanos),
-        Err(_) => false,
-    }
+    false
 }
 
 #[cfg(test)]
@@ -286,6 +296,59 @@ mod tests {
         assert!(!is_valid_pong(&wrong_magic, id));
         assert!(!is_valid_pong(&pong[..20], id));
         assert!(!is_valid_pong(&[], id));
+    }
+
+    #[test]
+    fn ipv6_loopback_responder_is_reachable() {
+        let responder = match UdpSocket::bind("[::1]:0") {
+            Ok(socket) => socket,
+            // No IPv6 loopback on this host; nothing to prove.
+            Err(_) => return,
+        };
+        let port = responder.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let mut buf = [0u8; 1500];
+            let (n, from) = responder.recv_from(&mut buf).unwrap();
+            let id = i64::from_be_bytes(buf[1..9].try_into().unwrap());
+            let mut pong = vec![0x1cu8];
+            pong.extend_from_slice(&id.to_be_bytes());
+            pong.extend_from_slice(&7i64.to_be_bytes());
+            pong.extend_from_slice(&RAKNET_MAGIC);
+            pong.extend_from_slice(&buf[..n.min(8)]);
+            responder.send_to(&pong, from).unwrap();
+        });
+        assert!(raknet_reachable("::1", port));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn ipv6_first_address_list_falls_through_to_ipv4() {
+        let responder = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = responder.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let mut buf = [0u8; 1500];
+            let (n, from) = responder.recv_from(&mut buf).unwrap();
+            let id = i64::from_be_bytes(buf[1..9].try_into().unwrap());
+            let mut pong = vec![0x1cu8];
+            pong.extend_from_slice(&id.to_be_bytes());
+            pong.extend_from_slice(&7i64.to_be_bytes());
+            pong.extend_from_slice(&RAKNET_MAGIC);
+            pong.extend_from_slice(&buf[..n.min(8)]);
+            responder.send_to(&pong, from).unwrap();
+        });
+        // Dead IPv6 entry first (a socket nobody listens on): probing only it
+        // would report the healthy IPv4 listener unreachable.
+        let closed_v6 = match UdpSocket::bind("[::1]:0") {
+            Ok(socket) => socket,
+            // No IPv6 on this host; nothing to prove.
+            Err(_) => return,
+        };
+        let closed_v6_port = closed_v6.local_addr().unwrap().port();
+        drop(closed_v6);
+        let dead_v6: std::net::SocketAddr = format!("[::1]:{closed_v6_port}").parse().unwrap();
+        let live_v4: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+        assert!(probe_addrs([dead_v6, live_v4].into_iter()));
+        handle.join().unwrap();
     }
 
     #[test]
