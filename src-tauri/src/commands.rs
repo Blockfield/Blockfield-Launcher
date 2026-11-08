@@ -1473,7 +1473,7 @@ fn select_pack_base_url(
 ) -> Result<String, String> {
     let url = runtime
         .filter(|v| !v.trim().is_empty())
-        .or(compiled)
+        .or(compiled.filter(|v| !v.trim().is_empty()))
         .ok_or_else(|| format!("{var} is required"))?;
     let url = url.trim().trim_end_matches('/').to_string();
     if !url.starts_with("https://") && !(cfg!(debug_assertions) && url.starts_with("http://")) {
@@ -2193,6 +2193,13 @@ mod tests {
             )
             .unwrap(),
             "https://blockfield.pro/workshop-pack",
+        );
+        // A baked-but-empty value counts as missing, so an unset repo var
+        // keeps naming the variable instead of failing the https check.
+        assert_eq!(
+            select_pack_base_url("VITE_BLOCKFIELD_WORKSHOP_PACK_URL", None, Some("  "))
+                .unwrap_err(),
+            "VITE_BLOCKFIELD_WORKSHOP_PACK_URL is required",
         );
     }
 
