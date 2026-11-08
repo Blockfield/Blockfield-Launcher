@@ -16,6 +16,7 @@ mod presence;
 mod rooms;
 mod skins;
 mod status;
+mod tcp_fallback;
 use tauri_plugin_deep_link::DeepLinkExt;
 mod updater;
 
