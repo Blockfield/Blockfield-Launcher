@@ -58,7 +58,7 @@ jobs:
             if [ "$t" = "$tree" ]; then tested=true; break; fi
           done
           if [ "$tested" != true ]; then
-            for id in $(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/standards.yml/runs?event=pull_request&branch=next&status=success&per_page=20" --jq '.workflow_runs[].id' || true); do
+            for id in $(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/standards.yml/runs?event=pull_request&branch=next&status=success&per_page=20" --jq ".workflow_runs[] | select(.head_repository.full_name == \"${GITHUB_REPOSITORY}\") | .id" || true); do
               if gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/artifacts?per_page=100" --jq '.artifacts[].name' 2>/dev/null | grep -qx "tested-tree-${tree}"; then tested=true; break; fi
             done
           fi
