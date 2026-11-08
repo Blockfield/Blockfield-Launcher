@@ -19,6 +19,7 @@ on:
 permissions:
   contents: read
   pull-requests: read # PR runs read base metadata only; no secrets are used
+  actions: read # same-tree lookup reads earlier runs and their artifacts
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   # PR pushes cancel superseded runs; pushes to main queue behind the running
@@ -46,6 +47,7 @@ jobs:
       - name: Check for green run of the same tree
         id: same
         if: github.event_name == 'push'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -121,15 +123,18 @@ jobs:
         run: just check
       # Records the exact tree this green run tested, so a main push that
       # merges an already-tested tree can skip the verify steps above.
+      # One matrix leg uploads: artifact names are unique per run, and the
+      # lookup only accepts a run whose every leg succeeded.
       - name: Record tested tree
         id: tree
-        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        if: runner.os == 'Linux' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+        shell: bash
         run: |
           tree=$(git rev-parse "HEAD^{tree}")
           echo "$tree" > tested-tree.txt
           echo "tree=$tree" >> "$GITHUB_OUTPUT"
       - name: Upload tested tree
-        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        if: runner.os == 'Linux' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tested-tree-${{ steps.tree.outputs.tree }}
