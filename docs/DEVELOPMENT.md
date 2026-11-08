@@ -254,6 +254,51 @@ Updater archives are signed with the existing Tauri key. The hosted pack provide
 
 Before releasing, update `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together, then run `pnpm version:check`. The signing secrets (`TAURI_PRIVATE_KEY`, `TAURI_KEY_PASSWORD`) and build variables remain in the existing GitHub environment named `dev`; its deployment policy must permit `main` and `launcher-v*` tags only. Tag builds also verify that the commit belongs to `main`. Publishing uses this repository’s `GITHUB_TOKEN`; no cross-repository token is needed.
 
+## Rollback of a bad launcher update
+
+The updater only moves forward: a client updates when `latest.json` carries a
+higher version than the installed one, never down. There is no downgrade path,
+so a rollback republishes the last-good code as a HIGHER version. Every client,
+whether on the bad or the good build, then updates forward onto good code.
+
+```
+just rollback --good 1.0.22 --bad 1.0.23 --new 1.0.24
+```
+
+The dry run prints the steps; the branch must be cut from `main` with its
+tree restored to the good tag, otherwise the merge keeps the bad code. End
+to end:
+
+1. `git switch -c rollback/launcher-v<new> origin/main`, then
+   `git restore --source=launcher-v<good> --staged --worktree -- . ':(exclude)justfile' ':(exclude)scripts/rollback-release.py' ':(exclude)scripts/test-rollback-release.py' ':(exclude)docs/DEVELOPMENT.md'` —
+   the tree now equals the good tag except the preserved rollback tooling;
+   everything else `main` gained after it, including the bad release, is
+   gone from the branch. The tooling must survive: the good tag predates it,
+   and a bare restore would delete `just rollback` itself mid-runbook.
+2. `just rollback --good <good> --bad <bad> --new <new> --apply` — refuses
+   unless the tree is at `<good>`, then bumps the three version files to
+   `<new>`.
+3. `pnpm version:check`, commit, push the branch, open a PR to `main` and
+   merge it after review. The rollback must land on `main`: the release
+   workflow only publishes tags whose commit belongs to `main`, and `main`
+   must stop carrying the bad code.
+4. On the updated `main`, `just rollback --good <good> --bad <bad> --new <new> --verify` —
+   refuses unless `main` differs from the good tag only in the version
+   files and the preserved rollback tooling (`justfile`,
+   `scripts/rollback-release.py`, `scripts/test-rollback-release.py`,
+   `docs/DEVELOPMENT.md`) — then `git tag launcher-v<new>` and push the tag. The tag
+   must equal the `package.json` version and the commit must belong to
+   `main` — the tag run checks both before it builds, signs and publishes.
+5. Download `latest.json` from the new release and confirm its `version` is
+   `<new>`; the `--latest` move points the update channel at it.
+
+Limits: clients stay on the bad build until the rollback release finishes, and
+the rollback version must stay higher than the bad one, or the updater ignores
+it. The planner rejects anything else than good < bad < new. Keep the bad tag
+and release in place for forensics; do not delete or reuse version numbers.
+`scripts/test-rollback-release.py` covers the ordering, the version bump and
+the updater behaviour against a mocked feed.
+
 The launcher tracks the game through preparation, running, and post-exit commands. Both launch
 buttons use that shared status, and the backend rejects overlapping launches. Opening the
 launcher again focuses its existing window. While a game session is active, closing the window

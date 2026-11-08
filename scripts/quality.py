@@ -453,7 +453,11 @@ def tests():
         run("go", "test", "-p", "1", "./...")
     if (ROOT / "Cargo.toml").is_file():
         run("cargo", "test", "--workspace", "--locked")
-    for script in ("scripts/test-prepare-updater.py", "scripts/test-toolchain.py"):
+    for script in (
+        "scripts/test-prepare-updater.py",
+        "scripts/test-rollback-release.py",
+        "scripts/test-toolchain.py",
+    ):
         if (ROOT / script).is_file():
             run("python", script)
 
