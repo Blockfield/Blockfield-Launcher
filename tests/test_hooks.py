@@ -2,6 +2,7 @@
 
 import os
 import importlib.util
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -17,6 +18,20 @@ launcher_quality = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher_quality)
 HQ_MOD = launcher_quality
 HQ_ROOT = ROOT
+
+
+def seed_fixture_cache(root):
+    """Copy the checkout's warm tool cache into a hook fixture repo.
+
+    The hook formats via pinned tools; a fixture with an empty cache
+    downloads them on every commit, so a transient egress stall fails the
+    commit with the hook output swallowed. CI warms the checkout cache in
+    `just setup` (before `just check`), so fixtures reuse it instead of
+    downloading. Cold checkouts skip seeding and download as before.
+    """
+    src = HQ_ROOT / ".cache" / "quality"
+    if src.is_dir():
+        shutil.copytree(src, root / ".cache" / "quality", dirs_exist_ok=True)
 
 
 class PreCommitHook(unittest.TestCase):
@@ -77,6 +92,7 @@ class PreCommitHook(unittest.TestCase):
                 (ROOT / ".githooks" / "pre-commit").read_bytes()
             )
             (root / ".githooks" / "pre-commit").chmod(0o755)
+            seed_fixture_cache(root)
 
             def git(*args):
                 return subprocess.run(
@@ -114,6 +130,78 @@ class PreCommitHook(unittest.TestCase):
                 ).returncode,
                 0,
             )
+
+    def test_commit_formats_staged_files_without_network(self):
+        # The hook fixture must not download tools: CI runners hit transient
+        # egress stalls and the commit fails with the hook stderr swallowed.
+        with tempfile.TemporaryDirectory(prefix="bf precommit ") as tmp:
+            root = Path(tmp)
+            for name in (
+                ".gitignore",
+                "justfile",
+                "scripts/quality.py",
+                "scripts/toolchain.py",
+            ):
+                src = ROOT / name
+                dst = root / name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(src.read_bytes())
+            (root / ".githooks").mkdir()
+            (root / ".githooks" / "pre-commit").write_bytes(
+                (ROOT / ".githooks" / "pre-commit").read_bytes()
+            )
+            (root / ".githooks" / "pre-commit").chmod(0o755)
+            seed_fixture_cache(root)
+            offline = dict(os.environ)
+            for var in (
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "ALL_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "all_proxy",
+                "NO_PROXY",
+                "no_proxy",
+            ):
+                offline.pop(var, None)
+            offline.update(
+                {
+                    "HTTP_PROXY": "http://127.0.0.1:9",
+                    "HTTPS_PROXY": "http://127.0.0.1:9",
+                    "ALL_PROXY": "http://127.0.0.1:9",
+                    "http_proxy": "http://127.0.0.1:9",
+                    "https_proxy": "http://127.0.0.1:9",
+                    "all_proxy": "http://127.0.0.1:9",
+                }
+            )
+
+            def git(*args):
+                try:
+                    return subprocess.run(
+                        ["git", *args],
+                        cwd=root,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                        env=offline,
+                    ).stdout
+                except subprocess.CalledProcessError as error:
+                    raise AssertionError(
+                        f"git {' '.join(args)} failed:\n"
+                        f"STDOUT:\n{error.stdout}\nSTDERR:\n{error.stderr}"
+                    ) from error
+
+            git("init", "--quiet")
+            git("config", "user.email", "hook-test@example.com")
+            git("config", "user.name", "hook-test")
+            git("config", "core.hooksPath", str(root / ".githooks"))
+            git("add", ".")
+            git("commit", "--quiet", "-m", "fixture")
+            (root / "probe.py").write_text("x=1\n", encoding="utf-8")
+            git("add", "probe.py")
+            git("commit", "--quiet", "-m", "probe")
+            self.assertNotEqual(git("show", "HEAD:probe.py"), "x=1\n")
 
     def test_wire_hooks_reports_already_wired_as_success(self):
         with tempfile.TemporaryDirectory(prefix="bf hooks ") as tmp:
@@ -202,6 +290,7 @@ class PreCommitHook(unittest.TestCase):
                 (HQ_ROOT / ".githooks" / "pre-commit").read_bytes()
             )
             (root / ".githooks" / "pre-commit").chmod(0o755)
+            seed_fixture_cache(root)
 
             def git(*args):
                 return subprocess.run(
