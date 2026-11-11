@@ -76,27 +76,42 @@ pub fn game_status(state: &LauncherAppState) -> GameStatus {
 /// Only plain https links are accepted — never a local path, a `file:`/
 /// `javascript:` URL or an option. The URL can come from remote launcher content.
 pub fn validate_open_url(url: &str) -> Result<(), String> {
+    // Case-sensitive: `HTTPS://` must stay refused and `Url` would lowercase it.
     if !url.starts_with("https://") || url.contains(char::is_whitespace) {
+        return Err(format!("Refusing to open {url}"));
+    }
+    let parsed = url::Url::parse(url).map_err(|_| format!("Refusing to open {url}"))?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() {
         return Err(format!("Refusing to open {url}"));
     }
     Ok(())
 }
 
+/// Windows launcher argv without a shell: the URL is one item, never parsed by cmd.exe.
+#[cfg(any(windows, test))]
+fn windows_open_argv(url: &str) -> (&'static str, [&'static str; 1], &str) {
+    ("rundll32", ["url.dll,FileProtocolHandler"], url)
+}
+
+#[cfg(windows)]
+fn open_url_command(url: &str) -> std::process::Command {
+    let (program, fixed, url) = windows_open_argv(url);
+    let mut command = launcher_core::host_env::command(program);
+    command.args(fixed);
+    command.arg(url);
+    command
+}
+
+#[cfg(not(windows))]
+fn open_url_command(url: &str) -> std::process::Command {
+    let mut command = launcher_core::host_env::command("xdg-open");
+    command.arg(url);
+    command
+}
+
 pub fn open_url(url: &str) -> Result<(), String> {
     validate_open_url(url)?;
-    #[cfg(windows)]
-    let mut command = {
-        // Empty title argument: `start` treats a lone quoted argument as the window title.
-        let mut command = launcher_core::host_env::command("cmd.exe");
-        command.args(["/D", "/S", "/C", "start", "", url]);
-        command
-    };
-    #[cfg(not(windows))]
-    let mut command = {
-        let mut command = launcher_core::host_env::command("xdg-open");
-        command.arg(url);
-        command
-    };
+    let mut command = open_url_command(url);
     command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -162,6 +177,37 @@ mod tests {
         ] {
             let err = validate_open_url(url).unwrap_err();
             assert_eq!(err, format!("Refusing to open {url}"), "{url:?}");
+        }
+    }
+
+    #[test]
+    fn open_url_allowlist_rejects_hostless_https() {
+        for url in ["https://", "https://?x=1", "https://#frag"] {
+            assert!(validate_open_url(url).is_err(), "{url:?}");
+        }
+    }
+
+    #[test]
+    fn open_url_shell_metachars_never_reach_a_shell() {
+        let evil = "https://example.com/redir?a=1&b=2\"|^evil";
+        validate_open_url(evil).unwrap();
+        // Windows argv is exact even on Linux: no cmd.exe, no /C, URL is one item.
+        let (program, fixed, url) = windows_open_argv(evil);
+        assert_eq!(program, "rundll32");
+        assert_eq!(fixed, ["url.dll,FileProtocolHandler"]);
+        assert_eq!(url, evil);
+        // Native command argv is exact too: one program, URL as a single arg.
+        let command = open_url_command(evil);
+        let args: Vec<_> = command.get_args().collect();
+        #[cfg(windows)]
+        {
+            assert_eq!(command.get_program(), std::ffi::OsStr::new("rundll32"));
+            assert_eq!(args, ["url.dll,FileProtocolHandler", evil]);
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(command.get_program(), std::ffi::OsStr::new("xdg-open"));
+            assert_eq!(args, [std::ffi::OsStr::new(evil)]);
         }
     }
 

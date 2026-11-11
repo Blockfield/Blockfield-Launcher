@@ -9,11 +9,9 @@ use blockfield_native::{AppWindow, fixtures, wire_app};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use slint::ComponentHandle;
 
-// The testing backend is process-global: a second init in the same test binary panics.
-static BACKEND: std::sync::Once = std::sync::Once::new();
-
 fn given_chrome() -> AppWindow {
-    BACKEND.call_once(i_slint_backend_testing::init_no_event_loop);
+    // Slint's platform is per thread and libtest runs each test on its own thread, so every test installs it.
+    i_slint_backend_testing::init_no_event_loop();
     let app = AppWindow::new().expect("test window");
     wire_app(&app, blockfield_native::backend::Backend::Fixtures).expect("wire test app");
     fixtures::apply_main(&app, "main", "default").expect("main fixtures");
