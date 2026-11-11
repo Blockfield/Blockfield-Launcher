@@ -166,6 +166,8 @@ pub fn wire(app: &AppWindow, core: Core) {
                     Ok(value) => {
                         apply_response(&app, &value);
                         app.global::<SettingsForm>().set_blocked(false);
+                        // Profile switch settled: a waiting invite retries now.
+                        crate::bridge::retry_pending_join(&app);
                     }
                     Err(error) => {
                         let friendly = friendly_error(&error, ErrorContext::SelectProfile);
@@ -174,6 +176,7 @@ pub fn wire(app: &AppWindow, core: Core) {
                         app.global::<SettingsForm>()
                             .set_raw_error(friendly.raw.into());
                         app.global::<SettingsForm>().set_blocked(false);
+                        crate::bridge::retry_pending_join(&app);
                     }
                 });
             });

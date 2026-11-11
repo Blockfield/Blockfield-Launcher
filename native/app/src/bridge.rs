@@ -84,11 +84,16 @@ pub fn retry_pending_join(app: &AppWindow) {
     let Some(id) = auto_join_target(app) else {
         return;
     };
-    let mut handled = handled().lock().unwrap();
-    if handled.as_deref() == Some(id.as_str()) {
-        return;
+    // Decide under the lock, then drop it before invoke_join: the production
+    // on_join (main_ops::attach) synchronously calls note_join on the same
+    // thread, which would deadlock on the reentrant lock.
+    {
+        let mut handled = handled().lock().unwrap();
+        if handled.as_deref() == Some(id.as_str()) {
+            return;
+        }
+        *handled = Some(id.to_string());
     }
-    *handled = Some(id.to_string());
     app.invoke_join(id);
 }
 
@@ -121,6 +126,12 @@ fn auto_join_target(app: &AppWindow) -> Option<slint::SharedString> {
         return None;
     }
     if data.launching {
+        return None;
+    }
+    // A profile switch rejects the join-triggered deploy in main_ops::attach,
+    // so wait for the flags to clear (settings profile completion retries)
+    // instead of consuming the one-shot.
+    if data.profile_changing || data.profile_blocked {
         return None;
     }
     match data.phase.as_str() {
@@ -344,6 +355,67 @@ mod tests {
         assert_eq!(*fired.borrow(), 3);
         reset_invite_state();
     }
+    #[test]
+    fn auto_join_releases_lock_before_invoke() {
+        // Regression: retry_pending_join held `handled` across invoke_join while
+        // the production on_join (main_ops::attach) synchronously calls note_join
+        // on the same thread -> UI-thread deadlock. The helper thread below takes
+        // the same blocking lock; on the old code it hangs until the timeout and
+        // the test fails instead of hanging CI.
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        app.on_join(|id| {
+            let (done, wait) = std::sync::mpsc::channel::<()>();
+            std::thread::spawn(move || {
+                let _guard = super::handled().lock().unwrap();
+                let _ = done.send(());
+            });
+            wait.recv_timeout(std::time::Duration::from_secs(2))
+                .expect("deadlock: handled lock held during invoke_join");
+            super::note_join(&id);
+        });
+        reset_invite_state();
+        ready_idle(&app);
+        set_pending(Some("room-deadlock"));
+        super::retry_pending_join(&app);
+        reset_invite_state();
+    }
+
+    #[test]
+    fn profile_change_blocks_auto_join_until_clear() {
+        // Readiness must also require !profile_changing && !profile_blocked:
+        // joining while either flag is set consumes the one-shot while the
+        // deploy guard (main_ops::attach) rejects the deploy, losing the invite.
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        let joined = Rc::new(RefCell::new(Vec::<String>::new()));
+        let recorded = joined.clone();
+        app.on_join(move |id| recorded.borrow_mut().push(id.to_string()));
+        reset_invite_state();
+        ready_idle(&app);
+        set_pending(Some("room-profile"));
+        let mut data = app.get_main_data();
+        data.profile_changing = true;
+        app.set_main_data(data);
+        super::retry_pending_join(&app);
+        assert!(joined.borrow().is_empty());
+        let mut data = app.get_main_data();
+        data.profile_changing = false;
+        data.profile_blocked = true;
+        app.set_main_data(data);
+        super::retry_pending_join(&app);
+        assert!(joined.borrow().is_empty());
+        // Flags cleared: the waiting invite joins without a new event.
+        let mut data = app.get_main_data();
+        data.profile_blocked = false;
+        app.set_main_data(data);
+        super::retry_pending_join(&app);
+        assert_eq!(*joined.borrow(), ["room-profile"]);
+        reset_invite_state();
+    }
+
     #[test]
     fn progress_handles_unknown_totals_overflow_and_completion() {
         assert_eq!(super::percent(0, 0), -1);
