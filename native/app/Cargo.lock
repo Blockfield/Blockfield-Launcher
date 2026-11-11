@@ -460,7 +460,6 @@ dependencies = [
  "launcher-app",
  "launcher-core",
  "launcher-net",
- "libc",
  "minisign-verify",
  "reqwest",
  "semver",
@@ -473,6 +472,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "windows-sys 0.61.2",
+ "zbus",
 ]
 
 [[package]]

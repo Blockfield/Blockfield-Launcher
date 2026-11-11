@@ -34,11 +34,15 @@ skin3d = { path = "../skin3d", features = ["slint"] }
 # e2e golden PNG decode/encode. Same spec as skin3d's: no new code to compile.
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
+[target.'cfg(target_os = "linux")'.dependencies]
+# D-Bus session-bus single-instance election, same mechanism as the shipping
+# launcher's tauri-plugin-single-instance (name ownership + method call).
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_Threading"] }
+# Same Win32 APIs as tauri-plugin-single-instance: named mutex + hidden window
+# + WM_COPYDATA. No SID/pipe code.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 # Headless Slint testing backend for Layer 1 (ElementHandle tree driving).

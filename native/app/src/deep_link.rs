@@ -24,28 +24,30 @@ fn desktop_file_name() -> &'static str {
     }
 }
 
-/// Escape one `Exec` argument per the desktop-entry spec: a literal `%`
-/// becomes `%%`, every other reserved character takes a backslash. Field
-/// codes (`%U` etc.) are appended by the caller, never escaped here.
-fn escape_exec_arg(arg: &str) -> String {
-    let mut out = String::with_capacity(arg.len());
+/// Quote one `Exec` argument per the desktop-entry spec: enclose it in double
+/// quotes and escape `"`, '`', `$` and `\` with a backslash; a literal `%`
+/// becomes `%%`. Field codes (`%U` etc.) are appended by the caller, never
+/// quoted here.
+fn quote_exec_arg(arg: &str) -> String {
+    let mut out = String::with_capacity(arg.len() + 2);
+    out.push('"');
     for ch in arg.chars() {
         match ch {
-            '%' => out.push_str("%%"),
-            ' ' | '\t' | '\n' | '"' | '\'' | '\\' | '>' | '<' | '~' | '|' | '&' | ';' | '*'
-            | '?' | '#' | '(' | ')' | '`' => {
+            '"' | '`' | '$' | '\\' => {
                 out.push('\\');
                 out.push(ch);
             }
+            '%' => out.push_str("%%"),
             _ => out.push(ch),
         }
     }
+    out.push('"');
     out
 }
 
 /// Linux desktop entry: `Exec` is the current binary, `%U` receives the URL.
 pub fn desktop_entry(exec: &str) -> String {
-    let escaped = escape_exec_arg(exec);
+    let quoted = quote_exec_arg(exec);
     let mime = schemes()
         .iter()
         .map(|scheme| format!("x-scheme-handler/{scheme}"))
@@ -56,7 +58,7 @@ pub fn desktop_entry(exec: &str) -> String {
          Type=Application\n\
          Name=Blockfield Launcher\n\
          Comment=Blockfield game launcher\n\
-         Exec={escaped} %U\n\
+         Exec={quoted} %U\n\
          Terminal=false\n\
          Categories=Game;\n\
          MimeType={mime};\n"
@@ -182,7 +184,7 @@ mod tests {
     #[test]
     fn desktop_entry_advertises_both_handlers() {
         let entry = desktop_entry("/opt/blockfield/blockfield-launcher");
-        assert!(entry.contains("Exec=/opt/blockfield/blockfield-launcher %U"));
+        assert!(entry.contains("Exec=\"/opt/blockfield/blockfield-launcher\" %U"));
         for scheme in schemes() {
             assert!(entry.contains(&format!("x-scheme-handler/{scheme}")));
         }
@@ -197,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_entry_escapes_reserved_exec_chars() {
+    fn desktop_entry_quotes_exec_per_spec() {
         let line = |exec: &str| {
             desktop_entry(exec)
                 .lines()
@@ -205,19 +207,20 @@ mod tests {
                 .unwrap()
                 .to_string()
         };
+        // Path with spaces, quotes and %: quoted, with \" and %% inside.
         assert_eq!(
-            line("/opt/100% ready/launcher;v2"),
-            "/opt/100%%\\ ready/launcher\\;v2 %U"
+            line("/opt/100% ready/la\"uncher"),
+            "\"/opt/100%% ready/la\\\"uncher\" %U"
         );
         assert_eq!(
             line("/opt/dir with spaces/launcher"),
-            "/opt/dir\\ with\\ spaces/launcher %U"
+            "\"/opt/dir with spaces/launcher\" %U"
         );
-        assert_eq!(line("/opt/a\"b\\c"), "/opt/a\\\"b\\\\c %U");
-        // A plain path stays untouched, and %U keeps its field-code meaning.
+        assert_eq!(line("/opt/a\"b\\c`d$e"), "\"/opt/a\\\"b\\\\c\\`d\\$e\" %U");
+        // A plain path is quoted as well, and %U keeps its field-code meaning.
         assert_eq!(
             line("/opt/blockfield/launcher"),
-            "/opt/blockfield/launcher %U"
+            "\"/opt/blockfield/launcher\" %U"
         );
     }
 
