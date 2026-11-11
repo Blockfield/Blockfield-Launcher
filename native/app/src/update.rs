@@ -16,11 +16,27 @@ use launcher_app::{
     ops::{install, launch, pack_check},
     rooms::PendingRoom,
 };
+use launcher_core::errors::{ErrorContext, friendly_error};
 use launcher_net::minecraft;
 use slint::{ComponentHandle, ModelRc, VecModel};
 use tokio::runtime::Handle;
 
-use crate::{AppWindow, UpdateLogLine};
+use crate::{AppWindow, LauncherUpdateData, UpdateData, UpdateLogLine};
+
+/// Tauri `ErrorDetail` parity: the panel shows the friendly message, the raw
+/// backend text stays behind the "Подробности" spoiler. User-facing notes
+/// (cancel, busy guards) have no raw and keep `error_raw` empty.
+fn set_update_error(data: &mut UpdateData, raw: String, context: ErrorContext) {
+    let friendly = friendly_error(&raw, context);
+    data.error = friendly.message.into();
+    data.error_raw = friendly.raw.into();
+}
+
+fn set_panel_error(data: &mut LauncherUpdateData, raw: String) {
+    let friendly = friendly_error(&raw, ErrorContext::LauncherUpdate);
+    data.error = friendly.message.into();
+    data.error_raw = friendly.raw.into();
+}
 
 fn log_line(ts: &str, msg: &str, tone: i32) -> UpdateLogLine {
     UpdateLogLine {
@@ -52,6 +68,7 @@ pub fn attach_fixtures(app: &AppWindow) {
             data.can_cancel = false;
             data.progress = 0.0;
             data.error = "".into();
+            data.error_raw = "".into();
             data.launching = false;
             data.step0 = 1;
             data.step1 = 0;
@@ -75,6 +92,7 @@ pub fn attach_fixtures(app: &AppWindow) {
             data.phase = "error".into();
             data.can_cancel = false;
             data.error = "Загрузка отменена".into();
+            data.error_raw = "".into();
             data.log = log(&[("12:00:02", "Download cancelled by operator.", 2)]);
             app.set_update_data(data);
         }
@@ -270,7 +288,7 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
                         }
                         Err(error) => {
                             data.phase = "error".into();
-                            data.error = error.into();
+                            set_update_error(&mut data, error, ErrorContext::Launch);
                         }
                     }
                     app.set_update_data(data);
@@ -341,6 +359,7 @@ fn on_launcher_check(
         let mut data = app.get_launcher_update_data();
         data.phase = "error".into();
         data.error = "Обновления доступны в установленной release-версии лаунчера".into();
+        data.error_raw = "".into();
         app.set_launcher_update_data(data);
         return;
     }
@@ -350,6 +369,7 @@ fn on_launcher_check(
     let mut data = app.get_launcher_update_data();
     data.phase = "checking".into();
     data.error = "".into();
+    data.error_raw = "".into();
     data.current_version = launcher_version().into();
     app.set_launcher_update_data(data);
     let weak = weak.clone();
@@ -376,7 +396,7 @@ fn on_launcher_check(
                 }
                 Err(error) => {
                     data.phase = "error".into();
-                    data.error = error.into();
+                    set_panel_error(&mut data, error);
                 }
             }
             app.set_launcher_update_data(data);
@@ -398,6 +418,7 @@ fn on_launcher_install(
         let mut data = app.get_launcher_update_data();
         data.phase = "error".into();
         data.error = "Автоматические обновления недоступны в DEV-версии лаунчера".into();
+        data.error_raw = "".into();
         app.set_launcher_update_data(data);
         return;
     }
@@ -413,6 +434,7 @@ fn on_launcher_install(
         let mut data = app.get_launcher_update_data();
         data.phase = "error".into();
         data.error = "Закройте игру перед обновлением лаунчера".into();
+        data.error_raw = "".into();
         app.set_launcher_update_data(data);
         return;
     }
@@ -422,6 +444,7 @@ fn on_launcher_install(
     let mut data = app.get_launcher_update_data();
     data.phase = "downloading".into();
     data.error = "".into();
+    data.error_raw = "".into();
     data.downloaded = "".into();
     data.total = "".into();
     data.has_total = false;
@@ -497,7 +520,7 @@ fn on_launcher_install(
                 }
                 Err(error) => {
                     data.phase = "error".into();
-                    data.error = error.into();
+                    set_panel_error(&mut data, error);
                 }
             }
             app.set_launcher_update_data(data);
@@ -523,12 +546,14 @@ fn on_launcher_restart(
         let mut data = app.get_launcher_update_data();
         data.phase = "error".into();
         data.error = "Закройте игру перед перезапуском лаунчера".into();
+        data.error_raw = "".into();
         app.set_launcher_update_data(data);
         return;
     }
     let mut data = app.get_launcher_update_data();
     data.phase = "restarting".into();
     data.error = "".into();
+    data.error_raw = "".into();
     app.set_launcher_update_data(data);
     // Restart the pre-replace path captured at install time: after the
     // atomic replace `current_exe()` is the deleted inode.
@@ -541,7 +566,7 @@ fn on_launcher_restart(
         Err(error) => {
             let mut data = app.get_launcher_update_data();
             data.phase = "error".into();
-            data.error = error.into();
+            set_panel_error(&mut data, error);
             app.set_launcher_update_data(data);
         }
     }
@@ -566,6 +591,7 @@ fn reset_for_run(app: &AppWindow) {
     data.can_cancel = false;
     data.progress = 0.0;
     data.error = "".into();
+    data.error_raw = "".into();
     data.launching = false;
     data.step0 = 1;
     data.step1 = 0;
@@ -710,14 +736,14 @@ fn apply_retry_outcome(app: &AppWindow, outcome: RetryOutcome) {
         RetryOutcome::CheckFailed(error) => {
             let line = format!("ERROR: Failed to fetch manifest — {error}");
             data.phase = "error".into();
-            data.error = error.into();
+            set_update_error(&mut data, error, ErrorContext::ModpackCheck);
             data.step0 = 1;
             data.log = log(&[(ts.as_str(), line.as_str(), 3)]);
         }
         RetryOutcome::DownloadFailed(error) => {
             let line = format!("ERROR: Download failed — {error}");
             data.phase = "error".into();
-            data.error = error.into();
+            set_update_error(&mut data, error, ErrorContext::ModpackDownload);
             data.step0 = 2;
             data.step1 = 1;
             data.log = log(&[(ts.as_str(), line.as_str(), 3)]);
@@ -1713,6 +1739,7 @@ fn set_panel_phase(data: &mut crate::LauncherUpdateData, phase: &str) {
     data.phase = phase.into();
     if phase != "error" {
         data.error = "".into();
+        data.error_raw = "".into();
     }
 }
 
@@ -1751,7 +1778,9 @@ mod tests {
         );
         let data = app.get_update_data();
         assert_eq!(data.phase, "error");
-        assert_eq!(data.error, "manifest down");
+        // Tauri ErrorDetail: friendly message up front, raw behind the spoiler.
+        assert_eq!(data.error, "Не удалось проверить обновление модпака.");
+        assert_eq!(data.error_raw, "manifest down");
         assert_eq!(data.step0, 1);
         super::apply_retry_outcome(
             &app,
@@ -1759,7 +1788,8 @@ mod tests {
         );
         let data = app.get_update_data();
         assert_eq!(data.phase, "error");
-        assert_eq!(data.error, "Загрузка отменена");
+        assert_eq!(data.error, "Не удалось скачать обновление модпака.");
+        assert_eq!(data.error_raw, "Загрузка отменена");
         assert_eq!((data.step0, data.step1), (2, 1));
         assert_eq!(
             super::host_of("https://mirror.blockfield.pro/pack"),
