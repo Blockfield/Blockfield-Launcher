@@ -16,6 +16,7 @@ pub fn schemes() -> Vec<String> {
     vec!["blockfield".to_string(), discord_scheme()]
 }
 
+#[cfg(target_os = "linux")]
 fn desktop_file_name() -> &'static str {
     if launcher_core::dev::is_dev_build() {
         "blockfield-launcher-dev.desktop"
@@ -24,25 +25,27 @@ fn desktop_file_name() -> &'static str {
     }
 }
 
-/// Quote one `Exec` argument per the desktop-entry spec: enclose it in double
-/// quotes and escape `"`, '`', `$` and `\` with a backslash; a literal `%`
-/// becomes `%%`. Field codes (`%U` etc.) are appended by the caller, never
-/// quoted here.
+/// Quote one `Exec` argument per the desktop-entry spec, in the order the spec
+/// decodes: first the `Exec` parsing layer (enclose in double quotes, escape
+/// `"`, '`', `$` and `\` with a backslash, `%` becomes `%%`), then the
+/// string-value layer, where every backslash from the first layer is doubled
+/// (value escapes are applied first on decode). Field codes (`%U` etc.) are
+/// appended by the caller, never quoted here.
 fn quote_exec_arg(arg: &str) -> String {
-    let mut out = String::with_capacity(arg.len() + 2);
-    out.push('"');
+    let mut quoted = String::with_capacity(arg.len() + 2);
+    quoted.push('"');
     for ch in arg.chars() {
         match ch {
             '"' | '`' | '$' | '\\' => {
-                out.push('\\');
-                out.push(ch);
+                quoted.push('\\');
+                quoted.push(ch);
             }
-            '%' => out.push_str("%%"),
-            _ => out.push(ch),
+            '%' => quoted.push_str("%%"),
+            _ => quoted.push(ch),
         }
     }
-    out.push('"');
-    out
+    quoted.push('"');
+    quoted.replace('\\', "\\\\")
 }
 
 /// Linux desktop entry: `Exec` is the current binary, `%U` receives the URL.
@@ -207,21 +210,87 @@ mod tests {
                 .unwrap()
                 .to_string()
         };
-        // Path with spaces, quotes and %: quoted, with \" and %% inside.
+        // Both escaping layers: the Exec quoting backslash is itself doubled
+        // for the string-value layer, so `"` encodes as `\\"` in the file.
         assert_eq!(
             line("/opt/100% ready/la\"uncher"),
-            "\"/opt/100%% ready/la\\\"uncher\" %U"
+            "\"/opt/100%% ready/la\\\\\"uncher\" %U"
         );
         assert_eq!(
             line("/opt/dir with spaces/launcher"),
             "\"/opt/dir with spaces/launcher\" %U"
         );
-        assert_eq!(line("/opt/a\"b\\c`d$e"), "\"/opt/a\\\"b\\\\c\\`d\\$e\" %U");
+        assert_eq!(
+            line("/opt/a\"b\\c`d$e"),
+            "\"/opt/a\\\\\"b\\\\\\\\c\\\\`d\\\\$e\" %U"
+        );
         // A plain path is quoted as well, and %U keeps its field-code meaning.
         assert_eq!(
             line("/opt/blockfield/launcher"),
             "\"/opt/blockfield/launcher\" %U"
         );
+    }
+
+    /// Tiny spec-following inverse of `quote_exec_arg`, test-only: strips the
+    /// caller's ` %U`, undoes the string-value layer (`\\` -> `\`, applied
+    /// first on decode), then undoes the Exec layer (quotes, `\`-escapes,
+    /// `%%` -> `%`).
+    fn unescape_exec_value(exec_value: &str) -> String {
+        let quoted = exec_value.strip_suffix(" %U").unwrap_or(exec_value);
+        let mut layer1 = String::with_capacity(quoted.len());
+        let mut chars = quoted.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                if let Some(next) = chars.next() {
+                    layer1.push(next);
+                }
+            } else {
+                layer1.push(ch);
+            }
+        }
+        let inner = layer1.strip_prefix('"').unwrap_or(&layer1);
+        let inner = inner.strip_suffix('"').unwrap_or(inner);
+        let mut out = String::with_capacity(inner.len());
+        let mut chars = inner.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            } else if ch == '%' {
+                match chars.next() {
+                    Some('%') | None => out.push('%'),
+                    Some(other) => {
+                        out.push('%');
+                        out.push(other);
+                    }
+                }
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn desktop_entry_exec_round_trips_reserved_chars() {
+        for path in [
+            "/opt/blockfield/launcher",
+            "/opt/dir with spaces/launcher",
+            "/opt/100% ready/la\"uncher",
+            "/opt/a\"b\\c`d$e",
+            "/tmp/`back`-$quote\"-\\-%",
+        ] {
+            let exec_value = desktop_entry(path)
+                .lines()
+                .find_map(|line| line.strip_prefix("Exec=").map(str::to_string))
+                .unwrap();
+            assert_eq!(
+                unescape_exec_value(&exec_value),
+                path,
+                "round-trip {path:?}"
+            );
+        }
     }
 
     #[test]

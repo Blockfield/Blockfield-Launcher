@@ -13,6 +13,7 @@
 use slint::ComponentHandle;
 
 pub const MAX_PAYLOAD: usize = 64 * 1024;
+#[cfg(target_os = "linux")]
 const DBUS_INTERFACE: &str = "org.SingleInstance.DBus";
 #[cfg(windows)]
 const WMCOPYDATA_SINGLE_INSTANCE_DATA: usize = 1542;
@@ -266,10 +267,7 @@ mod imp {
     fn last_error(context: &str) -> std::io::Error {
         // SAFETY: GetLastError reads thread-local Win32 state.
         let code = unsafe { GetLastError() };
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("{context}: Win32 error {code}"),
-        )
+        std::io::Error::other(format!("{context}: Win32 error {code}"))
     }
 
     fn parse_copydata_payload(ptr: *const u8, len: usize) -> Option<(Vec<String>, String)> {
@@ -470,12 +468,6 @@ mod imp {
             SetWindowLongPtrW(hwnd, GWL_STYLE, (WS_VISIBLE | WS_POPUP) as isize);
             hwnd
         }
-    }
-
-    pub fn encode_wide(string: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
-        std::os::windows::prelude::OsStrExt::encode_wide(string.as_ref())
-            .chain(std::iter::once(0))
-            .collect()
     }
 
     #[cfg(target_pointer_width = "32")]
