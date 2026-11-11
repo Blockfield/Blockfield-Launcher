@@ -45,6 +45,7 @@ export type SettingsTab = 'general' | 'runtime' | 'commands' | 'skin' | 'launche
 
 export function SettingsScreen({
   username,
+  playerUuid = '',
   canWorkshop = false,
   profile: initialProfile = 'game',
   profileBlocked = false,
@@ -55,6 +56,7 @@ export function SettingsScreen({
   onWorkshopServerSaved,
 }: {
   username: string
+  playerUuid?: string
   canWorkshop?: boolean
   profile?: 'game' | 'workshop'
   profileBlocked?: boolean
@@ -256,6 +258,7 @@ export function SettingsScreen({
         skinPath: skinPath || null,
         capePath: capePath || null,
         slim,
+        playerUuid: playerUuid || null,
       })
       forgetFace(username)
       setSkinMessage(t('settings.skinUploaded'))
@@ -266,7 +269,7 @@ export function SettingsScreen({
     } finally {
       setSkinBusy(false)
     }
-  }, [username, skinPath, capePath, slim, t])
+  }, [username, playerUuid, skinPath, capePath, slim, t])
 
   const handleAccount = useCallback(
     async (command: 'logout' | 'change_password') => {

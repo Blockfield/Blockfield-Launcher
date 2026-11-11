@@ -86,6 +86,7 @@ export function friendlyError(raw: unknown, context: ErrorContext): FriendlyErro
     'Профиль изменился. Откройте настройки заново.',
     'Профиль изменился. Повторите проверку файлов.',
     'Профиль изменён. Повторите проверку.',
+    'Аккаунт сменился до загрузки, скин не отправлен. Выберите его ещё раз.',
   ]
   const profileError = profileErrors.find((message) => text.includes(message))
   if (profileError) return { message: profileError, raw: text }
