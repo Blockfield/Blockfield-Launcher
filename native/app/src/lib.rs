@@ -45,7 +45,9 @@ pub fn support_url() -> String {
 /// covers the click-to-event gap before the first status arrives.
 pub fn hide_instead_of_quit(app: &AppWindow) -> bool {
     let data = app.get_main_data();
-    if data.phase == "idle" && !data.launching {
+    // The update screen launches on its own (update_data.launching) before any
+    // main-screen status arrives, so both screens count as busy.
+    if data.phase == "idle" && !data.launching && !app.get_update_data().launching {
         return false;
     }
     let _ = app.hide();
