@@ -45,7 +45,18 @@ fn quote_exec_arg(arg: &str) -> String {
         }
     }
     quoted.push('"');
-    quoted.replace('\\', "\\\\")
+    // String-value layer: newline/tab/CR would otherwise break the key=value line.
+    let mut value = String::with_capacity(quoted.len());
+    for ch in quoted.chars() {
+        match ch {
+            '\\' => value.push_str("\\\\"),
+            '\n' => value.push_str("\\n"),
+            '\t' => value.push_str("\\t"),
+            '\r' => value.push_str("\\r"),
+            _ => value.push(ch),
+        }
+    }
+    value
 }
 
 /// Linux desktop entry: `Exec` is the current binary, `%U` receives the URL.
@@ -232,7 +243,7 @@ mod tests {
     }
 
     /// Tiny spec-following inverse of `quote_exec_arg`, test-only: strips the
-    /// caller's ` %U`, undoes the string-value layer (`\\` -> `\`, applied
+    /// caller's ` %U`, undoes the string-value layer (`\\`, `\n`, `\t`, `\r`, `\s`, applied
     /// first on decode), then undoes the Exec layer (quotes, `\`-escapes,
     /// `%%` -> `%`).
     fn unescape_exec_value(exec_value: &str) -> String {
@@ -241,8 +252,13 @@ mod tests {
         let mut chars = quoted.chars();
         while let Some(ch) = chars.next() {
             if ch == '\\' {
-                if let Some(next) = chars.next() {
-                    layer1.push(next);
+                match chars.next() {
+                    Some('n') => layer1.push('\n'),
+                    Some('t') => layer1.push('\t'),
+                    Some('r') => layer1.push('\r'),
+                    Some('s') => layer1.push(' '),
+                    Some(next) => layer1.push(next),
+                    None => {}
                 }
             } else {
                 layer1.push(ch);
@@ -280,8 +296,15 @@ mod tests {
             "/opt/100% ready/la\"uncher",
             "/opt/a\"b\\c`d$e",
             "/tmp/`back`-$quote\"-\\-%",
+            "/home/u/new\nline/\ttab\r/launcher",
         ] {
-            let exec_value = desktop_entry(path)
+            let entry = desktop_entry(path);
+            assert!(
+                entry.lines().filter(|l| l.starts_with("Exec=")).count() == 1
+                    && !entry.contains("\nline"),
+                "control chars must not split the entry: {path:?}"
+            );
+            let exec_value = entry
                 .lines()
                 .find_map(|line| line.strip_prefix("Exec=").map(str::to_string))
                 .unwrap();
