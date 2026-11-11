@@ -130,8 +130,12 @@ fn auto_join_target(app: &AppWindow) -> Option<slint::SharedString> {
     }
     // A profile switch rejects the join-triggered deploy in main_ops::attach,
     // so wait for the flags to clear (settings profile completion retries)
-    // instead of consuming the one-shot.
-    if data.profile_changing || data.profile_blocked {
+    // instead of consuming the one-shot. SettingsForm.blocked is the flag the
+    // async switch in settings_tabs::on_profile actually sets.
+    if data.profile_changing
+        || data.profile_blocked
+        || app.global::<crate::SettingsForm>().get_blocked()
+    {
         return None;
     }
     match data.phase.as_str() {
