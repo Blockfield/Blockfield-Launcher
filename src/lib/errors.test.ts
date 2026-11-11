@@ -58,6 +58,15 @@ describe('settings validation errors', () => {
   })
 })
 
+describe('skin upload account switch', () => {
+  it('shows the abort message verbatim instead of a generic upload failure', () => {
+    const message = 'Аккаунт сменился до загрузки, скин не отправлен. Выберите его ещё раз.'
+    const result = friendlyError(message, 'skin-upload')
+    expect(result.message).toBe(message)
+    expect(result.raw).toBe(message)
+  })
+})
+
 describe('stale pack', () => {
   it('points a stale pack at Updates instead of a generic launch failure', () => {
     const result = friendlyError(
