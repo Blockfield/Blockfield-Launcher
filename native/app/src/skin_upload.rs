@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use launcher_app::LauncherAppState;
+use launcher_core::config::LauncherConfig;
 use launcher_core::errors::{ErrorContext, friendly_error};
 use slint::ComponentHandle;
 use tokio::runtime::Handle;
@@ -24,20 +25,33 @@ fn non_empty(path: String) -> Option<String> {
 }
 
 /// Off-UI-thread upload so the [`Handle`] spawn below stays thin.
+///
+/// `started` is the account snapshot taken when the user clicked upload.
+/// The task sends exactly those credentials and aborts when the active
+/// account changed meanwhile, so one account's skin can never land on
+/// another account's session.
 pub async fn perform_upload(
     state: &LauncherAppState,
+    started: &LauncherConfig,
     skin_path: Option<String>,
     cape_path: Option<String>,
     slim: bool,
 ) -> Result<launcher_net::skins::SkinUploadResult, String> {
-    let config = state.config.read().await.clone();
+    let current = state.config.read().await;
+    if current.player_uuid != started.player_uuid || current.api_token != started.api_token {
+        return Err(
+            "Account changed during skin upload — upload was not sent. Choose the skin again."
+                .to_string(),
+        );
+    }
+    drop(current);
     let base = state
         .pack
         .read()
         .await
         .as_ref()
         .and_then(|pack| pack.info.skins.clone());
-    launcher_net::skins::upload_skin(&config, base, skin_path, cape_path, slim).await
+    launcher_net::skins::upload_skin(started, base, skin_path, cape_path, slim).await
 }
 
 /// Wire the skin tab upload to the core runtime (same code path as
@@ -59,12 +73,15 @@ pub fn wire_upload(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
         app.set_skin_message("".into());
         app.set_skin_error("".into());
         app.set_skin_raw_error("".into());
+        // Snapshot the account on the UI thread: the queued task must use
+        // exactly these credentials, never whatever is active when it runs.
+        let started = state.config.blocking_read().clone();
         let state = state.clone();
         let face_handle = handle.clone();
         let spawn = handle.clone();
         let weak = weak.clone();
         spawn.spawn(async move {
-            let result = perform_upload(&state, skin, cape, slim).await;
+            let result = perform_upload(&state, &started, skin, cape, slim).await;
             let skins = state
                 .pack
                 .read()
@@ -103,7 +120,7 @@ mod tests {
     use super::*;
     use crate::runtime;
     use launcher_app::LauncherAppState;
-    use launcher_core::{config::LauncherConfig, game::GameState};
+    use launcher_core::game::GameState;
     use launcher_net::download::{Downloader, noop_guard_sink};
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
@@ -140,7 +157,9 @@ mod tests {
             events: Arc::new(|_| {}),
         };
         // Empty paths refuse before any network, even when authenticated.
-        match runtime.block_on(perform_upload(&authed(), None, None, false)) {
+        let authed = authed();
+        let started = authed.config.blocking_read().clone();
+        match runtime.block_on(perform_upload(&authed, &started, None, None, false)) {
             Err(err) => assert_eq!(err, "Choose a skin or cape PNG to upload"),
             Ok(_) => panic!("empty upload accepted"),
         }
@@ -164,12 +183,63 @@ mod tests {
         };
         match runtime.block_on(perform_upload(
             &anonymous,
+            &anonymous.config.blocking_read().clone(),
             Some(png.to_string_lossy().into_owned()),
             None,
             true,
         )) {
             Err(err) => assert!(err.contains("SESSION_EXPIRED"), "got: {err}"),
             Ok(_) => panic!("anonymous upload accepted"),
+        }
+        let _ = std::fs::remove_file(&png);
+        runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn account_switch_between_queue_and_run_aborts_without_upload() {
+        let runtime = runtime::new().expect("tokio runtime");
+        let downloader = Arc::new(Downloader::new(
+            Arc::new(|_| {}),
+            Arc::new(|_, _| {}),
+            noop_guard_sink(),
+        ));
+        let state = LauncherAppState {
+            cancel_flag: downloader.cancel_flag.clone(),
+            downloader,
+            config: RwLock::new(LauncherConfig {
+                api_token: "token-a".into(),
+                player_uuid: "uuid-a".into(),
+                ..LauncherConfig::default()
+            }),
+            app_data_dir: std::env::temp_dir(),
+            pack: RwLock::new(None),
+            game: Arc::new(GameState::new(|_| {})),
+            operation: Mutex::new(()),
+            events: Arc::new(|_| {}),
+        };
+        // Snapshot at click time, like `wire_upload` does on the UI thread.
+        let started = state.config.blocking_read().clone();
+        // The user switches account before the queued task runs.
+        *state.config.blocking_write() = LauncherConfig {
+            api_token: "token-b".into(),
+            player_uuid: "uuid-b".into(),
+            ..LauncherConfig::default()
+        };
+        // Abort precedes any file/network touch: even a valid PNG refuses.
+        let png = std::env::temp_dir().join(format!("skin-switch-{}.png", std::process::id()));
+        std::fs::write(
+            &png,
+            [b"\x89PNG\r\n\x1a\n".as_slice(), b"data".as_slice()].concat(),
+        )
+        .expect("temp png");
+        for paths in [
+            (None, None),
+            (Some(png.to_string_lossy().into_owned()), None),
+        ] {
+            match runtime.block_on(perform_upload(&state, &started, paths.0, paths.1, false)) {
+                Err(err) => assert!(err.contains("Account changed"), "got: {err}"),
+                Ok(_) => panic!("upload ran with another account's session"),
+            }
         }
         let _ = std::fs::remove_file(&png);
         runtime.shutdown_timeout(std::time::Duration::from_secs(2));
