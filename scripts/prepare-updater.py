@@ -75,8 +75,35 @@ def prepare_native(directory, version):
     )
 
 
+def _version_key(version):
+    # Numeric per dotted part, so 1.0.20 > 1.0.9 (plain string compare is wrong).
+    key = []
+    for part in str(version).split("."):
+        digits = ""
+        for char in part:
+            if not char.isdigit():
+                break
+            digits += char
+        key.append((int(digits) if digits else 0, part[len(digits) :]))
+    return key
+
+
+def native_manifest_newer(current_path, version):
+    # Concurrent tag releases share the rolling channel: only a strictly
+    # newer version may replace the published manifest, so an older release
+    # that finishes last cannot hide a newer update. Missing or unreadable
+    # manifest = nothing published yet, so publish.
+    try:
+        current = json.loads(Path(current_path).read_text()).get("version", "")
+    except (OSError, ValueError):
+        return True
+    return _version_key(version) > _version_key(current)
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 4 and sys.argv[1] == "native":
         prepare_native(Path(sys.argv[2]), sys.argv[3])
+    elif len(sys.argv) == 5 and sys.argv[1:3] == ["native", "newer-than"]:
+        sys.exit(0 if native_manifest_newer(Path(sys.argv[3]), sys.argv[4]) else 1)
     else:
         prepare(Path(sys.argv[1]), sys.argv[2])

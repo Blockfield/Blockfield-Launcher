@@ -176,5 +176,49 @@ class PrepareNativeUpdaterTests(unittest.TestCase):
         self.assertFalse((self.root / "latest-native.json").exists())
 
 
+class NativeManifestNewerTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def write_published(self, version):
+        path = self.root / "published-native.json"
+        path.write_text(json.dumps({"version": version, "platforms": {}}))
+        return path
+
+    def test_newer_version_publishes(self):
+        self.assertTrue(
+            updater.native_manifest_newer(self.write_published("1.0.20"), "1.0.21")
+        )
+
+    def test_same_version_skips(self):
+        self.assertFalse(
+            updater.native_manifest_newer(self.write_published("1.0.20"), "1.0.20")
+        )
+
+    def test_older_version_skips(self):
+        self.assertFalse(
+            updater.native_manifest_newer(self.write_published("1.0.21"), "1.0.20")
+        )
+
+    def test_numeric_not_lexicographic(self):
+        # 1.0.9 < 1.0.20 numerically, but "9" > "2" lexicographically.
+        self.assertTrue(
+            updater.native_manifest_newer(self.write_published("1.0.9"), "1.0.20")
+        )
+        self.assertFalse(
+            updater.native_manifest_newer(self.write_published("1.0.20"), "1.0.9")
+        )
+
+    def test_missing_or_broken_manifest_publishes(self):
+        self.assertTrue(
+            updater.native_manifest_newer(self.root / "absent.json", "1.0.20")
+        )
+        broken = self.root / "broken.json"
+        broken.write_text("not json")
+        self.assertTrue(updater.native_manifest_newer(broken, "1.0.20"))
+
+
 if __name__ == "__main__":
     unittest.main()

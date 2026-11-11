@@ -254,6 +254,12 @@ jobs:
     if: github.ref_type == 'tag'
     timeout-minutes: 10
     needs: [quality, secret-scan, tauri-release]
+    # Shared across tags: tag releases run concurrently, so serialize the
+    # rolling native-channel publication below. Never cancel: an older
+    # release must wait its turn, not drop the channel update.
+    concurrency:
+      group: launcher-native-channel
+      cancel-in-progress: false
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -314,10 +320,27 @@ jobs:
           # Tauri release is already published.
           if compgen -G "release/blockfield-native_*" > /dev/null; then
             just python scripts/prepare-updater.py native release "$version"
+            # The rolling channel must never become GitHub's latest release:
+            # the Tauri updater resolves /releases/latest, which would then
+            # 404 on latest.json. A prerelease is never selected as latest;
+            # --latest=false keeps it out even if that default ever changes.
             gh release view native-channel >/dev/null 2>&1 || \
               gh release create native-channel --title "Native channel" \
-                --notes "Rolling self-update channel for the native launcher; latest-native.json is replaced on every native release."
-            gh release upload native-channel release/latest-native.json --clobber
+                --notes "Rolling self-update channel for the native launcher; latest-native.json is replaced on every native release." \
+                --prerelease --latest=false
+            # Repair the flags on a channel release created before this guard.
+            gh release edit native-channel --prerelease --latest=false
+            # Tag releases run concurrently: an older release finishing last
+            # must not clobber a newer manifest, so upload only when the new
+            # version is strictly greater than the published one.
+            if gh release download native-channel --pattern latest-native.json \
+                --output release/published-native.json 2>/dev/null \
+              && ! just python scripts/prepare-updater.py native newer-than \
+                release/published-native.json "$version"; then
+              echo "native channel already newer: upload skipped"
+            else
+              gh release upload native-channel release/latest-native.json --clobber
+            fi
           else
             echo "no native artifacts: native channel untouched"
           fi
