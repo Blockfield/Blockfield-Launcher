@@ -162,7 +162,7 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         // pack is never touched, like the installer itself.
         let frozen = launcher_core::dev::freeze_pack();
         let repaired = if frozen {
-            Vec::new()
+            (Vec::<String>::new(), Vec::<String>::new())
         } else {
             let (repair_data, repair_dir) = (state.app_data_dir.clone(), game_dir.clone());
             tokio::task::spawn_blocking(move || {
@@ -171,6 +171,14 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
             .await
             .map_err(|e| format!("Pack repair task failed: {e}"))?
         };
+        let (repaired, repair_failed) = repaired;
+        if !repair_failed.is_empty() {
+            log::error!(
+                "[download_modpack] pack repair could not remove {} files: {}",
+                repair_failed.len(),
+                repair_failed.join(", ")
+            );
+        }
         if !repaired.is_empty() {
             // The dropped entries leave the launch check; without the marker an
             // interrupted install cannot pass as a complete pack.
