@@ -306,3 +306,88 @@ jobs:
           fi
           [ ! -f rn/announcement.json ] || gh release upload "$tag" rn/announcement.json --clobber
           gh release edit "$tag" --notes-file rn/release-notes.md --draft=false --latest
+
+  publish-native-channel:
+    name: Publish native channel
+    if: github.ref_type == 'tag'
+    timeout-minutes: 10
+    needs: [publish-launcher]
+    # Only this job shares a group across tags: it serializes publication
+    # of the rolling native-channel manifest. Never cancel: an older
+    # release must wait its turn, not drop the channel update. A cancelled
+    # run here can only delay the channel manifest; the tag's own Tauri
+    # draft is already published by publish-launcher, which shares nothing.
+    concurrency:
+      group: launcher-native-channel
+      cancel-in-progress: false
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12.15'
+      - name: Cache pinned project tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cache/quality
+            .dev/jdk
+          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
+      - run: python -I -X utf8 scripts/toolchain.py --ci
+      - name: Publish the rolling native-channel manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          tag="launcher-v$version"
+          mkdir -p release
+          gh release download "$tag" --dir release
+          # Native channel: the rolling `native-channel` release whose
+          # latest-native.json is replaced on every native release, so a
+          # later Tauri-only release can never hide a native update.
+          # Tauri-only releases never touch it. No native assets at all =
+          # skip; a partial Linux+Windows set fails loudly below.
+          if compgen -G "release/blockfield-native_*" > /dev/null; then
+            just python scripts/prepare-updater.py native release "$version"
+            # The rolling channel must never become GitHub's latest release:
+            # the Tauri updater resolves /releases/latest, which would then
+            # 404 on latest.json. A prerelease is never selected as latest;
+            # --latest=false keeps it out even if that default ever changes.
+            gh release view native-channel >/dev/null 2>&1 || \
+              gh release create native-channel --title "Native channel" \
+                --notes "Rolling self-update channel for the native launcher; latest-native.json is replaced on every native release." \
+                --prerelease --latest=false
+            # Repair the flags on a channel release created before this guard.
+            gh release edit native-channel --prerelease --latest=false
+            # Tag releases run concurrently: an older release finishing last
+            # must not clobber a newer manifest, so upload only when the new
+            # version is strictly greater than the published one. Only a
+            # missing channel release/asset means "nothing published yet";
+            # any other download failure fails the job instead of uploading
+            # blind over a possibly newer manifest.
+            if download_log=$(gh release download native-channel --pattern latest-native.json \
+                --output release/published-native.json 2>&1); then
+              if ! just python scripts/prepare-updater.py native newer-than \
+                release/published-native.json "$version"; then
+                echo "native channel already newer: upload skipped"
+              else
+                gh release upload native-channel release/latest-native.json --clobber
+              fi
+            elif just python scripts/prepare-updater.py native download-is-missing \
+              "$download_log"; then
+              echo "no published native manifest: uploading"
+              gh release upload native-channel release/latest-native.json --clobber
+            else
+              echo "$download_log" >&2
+              echo "native channel download failed: refusing blind upload" >&2
+              exit 1
+            fi
+          else
+            echo "no native artifacts: native channel untouched"
+          fi

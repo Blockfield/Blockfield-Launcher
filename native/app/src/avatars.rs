@@ -9,7 +9,7 @@
 //! UI thread converts to `Image` when painting a slot.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use slint::{Image, Model, Rgba8Pixel, SharedPixelBuffer, VecModel, Weak};
 use tokio::runtime::Handle;
@@ -186,6 +186,16 @@ pub fn refresh_shell(app: &AppWindow) {
 /// Fetch every uncached name through `preview_skin` off the UI thread, then
 /// paint the rows/self/shell that still show that name. Rows that paged away
 /// in the meantime match nothing and stay untouched.
+///
+/// Parallel lookups are capped: a full board fans out to ~27 names, and
+/// uncapped `preview_skin` chains hammer the skin hosts.
+pub const MAX_CONCURRENT_FACE_FETCHES: usize = 8;
+
+fn face_semaphore() -> &'static Arc<tokio::sync::Semaphore> {
+    static SEMAPHORE: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    SEMAPHORE.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_FACE_FETCHES)))
+}
+
 pub fn request_faces(
     weak: &Weak<AppWindow>,
     handle: &Handle,
@@ -205,6 +215,8 @@ pub fn request_faces(
         let weak = weak.clone();
         let skins_base = skins_base.clone();
         handle.spawn(async move {
+            // One permit per in-flight lookup, released when the task ends.
+            let _permit = face_semaphore().clone().acquire_owned().await.ok();
             let face = fetch_face(&skins_base, &username).await;
             if let Some(face) = face.as_ref() {
                 store_face(&username, face.clone());
@@ -375,5 +387,24 @@ mod tests {
     fn bundled_fixture_skin_crops() {
         let face = fixture_face();
         assert_eq!((face.size().width, face.size().height), (8, 8));
+    }
+
+    #[test]
+    fn face_lookups_are_bounded() {
+        assert!((1..=16).contains(&MAX_CONCURRENT_FACE_FETCHES));
+        let mut permits = Vec::new();
+        for _ in 0..MAX_CONCURRENT_FACE_FETCHES {
+            permits.push(
+                face_semaphore()
+                    .try_acquire()
+                    .expect("permit within the face-fetch bound"),
+            );
+        }
+        assert!(
+            face_semaphore().try_acquire().is_err(),
+            "face fetches must stay bounded"
+        );
+        drop(permits);
+        assert!(face_semaphore().try_acquire().is_ok());
     }
 }

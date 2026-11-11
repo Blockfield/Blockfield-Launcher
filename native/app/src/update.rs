@@ -740,8 +740,9 @@ fn stamp() -> String {
 }
 
 fn launcher_version() -> &'static str {
-    // Shell-crate version, like the Tauri shell's `env!("CARGO_PKG_VERSION")`
-    // at its call site (a core crate would see 0.0.0).
+    // Own crate version on the native release line: the self-update channel
+    // is the native manifest, never the Tauri one, so the crate carries the
+    // release-line version the cutover ships.
     env!("CARGO_PKG_VERSION")
 }
 
@@ -750,7 +751,7 @@ fn launcher_version() -> &'static str {
 /// (`src-tauri/src/updater.rs` + `src-tauri/src/native_update.rs`).
 /// Keep the three in sync on rotation.
 ///
-/// Check fetches latest.json and stages the platform release. Install streams
+/// Check fetches latest-native.json and stages the platform release. Install streams
 /// the artifact with progress, verifies the minisign signature (tamper
 /// reject, including the signed-version pin when the signature carries one),
 /// then installs. Linux replaces the binary atomically with a `.previous`
@@ -763,9 +764,11 @@ pub mod self_update {
     /// Pinned minisign public key. Source of truth:
     /// `src-tauri/tauri.conf.json` `plugins.updater.pubkey`.
     pub const UPDATE_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0RTBFNTI0NUE1MjBGQTYKUldTbUQxSmFKT1hnbEY3SllsMkF0dm1BNTdBK1Bnc29KWVdVK2x6SG93RmJhWUUyaGYzaUpISmMK";
-    /// Same manifest endpoint the Tauri updater polls.
-    pub const UPDATE_ENDPOINT: &str =
-        "https://github.com/Blockfield/Blockfield-Launcher/releases/latest/download/latest.json";
+    /// Native-only manifest endpoint: same format and signing key as the
+    /// Tauri `latest.json`, but served from the rolling `native-channel`
+    /// release the Tauri updater never reads, so a newer Tauri-only release
+    /// can neither stage over the native build nor hide a native update.
+    pub const UPDATE_ENDPOINT: &str = "https://github.com/Blockfield/Blockfield-Launcher/releases/download/native-channel/latest-native.json";
 
     const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
     const MAX_PACKAGE_BYTES: u64 = 256 * 1024 * 1024;
@@ -883,23 +886,30 @@ pub mod self_update {
     }
 
     /// Full check pipeline: current binary → targets → manifest → staged
-    /// release or `None` when up to date.
+    /// release or `None` when up to date. A missing native manifest (404:
+    /// no native artifacts published yet) is quietly "no update", not an
+    /// error; anything else failing stays an error.
     pub async fn check_for_update() -> Result<Option<Release>, String> {
         let executable = std::env::current_exe().map_err(|e| e.to_string())?;
         let targets = platform_targets(&executable)?;
         let client = http_client()?;
-        let response = client
-            .get(UPDATE_ENDPOINT)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?;
+        let Some(text) = fetch_manifest(&client, UPDATE_ENDPOINT).await? else {
+            return Ok(None);
+        };
+        check_manifest(&text, &targets, super::launcher_version())
+    }
+
+    async fn fetch_manifest(client: &reqwest::Client, url: &str) -> Result<Option<String>, String> {
+        let response = client.get(url).send().await.map_err(|e| e.to_string())?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let response = response.error_for_status().map_err(|e| e.to_string())?;
         let text = response.text().await.map_err(|e| e.to_string())?;
         if text.len() as u64 > MAX_MANIFEST_BYTES {
             return Err("Update manifest is too large".into());
         }
-        check_manifest(&text, &targets, super::launcher_version())
+        Ok(Some(text))
     }
 
     /// Stream the artifact with `(downloaded, total)` progress, capped like
@@ -1434,6 +1444,96 @@ pub mod self_update {
         }
 
         #[test]
+        fn native_channel_never_points_at_the_tauri_manifest() {
+            // Pinned: the rolling native-channel release, never the
+            // latest-release redirect a Tauri-only release would capture.
+            assert_eq!(
+                UPDATE_ENDPOINT,
+                "https://github.com/Blockfield/Blockfield-Launcher/releases/download/native-channel/latest-native.json"
+            );
+            assert!(!UPDATE_ENDPOINT.ends_with("/latest.json"));
+        }
+
+        #[test]
+        fn native_manifest_drives_updates_against_the_crate_version() {
+            // The native build carries its own release-line version, so the
+            // channel compares against that, never the Tauri line.
+            let current = env!("CARGO_PKG_VERSION");
+            let mut next = semver::Version::parse(current).expect("crate semver");
+            next.patch += 1;
+            let manifest = serde_json::json!({
+                "version": next.to_string(),
+                "platforms": {
+                    "linux-x86_64-deb": {"url": "https://example.invalid/n.deb", "signature": "c2ln"},
+                }
+            })
+            .to_string();
+            let targets = vec!["linux-x86_64-deb".to_string()];
+            let release = check_manifest(&manifest, &targets, current)
+                .unwrap()
+                .unwrap();
+            assert_eq!(release.version, next.to_string());
+            assert_eq!(release.url, "https://example.invalid/n.deb");
+            // The announced version already running: no update.
+            assert!(
+                check_manifest(&manifest, &targets, &next.to_string())
+                    .unwrap()
+                    .is_none()
+            );
+        }
+
+        /// One-shot local HTTP stub: answers `status` + `body` once, returns
+        /// its URL and the server thread.
+        fn serve_once(status: &str, body: &[u8]) -> (String, std::thread::JoinHandle<()>) {
+            use std::io::{Read as _, Write as _};
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("stub listener");
+            let address = listener.local_addr().expect("stub address");
+            let body = body.to_vec();
+            let status = status.to_string();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("stub accept");
+                let mut head = [0u8; 1024];
+                let _ = stream.read(&mut head);
+                let response = format!(
+                    "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).expect("stub head");
+                stream.write_all(&body).expect("stub body");
+            });
+            (format!("http://{address}/latest-native.json"), server)
+        }
+
+        fn block_on<F: std::future::Future>(future: F) -> F::Output {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime")
+                .block_on(future)
+        }
+
+        #[test]
+        fn missing_native_manifest_is_quietly_no_update() {
+            // No native artifacts published yet: the endpoint answers 404,
+            // and the check reports "no update" instead of failing the panel.
+            let client = http_client().expect("test client");
+            let (url, server) = serve_once("404 Not Found", b"");
+            assert_eq!(block_on(fetch_manifest(&client, &url)).unwrap(), None);
+            server.join().expect("stub thread");
+        }
+
+        #[test]
+        fn present_native_manifest_flows_through_fetch() {
+            let client = http_client().expect("test client");
+            let (url, server) = serve_once("200 OK", b"{\"version\":\"1.0.21\"}");
+            assert_eq!(
+                block_on(fetch_manifest(&client, &url)).unwrap().as_deref(),
+                Some("{\"version\":\"1.0.21\"}")
+            );
+            server.join().expect("stub thread");
+        }
+
+        #[test]
         fn progress_bytes_use_russian_units() {
             assert_eq!(super::super::fmt_launcher_bytes(512), "512 Б");
             assert_eq!(super::super::fmt_launcher_bytes(2048), "2 КБ");
@@ -1706,6 +1806,17 @@ mod tests {
     #[test]
     fn launcher_version_is_compile_time() {
         assert!(!super::launcher_version().is_empty());
+    }
+
+    #[test]
+    fn launcher_version_is_on_the_release_line() {
+        // The native channel compares against the crate version, so the
+        // crate carries the release line (never 0.1.0 while Tauri is 1.x).
+        let version = semver::Version::parse(super::launcher_version()).expect("launcher semver");
+        assert!(
+            version >= semver::Version::new(1, 0, 0),
+            "native self-update check would see Tauri 1.x as newer: {version}"
+        );
     }
     #[test]
     fn busy_guard_clears_on_drop() {
