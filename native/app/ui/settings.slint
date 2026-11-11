@@ -67,7 +67,6 @@ export component SettingsScreen inherits Rectangle {
     in property <string> caption;
     in property <LauncherUpdateData> launcher-data;
     in property <DevData> dev-data;
-    in property <bool> dirty: false;
     callback browse-skin();
     callback browse-cape();
     callback upload();
@@ -327,7 +326,7 @@ export component SettingsScreen inherits Rectangle {
                 // A wrapped save error grows the footer (Tauri wraps its actions
                 // row the same way); the body above shrinks, nothing overpaints.
                 // footer-main stays instantiated so its error height is readable.
-                property <length> row-height: root.tab < 3 ? Math.max(40px, footer-error.height) : 40px;
+                property <length> row-height: Math.max(40px, footer-error.height);
                 x: root.edge;
                 y: parent.height - self.height - root.edge;
                 width: parent.width - 2 * root.edge;
@@ -335,7 +334,6 @@ export component SettingsScreen inherits Rectangle {
                 background: Tokens.chrome;
                 Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: #18130d; }
                 footer-main := Rectangle {
-                    visible: root.tab < 3;
                     x: 20px; width: parent.width - 40px; y: 12px; height: parent.height - 24px - root.edge;
                     save-button := FormButton {
                         x: parent.width - self.width; y: (parent.height - 40px) / 2;
@@ -354,24 +352,6 @@ export component SettingsScreen inherits Rectangle {
                     FormButton {
                         x: footer-error.x - 12px - self.width; y: (parent.height - 40px) / 2;
                         text: "СБРОС"; footer: true; horizontal-padding: 20px; clicked => { SettingsForm.reset(); }
-                    }
-                }
-                if root.tab >= 3: HorizontalLayout {
-                    x: parent.width - self.preferred-width - 20px;
-                    y: 13px;
-                    height: 40px;
-                    spacing: 12px;
-                    alignment: start;
-                    SettingsButton {
-                        text: "СБРОС";
-                        horizontal-padding: 20px;
-                        clicked => { root.reset(); }
-                    }
-                    SettingsButton {
-                        text: "СОХРАНИТЬ";
-                        icon: @image-url("../assets/icons/save.svg");
-                        enabled: root.dirty;
-                        clicked => { root.save(); }
                     }
                 }
             }
