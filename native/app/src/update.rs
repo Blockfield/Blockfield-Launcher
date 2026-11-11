@@ -834,15 +834,15 @@ pub mod self_update {
         #[cfg(target_os = "windows")]
         {
             let _ = executable;
-            return Ok(vec![
+            Ok(vec![
                 format!("windows-{}", std::env::consts::ARCH),
                 format!("windows-{}-nsis", std::env::consts::ARCH),
-            ]);
+            ])
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             let _ = executable;
-            return Err("Self-update is supported on Linux and Windows only".into());
+            Err("Self-update is supported on Linux and Windows only".into())
         }
     }
 

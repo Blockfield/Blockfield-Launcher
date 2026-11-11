@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use launcher_app::{LauncherAppState, ops::pack_check, status_ops};
 use launcher_core::fmt;
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel, Weak};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel, Weak};
 use tokio::runtime::Handle;
 
 use crate::{AppWindow, StatsFilter, StatsMatch, StatsRating, StatsRow};
@@ -419,6 +419,7 @@ pub fn apply_board(app: &AppWindow, outcome: &StatsOutcome, uuid: &str, page: i6
         .enumerate()
         .map(|(index, row)| {
             let mmr = row.get("mmr").and_then(mmr_of);
+            let name = get_str(row, "name");
             StatsRow {
                 rank: fmt::display_rank(
                     row.get("rank").and_then(|v| v.as_i64()),
@@ -428,7 +429,10 @@ pub fn apply_board(app: &AppWindow, outcome: &StatsOutcome, uuid: &str, page: i6
                 )
                 .to_string()
                 .into(),
-                name: get_str(row, "name").into(),
+                // Cached faces paint immediately; misses fill in through
+                // `request_faces`, like Tauri's async PlayerHead overlay.
+                face: crate::avatars::cached_face(&name).unwrap_or_default(),
+                name: name.into(),
                 mmr: fmt::format_mmr(mmr.as_ref()).into(),
                 score: fmt::format_score(row.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0))
                     .into(),
@@ -476,6 +480,9 @@ pub fn apply_self(app: &AppWindow, outcome: &StatsOutcome, uuid: &str) {
         .into();
     let rank = totals.and_then(|t| t.get("rank")).and_then(|v| v.as_i64());
     app.set_stats_self_name(name);
+    app.set_stats_self_face(
+        crate::avatars::cached_face(app.get_stats_self_name().as_str()).unwrap_or_default(),
+    );
     app.set_stats_self_rank(rank.map_or("—".to_owned(), |r| r.to_string()).into());
     app.set_stats_self_rank_code(rank.map_or(String::new(), |r| format!("#{r}")).into());
     let mmr = player
@@ -770,11 +777,12 @@ fn request_reload(
     let generation = requests.next();
     let requests = requests.clone();
     let weak = weak.clone();
-    let handle = handle.clone();
+    let spawn = handle.clone();
+    let face_handle = handle.clone();
     let state = state.clone();
     app.set_stats_board_state(0);
     app.set_stats_self_state(0);
-    handle.spawn(async move {
+    spawn.spawn(async move {
         let config = state.config.read().await.clone();
         let uuid = config.player_uuid.to_lowercase();
         let cache = cache_dir(&state.app_data_dir);
@@ -830,6 +838,12 @@ fn request_reload(
             }
         );
         let page = filters.page;
+        let skins = state
+            .pack
+            .read()
+            .await
+            .as_ref()
+            .and_then(|pack| pack.info.skins.clone());
         let _ = weak.upgrade_in_event_loop(move |app| {
             if !requests.is_latest(generation) {
                 return;
@@ -841,6 +855,15 @@ fn request_reload(
             apply_self(&app, &player, &uuid);
             // The tree reads the uuid for the site link.
             app.set_stats_self_uuid(uuid.into());
+            // Faces resolve off-thread like Tauri's PlayerHead overlay.
+            let mut names: Vec<String> = app
+                .get_stats_rows()
+                .iter()
+                .map(|row| row.name.to_string())
+                .collect();
+            names.push(app.get_stats_self_name().to_string());
+            names.push(app.get_username().to_string());
+            crate::avatars::request_faces(&app.as_weak(), &face_handle, skins, names);
         });
     });
 }
