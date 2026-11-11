@@ -130,7 +130,11 @@ fn scenario_board_states_and_pager() {
     let own = rows.row_data(1).expect("row 1");
     assert_eq!(first.rank.to_string(), "1", "stored rank kept");
     assert!(!first.own, "other row not own");
-    assert_eq!(own.rank.to_string(), "27", "rank falls back to page position");
+    assert_eq!(
+        own.rank.to_string(),
+        "27",
+        "rank falls back to page position"
+    );
     assert!(own.own, "own uuid matches case-insensitively");
     assert_eq!(app.get_stats_page(), 2);
     assert_eq!(app.get_stats_pages(), 5, "ceil(103/25)");
@@ -193,7 +197,11 @@ fn scenario_self_card_states_and_rank_parity() {
     stats::apply_self(&app, &ok(self_json()), "OWN-UUID");
     assert_eq!(app.get_stats_self_state(), 3, "self data");
     assert_eq!(app.get_stats_self_name().to_string(), "CaptureOperator");
-    assert_eq!(app.get_stats_self_rank().to_string(), "3", "cell: plain rank");
+    assert_eq!(
+        app.get_stats_self_rank().to_string(),
+        "3",
+        "cell: plain rank"
+    );
     assert_eq!(
         app.get_stats_self_rank_code().to_string(),
         "#3",
@@ -212,13 +220,7 @@ fn scenario_self_card_states_and_rank_parity() {
     let matches = app.get_stats_matches();
     assert_eq!(matches.row_count(), 4, "matches capped at 4");
     let outcomes: Vec<String> = (0..4)
-        .map(|i| {
-            matches
-                .row_data(i)
-                .expect("match row")
-                .outcome
-                .to_string()
-        })
+        .map(|i| matches.row_data(i).expect("match row").outcome.to_string())
         .collect();
     assert_eq!(outcomes, vec!["Победа", "Поражение", "Ничья", "Победа"]);
     assert!(!app.get_stats_self_stale(), "fresh load not stale");
@@ -331,15 +333,12 @@ fn scenario_season_periods_extend_the_filter_model() {
     let periods = win.get_stats_periods();
     assert_eq!(periods.row_count(), 5, "seasons appended");
     let ids: Vec<String> = (0..5)
-        .map(|i| {
-            periods
-                .row_data(i)
-                .expect("period row")
-                .id
-                .to_string()
-        })
+        .map(|i| periods.row_data(i).expect("period row").id.to_string())
         .collect();
-    assert_eq!(ids, vec!["all", "week", "month", "season:2026", "season:2025"]);
+    assert_eq!(
+        ids,
+        vec!["all", "week", "month", "season:2026", "season:2025"]
+    );
     // The fixture seasons helper keeps the same scheme for live loads.
     let live = test_app();
     fixtures::apply_stats(&live, "default").expect("default fixtures");
