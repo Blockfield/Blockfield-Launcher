@@ -214,6 +214,8 @@ fn extract_tar_gz_with_limits(
                 .header()
                 .size()
                 .map_err(|e| format!("Archive entry {name} error: {e}"))?;
+            // Only Unix applies permission bits; Windows has no mode to set.
+            #[cfg(unix)]
             let mode = entry.header().mode().unwrap_or(0o644) & 0o777;
             let mut out = std::fs::File::create(&dest)
                 .map_err(|e| format!("Failed to create {}: {e}", dest.display()))?;
