@@ -1,11 +1,13 @@
 import { Tokens } from "tokens.slint";
 import { ActionArea } from "controls.slint";
+import { PlayerHead } from "avatars.slint";
 import { GridBackdrop, TopoBackdrop } from "backdrop.slint";
 import { MainMotion } from "main-controls.slint";
 
 export struct StatsRow {
     rank: string,
     name: string,
+    face: image,
     mmr: string,
     score: string,
     kd: string,
@@ -200,6 +202,7 @@ export component StatsScreen inherits Rectangle {
     in property <bool> self-stale;
     in property <string> self-stale-label;
     in property <string> self-name;
+    in property <image> self-face;
     in property <string> self-rank;
     in property <string> self-rank-code;
     in property <string> self-mmr;
@@ -378,7 +381,12 @@ export component StatsScreen inherits Rectangle {
                                         height: parent.height;
                                         spacing: 0px;
                                         Text { width: 48px; text: row.rank; font-size: 12px; color: Tokens.muted-foreground; vertical-alignment: center; }
-                                        Text { horizontal-stretch: 1; text: row.name; font-size: 12px; color: row.own ? Tokens.foreground : Tokens.neutral-100; vertical-alignment: center; overflow: elide; }
+                                        HorizontalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 8px;
+                                            PlayerHead { y: (parent.height - self.height) / 2; face: row.face; }
+                                            Text { horizontal-stretch: 1; text: row.name; font-size: 12px; color: row.own ? Tokens.foreground : Tokens.neutral-100; vertical-alignment: center; overflow: elide; }
+                                        }
                                         Text { width: 64px; text: row.mmr; font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; horizontal-alignment: right; }
                                         Text { width: 72px; text: row.score; font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; horizontal-alignment: right; }
                                         Text { width: 80px; text: row.kd; font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; horizontal-alignment: right; }
@@ -474,8 +482,9 @@ export component StatsScreen inherits Rectangle {
                             wrap: word-wrap;
                         }
                         HorizontalLayout {
-                            height: 17px;
+                            height: 24px;
                             spacing: 8px;
+                            PlayerHead { y: (parent.height - self.height) / 2; face: root.self-face; }
                             Text {
                                 text: root.self-name;
                                 font-size: 13px;
