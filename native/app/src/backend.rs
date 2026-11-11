@@ -12,7 +12,10 @@ use launcher_app::{
     ops::{pack_check, settings},
     status_ops,
 };
-use launcher_net::{account, minecraft, status::ServerStatus};
+use launcher_net::{
+    account, minecraft,
+    status::{GameRoom, ServerStatus},
+};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use tokio::runtime::Handle;
 
@@ -287,7 +290,9 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
 }
 
 async fn presence(state: Arc<LauncherAppState>) {
-    let pending = launcher_app::rooms::PendingRoom::default();
+    // Same store the join flow reads: a Discord invite must auto-join through
+    // the exact target stored here (Tauri keeps one PendingRoom per app).
+    let pending = crate::main_ops::shared_pending();
     loop {
         if state.config.read().await.discord_presence
             && let Err(error) = launcher_app::presence::session(&state, &pending).await
@@ -332,6 +337,38 @@ pub fn apply_dev_status(app: &AppWindow) {
     });
 }
 
+/// Room subtitle parity with Tauri `RoomList.tsx`: optional format label,
+/// mode, map and RU phase name, skipping whatever is absent.
+fn room_description(room: &GameRoom) -> String {
+    let format = match room.format.as_deref() {
+        Some("casual") => Some("Casual"),
+        Some("ranked") => Some("Ranked"),
+        _ => None,
+    };
+    let phase = match room.phase.as_str() {
+        "IDLE" => "Ожидание игроков",
+        "VOTING" => "Голосование",
+        "PREPARING" => "Подготовка",
+        "GAME" => "Бой",
+        "MATCH_END" => "Матч завершён",
+        other => other,
+    };
+    let mut parts = Vec::with_capacity(4);
+    if let Some(format) = format {
+        parts.push(format);
+    }
+    if !room.mode.is_empty() {
+        parts.push(room.mode.as_str());
+    }
+    if !room.map.is_empty() {
+        parts.push(room.map.as_str());
+    }
+    if !phase.is_empty() {
+        parts.push(phase);
+    }
+    parts.join(" · ")
+}
+
 fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
     let selected = app
         .get_rooms()
@@ -366,6 +403,9 @@ fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
         .into();
     data.region = status.region_code.into();
     data.location = status.location_name.into();
+    // status host/port resolve from the launcher config target (workshop
+    // override or pack server), so the panel shows the real address.
+    data.server_address = format!("{}:{}", status.host, status.port).into();
     data.maintenance = if status.online {
         status.maintenance.map_or(String::new(), |m| {
             if m.message.is_empty() {
@@ -384,10 +424,11 @@ fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
         .into_iter()
         .map(|room| {
             let battle = room.battle.as_ref();
+            let description = room_description(&room);
             Room {
                 id: room.id.into(),
                 name: room.name.into(),
-                description: format!("{} · {} · {}", room.mode, room.map, room.phase).into(),
+                description: description.into(),
                 players: room.players.min(i32::MAX as u32) as i32,
                 ready: room
                     .ready
@@ -460,6 +501,61 @@ fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
 
 #[cfg(test)]
 mod tests {
+    use super::room_description;
+    use launcher_net::status::GameRoom;
+
+    fn subtitle_room(format: Option<&str>, mode: &str, map: &str, phase: &str) -> GameRoom {
+        GameRoom {
+            id: "room".into(),
+            name: "Room".into(),
+            mode: mode.into(),
+            map: map.into(),
+            phase: phase.into(),
+            players: 3,
+            joinable: true,
+            format: format.map(str::to_owned),
+            admission: None,
+            ready: None,
+            battle: None,
+        }
+    }
+
+    #[test]
+    fn room_subtitle_matches_tauri_format_and_ru_phase() {
+        // Tauri RoomList.tsx: [format, mode, map, phase].filter(Boolean).join(' · ').
+        assert_eq!(
+            room_description(&subtitle_room(None, "room", "Map", "IDLE")),
+            "room · Map · Ожидание игроков"
+        );
+        assert_eq!(
+            room_description(&subtitle_room(Some("casual"), "room", "Map", "GAME")),
+            "Casual · room · Map · Бой"
+        );
+        assert_eq!(
+            room_description(&subtitle_room(
+                Some("ranked"),
+                "campaign",
+                "Crossroads",
+                "MATCH_END"
+            )),
+            "Ranked · campaign · Crossroads · Матч завершён"
+        );
+        // Unknown format is dropped like Tauri's undefined lookup; unknown
+        // phase and empty mode/map fall back to the raw values.
+        assert_eq!(
+            room_description(&subtitle_room(Some("custom"), "room", "Map", "VOTING")),
+            "room · Map · Голосование"
+        );
+        assert_eq!(
+            room_description(&subtitle_room(Some("casual"), "room", "Map", "CUSTOM")),
+            "Casual · room · Map · CUSTOM"
+        );
+        assert_eq!(
+            room_description(&subtitle_room(Some("ranked"), "", "", "PREPARING")),
+            "Ranked · Подготовка"
+        );
+    }
+
     #[test]
     fn background_loops_start_exactly_once() {
         assert!(super::claim_background_loops());
@@ -468,7 +564,7 @@ mod tests {
 
     #[test]
     fn server_refresh_preserves_game_state_and_clears_stale_rooms() {
-        use launcher_net::status::{GameRoom, ServerStatus};
+        use launcher_net::status::ServerStatus;
         use slint::Model;
         i_slint_backend_testing::init_no_event_loop();
         let app = crate::AppWindow::new().unwrap();
@@ -509,7 +605,12 @@ mod tests {
         assert!(app.get_main_data().updating);
         assert_eq!(app.get_main_data().players, "3");
         assert_eq!(app.get_main_data().ping, "7");
+        assert_eq!(app.get_main_data().server_address, "localhost:25565");
         assert!(!app.get_rooms().row_data(0).unwrap().joinable);
+        assert_eq!(
+            app.get_rooms().row_data(0).unwrap().description,
+            "room · Map · Ожидание игроков"
+        );
         let mut second = status.rooms.as_ref().unwrap()[0].clone();
         second.id = "second".into();
         status.rooms.as_mut().unwrap().push(second);
@@ -544,6 +645,8 @@ mod tests {
         assert_eq!(app.get_main_data().players, "—");
         assert_eq!(app.get_main_data().ping, "—");
         assert!(!app.get_main_data().online);
+        // The panel keeps the last known address while unreachable.
+        assert_eq!(app.get_main_data().server_address, "localhost:25565");
     }
 
     #[test]

@@ -7,7 +7,7 @@ import { RoomList, Room } from "rooms.slint";
 
 export struct MainData {
     online: bool, updating: bool, maintenance: string, rooms-available: bool,
-    players: string, ping: string, region: string, location: string,
+    players: string, ping: string, region: string, location: string, server-address: string,
     installed: string, latest: string, size: string, checked: bool, checking: bool,
     needs-setup: bool, needs-update: bool, check-error: string,
     phase: string, launching: bool, launch-status: string, progress: int, launch-error: string, launch-stale: bool,
@@ -113,7 +113,7 @@ export component MainScreen inherits Rectangle {
                 }
                 Image { x: 16px + 1phx; y: 20px + 1phx + Tokens.line-height(15px, 1phx) + (Tokens.line-height(19.5px, 1phx) - 14px) / 2; width: 14px; height: 14px; source: @image-url("../assets/icons/shield-check.svg"); colorize: Tokens.primary; }
                 Text { x: 38px + 1phx; y: 20px + 1phx + Tokens.line-height(15px, 1phx); height: Tokens.line-height(19.5px, 1phx); width: parent.width - 54px - 2phx; text: root.workshop ? "Мастерская" : "BLOCKFIELD · ОСНОВНОЙ"; color: Tokens.neutral-100; font-size: 13px; letter-spacing: 2.34px; overflow: elide; }
-                SmallLabel { x: 16px + 1phx; y: 28px + 1phx + Tokens.line-height(15px, 1phx) + Tokens.line-height(19.5px, 1phx); height: Tokens.line-height(15px, 1phx); width: parent.width - 32px - 2phx; text: "play.blockfield.pro:25565"; letter-spacing: 0.8px; overflow: elide; }
+                SmallLabel { x: 16px + 1phx; y: 28px + 1phx + Tokens.line-height(15px, 1phx) + Tokens.line-height(19.5px, 1phx); height: Tokens.line-height(15px, 1phx); width: parent.width - 32px - 2phx; text: root.data.server-address != "" ? root.data.server-address : "play.blockfield.pro:25565"; letter-spacing: 0.8px; overflow: elide; }
             }
         }
         play := GlowPanel { x: 0px;

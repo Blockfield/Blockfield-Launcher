@@ -12,6 +12,16 @@ use tokio::runtime::Handle;
 
 use crate::{AppWindow, MainData};
 
+/// One pending-invite store per process: the Discord presence loop, the
+/// RoomPending auto-join and the manual join flow must see the same target
+/// (Tauri keeps a single `PendingRoom` on its app handle).
+pub fn shared_pending() -> Arc<PendingRoom> {
+    static PENDING: std::sync::OnceLock<Arc<PendingRoom>> = std::sync::OnceLock::new();
+    PENDING
+        .get_or_init(|| Arc::new(PendingRoom::default()))
+        .clone()
+}
+
 pub fn launch_sub(status: slint::SharedString, progress: i32) -> slint::SharedString {
     let status = if status.is_empty() {
         "ЗАПУСК"
@@ -59,7 +69,7 @@ pub fn attach_fixtures(app: &AppWindow) {
 }
 
 pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
-    let pending = Arc::new(PendingRoom::default());
+    let pending = shared_pending();
     for action in [
         Action::Deploy,
         Action::Verify,
