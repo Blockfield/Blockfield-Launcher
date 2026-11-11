@@ -6,7 +6,7 @@ spawns WebProcess/NetworkProcess children, so the main PID alone lies.
 
 ## Quick start
 
-```sh
+````sh
 # Sample the tree of a running PID for 10 s
 python3 scripts/bench/bench.py sample --pid 1234 --interval 0.5 --duration 10
 
@@ -15,12 +15,31 @@ python3 scripts/bench/bench.py run --repeats 3 --duration 10 --warmup 2 \
   --ready-regex "READY" --out-dir /tmp/bench/tauri --name tauri-idle \
   -- ./target/release/blockfield-launcher
 
+## One-command release-vs-release A/B (Linux)
+
+```sh
+python3 scripts/bench/ab_compare.py --out /tmp/bench/ab --repeats 3 \
+  --duration 10 --warmup 2 --ready-regex "READY" \
+  --tauri-cmd "./target/release/blockfield-launcher" \
+  --slint-cmd "./native/app/target/release/blockfield-native"
+````
+
+Both sides run with identical sampling config, sequentially on one host.
+Writes `tauri/{result.json,summary.md}`, `slint/{...}`, plus `ab.json`
+(matched-pair medians + savings) and `ab.md` (median/p10/p90/spread table).
+`--tauri-ready-regex` / `--slint-ready-regex` override the shared signal when
+the two apps report readiness differently. Empty sample windows and config or
+repeat-count mismatches fail instead of printing a comparison.
+
 # Readiness via a file instead of a log line
+
 python3 scripts/bench/bench.py run --ready-file /tmp/app.ready -- ...
 
 # Tests (unit + synthetic-tree smoke, no GUI needed)
+
 python3 scripts/bench/test_bench.py
-```
+
+````
 
 `run` writes `<out-dir>/result.json` (config, machine info, git SHA, raw
 samples per repeat) and `<out-dir>/summary.md` (per-repeat table + pooled
@@ -45,7 +64,7 @@ agent-process start --name final-ab --cwd "$PWD" -- timeout 4200 \
   --slint native/app/target/release/blockfield-native
 python3 scripts/bench/final_report.py /absolute/report/raw /absolute/report/report.md
 python3 scripts/bench/test_final_ab.py
-```
+````
 
 Follow AGENTS.md process discovery/ownership rules before starting. The supervisor
 clears host display variables; containers mount only binaries, harness code and a
