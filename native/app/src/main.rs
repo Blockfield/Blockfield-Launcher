@@ -70,7 +70,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // raster directly; real GPUs keep Skia GL/Metal/D3D. Probe objects are
     // confined to a child process; cost is logged as RENDERER_PROBE.
     let mut selector = slint::BackendSelector::new().backend_name("winit".into());
-    if std::env::var_os("SLINT_BACKEND").is_none() {
+    // Empty counts as unset: CI's `VAR=${VAR-}` prefix delivers SLINT_BACKEND=""
+    // for default-renderer runs, and skipping the probe there left GPU-less
+    // runners on the flaky Skia-GL fallback (exit 127, coordination#43).
+    if std::env::var("SLINT_BACKEND")
+        .map(|value| value.is_empty())
+        .unwrap_or(true)
+    {
         let probe_start = std::time::Instant::now();
         let rss_before = rss_kb();
         let software = probe_renderer().unwrap_or_else(|error| {

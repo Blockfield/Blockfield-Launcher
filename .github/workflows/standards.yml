@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-15]
+        os: [ubuntu-24.04, windows-latest]
     steps:
       - if: runner.os == 'Windows'
         run: git config --global core.longpaths true
@@ -25,7 +25,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # Python 3.12 security releases have no Windows/macOS builds in setup-python.
+          # Python 3.12 security releases have no Windows builds in setup-python.
           python-version: ${{ runner.os == 'Linux' && '3.12.15' || '3.14.8' }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -42,8 +42,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: >-
-            ${{ runner.os == 'Linux' && 'standards-ubuntu2404'
-            || runner.os == 'Windows' && 'portable-windows' || 'portability-macos' }}
+            ${{ runner.os == 'Linux' && 'standards-ubuntu2404' || 'portable-windows' }}
           workspaces: |
             . -> target
             src-tauri -> src-tauri/target

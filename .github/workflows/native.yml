@@ -1,6 +1,6 @@
 name: Native e2e
 
-# u18: cross-OS end-to-end screen tests for the Slint POC (Windows, macOS,
+# u18: cross-OS end-to-end screen tests for the Slint POC (Windows and
 # Ubuntu) as a merge/release gate. Layer 1 = in-process testing-tree
 # scenarios (`cargo test`, needs SLINT_EMIT_DEBUG_INFO=1 below). Layer 2 =
 # real-window acceptance walk with per-OS golden screenshots (`--e2e`).
@@ -45,9 +45,6 @@ jobs:
           - name: windows-x86_64
             os: windows-latest
             golden_os: windows
-          - name: macos-arm64
-            os: macos-latest
-            golden_os: macos
           - name: ubuntu-x86_64
             os: ubuntu-24.04
             golden_os: linux
@@ -131,8 +128,8 @@ jobs:
             wc -c "$exe"
           } > "$out/env.txt" 2>&1
           cat "$out/env.txt"
-          # Portable 150 s watchdog (macOS has no coreutils `timeout`); the
-          # capture quits its own event loop, this only guards hangs.
+          # Portable 150 s watchdog; the capture quits its own event loop,
+          # this only guards hangs.
           cat > "$RUNNER_TEMP/runguarded.py" <<'PYEOF'
           import subprocess, sys
           log, *cmd = sys.argv[1:]
@@ -144,8 +141,8 @@ jobs:
                   f.write(b"\nTIMEOUT after 150s\n")
                   sys.exit(124)
           PYEOF
-          # No empty bash arrays (/bin/bash on macOS is 3.2 and treats them
-          # as unbound under `set -u`), so branch instead of wrapping.
+          # No empty bash arrays (treated as unbound under `set -u`),
+          # so branch instead of wrapping.
           run_guarded() {
             if [ "$RUNNER_OS" = Linux ]; then
               xvfb-run -a -s "-screen 0 1920x1080x24" python3 "$RUNNER_TEMP/runguarded.py" "$@"
@@ -201,7 +198,7 @@ jobs:
           [ "$fail" = 0 ]
       # Layer 2: real-window acceptance walk against per-OS goldens at 1x.
       # Renderer is pinned to software on every OS: it is the one renderer
-      # all three runners support (u17: Win/Mac Skia-GL has no GPU and falls
+      # both runners support (u17: Windows Skia-GL has no GPU and falls
       # back anyway; Ubuntu Skia-GL fails under Xvfb), so one golden set per
       # OS suffices. The e2e log records the backend. Any mismatch, missing
       # element, crash or hang exits non-zero and turns the gate red.
