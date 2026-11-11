@@ -1,5 +1,6 @@
-//! Friendly error mapping, ported 1:1 from `src/lib/errors.ts:1-141`.
-//! Russian strings are byte-identical to the TS; proven by `tests/parity.rs`.
+//! Friendly error mapping, ported 1:1 from `src/lib/errors.ts`.
+//! Russian strings are byte-identical to the TS; proven by `tests/parity.rs`
+//! and the `PACK_REPAIR` unit test below.
 
 /// Where the failed call came from; picks the fallback/network message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,6 +159,8 @@ pub fn friendly_error(raw: &str, context: ErrorContext) -> FriendlyError {
         "Сессия истекла — войдите снова.".to_owned()
     } else if raw.contains("PACK_STALE") {
         "Пак устарел — откройте «Обновления», чтобы скачать свежую сборку.".to_owned()
+    } else if raw.contains("PACK_REPAIR") {
+        "Файлы игры повреждены — откройте «Обновления», чтобы восстановить их.".to_owned()
     } else if raw.contains("Drasl account server unavailable") {
         "Сервер аккаунтов недоступен, попробуйте позже.".to_owned()
     } else if context == ErrorContext::Account && raw.contains("Drasl: ") {
@@ -188,5 +191,22 @@ pub fn friendly_error(raw: &str, context: ErrorContext) -> FriendlyError {
     FriendlyError {
         message,
         raw: raw.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn damaged_pack_points_at_updates_with_repair_wording() {
+        let repaired = friendly_error(
+            "PACK_REPAIR: pack files changed or are missing. Open Updates to repair them, then launch again.",
+            ErrorContext::Launch,
+        );
+        assert_eq!(
+            repaired.message,
+            "Файлы игры повреждены — откройте «Обновления», чтобы восстановить их."
+        );
     }
 }
