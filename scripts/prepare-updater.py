@@ -128,7 +128,9 @@ def native_manifest_newer(current_path, version):
         current = json.loads(Path(current_path).read_text()).get("version", "")
     except (OSError, ValueError):
         return True
-    return _version_key(version) > _version_key(current)
+    # Equal republishes: a re-run of the same release (e.g. re-signed
+    # assets) must be able to replace its own manifest.
+    return _version_key(version) >= _version_key(current)
 
 
 if __name__ == "__main__":
