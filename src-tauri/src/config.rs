@@ -169,7 +169,7 @@ impl LauncherConfig {
             // trusted without a network request. A custom address could point
             // at the Game and would land the player there.
             server_host(server)?;
-            if server == default_workshop_server() {
+            if server == DEFAULT_WORKSHOP_SERVER {
                 return Ok(Some(server.to_owned()));
             }
             return Err(
@@ -508,6 +508,9 @@ fn presence_enabled() -> bool {
 mod tests {
     use super::*;
 
+    // Serializes tests that mutate process env (set_var is process-global).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn empty_workshop_server_override_falls_back_to_default() {
         assert_eq!(
@@ -788,6 +791,7 @@ mod tests {
 
     #[test]
     fn workshop_offline_trusts_only_the_builtin_default() {
+        let _env = ENV_LOCK.lock().unwrap();
         let mut config = LauncherConfig {
             active_profile: ClientProfile::Workshop,
             ..LauncherConfig::default()
@@ -817,6 +821,28 @@ mod tests {
                 .as_deref(),
             Some("raknet;workshop.example:25567")
         );
+    }
+
+    #[test]
+    fn workshop_offline_refuses_runtime_override_pointing_at_game() {
+        // BLOCKFIELD_WORKSHOP_SERVER overrides default_workshop_server(): an
+        // override pointing at the Game host must not be trusted offline.
+        let key = "BLOCKFIELD_WORKSHOP_SERVER";
+        let guard = ENV_LOCK.lock().unwrap();
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, "raknet;game.example:25566");
+        let config = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: "raknet;game.example:25566".into(),
+            ..LauncherConfig::default()
+        };
+        let result = config.target("");
+        match prev {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+        drop(guard);
+        assert!(result.is_err(), "override trusted offline: {result:?}");
     }
 
     #[test]

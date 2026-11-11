@@ -367,8 +367,15 @@ fn offline_pack_for_launch(cached: Option<PackState>, active: ClientProfile) -> 
 /// TCP fallback is the Game profile's proxy route only: a custom/dev RakNet
 /// target must never remap (its TCP port may serve another server), and a
 /// Workshop target never falls back at all.
-fn tcp_fallback_allowed(profile: ClientProfile, target: &str, game_server: &str) -> bool {
-    profile == ClientProfile::Game && crate::tcp_fallback::is_proxy_target(target, game_server)
+fn tcp_fallback_allowed(
+    profile: ClientProfile,
+    target: &str,
+    game_server: &str,
+    from_dev_override: bool,
+) -> bool {
+    !from_dev_override
+        && profile == ClientProfile::Game
+        && crate::tcp_fallback::is_proxy_target(target, game_server)
 }
 
 #[tauri::command]
@@ -1246,7 +1253,9 @@ pub async fn launch_game(
         .unwrap_or_default();
     let quick_play = config.target(&game_server)?;
     // Dev build: another server, or none at all so the game opens on the title screen.
-    let quick_play = crate::dev::server_override().unwrap_or(quick_play);
+    let dev_override = crate::dev::server_override();
+    let from_dev_override = dev_override.is_some();
+    let quick_play = dev_override.unwrap_or(quick_play);
     // TCP fallback (proxy#74 U3): the proxy routes TCP 25565 logins to the Game.
     // A remembered RakNet failure (<24 h) skips the probe; otherwise one
     // unconnected ping decides whether the RakNet path is usable from here.
@@ -1254,9 +1263,15 @@ pub async fn launch_game(
     let mut via_tcp_fallback = false;
     if let Some(target) = quick_play.clone() {
         // TCP fallback is the proxy's own route only (the pack's game host
-        // on the Game profile): a custom/dev RakNet target must never remap,
-        // its TCP port may serve another server, and Workshop never falls back.
-        if tcp_fallback_allowed(config.active_profile, &target, &game_server) {
+        // on the Game profile, never a developer-override target): a custom
+        // RakNet target must never remap, its TCP port may serve another
+        // server, and Workshop never falls back.
+        if tcp_fallback_allowed(
+            config.active_profile,
+            &target,
+            &game_server,
+            from_dev_override,
+        ) {
             let fallback_state = crate::tcp_fallback::FallbackState::load(&state.app_data_dir);
             let now = crate::tcp_fallback::now_secs();
             let resolved = crate::tcp_fallback::resolve_target(&target, &fallback_state, now);
@@ -2300,20 +2315,44 @@ mod tests {
         assert!(tcp_fallback_allowed(
             ClientProfile::Game,
             target,
-            game_server
+            game_server,
+            false
         ));
         // The same host match must never remap for Workshop: its TCP port
         // may serve a different destination.
         assert!(!tcp_fallback_allowed(
             ClientProfile::Workshop,
             target,
-            game_server
+            game_server,
+            false
         ));
         // A custom/dev target never remaps either.
         assert!(!tcp_fallback_allowed(
             ClientProfile::Game,
             "raknet;custom.example:25566",
-            game_server
+            game_server,
+            false
+        ));
+    }
+
+    #[test]
+    fn tcp_fallback_skipped_for_developer_override_target() {
+        // Pack server :25568, dev override :25566 on the same host: the
+        // proxy-host check alone passes, but the override's TCP 25565 may
+        // serve a different server, so fallback must be skipped.
+        let game_server = "raknet;play.example:25568";
+        let target = "raknet;play.example:25566";
+        assert!(tcp_fallback_allowed(
+            ClientProfile::Game,
+            target,
+            game_server,
+            false
+        ));
+        assert!(!tcp_fallback_allowed(
+            ClientProfile::Game,
+            target,
+            game_server,
+            true
         ));
     }
 
