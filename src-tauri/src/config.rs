@@ -825,23 +825,17 @@ mod tests {
 
     #[test]
     fn workshop_offline_refuses_runtime_override_pointing_at_game() {
-        // BLOCKFIELD_WORKSHOP_SERVER overrides default_workshop_server(): an
-        // override pointing at the Game host must not be trusted offline.
-        let key = "BLOCKFIELD_WORKSHOP_SERVER";
-        let guard = ENV_LOCK.lock().unwrap();
-        let prev = std::env::var(key).ok();
-        std::env::set_var(key, "raknet;game.example:25566");
+        // An override pointing at the Game host must not be trusted offline.
+        // Built through default_workshop_server_from so no process env changes.
         let config = LauncherConfig {
             active_profile: ClientProfile::Workshop,
-            workshop_server: "raknet;game.example:25566".into(),
+            workshop_server: default_workshop_server_from(
+                Some("raknet;game.example:25566".into()),
+                None,
+            ),
             ..LauncherConfig::default()
         };
         let result = config.target("");
-        match prev {
-            Some(value) => std::env::set_var(key, value),
-            None => std::env::remove_var(key),
-        }
-        drop(guard);
         assert!(result.is_err(), "override trusted offline: {result:?}");
     }
 
