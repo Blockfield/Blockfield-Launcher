@@ -476,7 +476,7 @@ pub fn apply_self(app: &AppWindow, outcome: &StatsOutcome, uuid: &str) {
         .into();
     let rank = totals.and_then(|t| t.get("rank")).and_then(|v| v.as_i64());
     app.set_stats_self_name(name);
-    app.set_stats_self_rank(rank.map_or("—".to_owned(), |r| format!("#{r}")).into());
+    app.set_stats_self_rank(rank.map_or("—".to_owned(), |r| r.to_string()).into());
     app.set_stats_self_rank_code(rank.map_or(String::new(), |r| format!("#{r}")).into());
     let mmr = player
         .get("mmr")
