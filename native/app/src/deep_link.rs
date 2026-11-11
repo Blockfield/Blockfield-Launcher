@@ -24,13 +24,28 @@ fn desktop_file_name() -> &'static str {
     }
 }
 
+/// Escape one `Exec` argument per the desktop-entry spec: a literal `%`
+/// becomes `%%`, every other reserved character takes a backslash. Field
+/// codes (`%U` etc.) are appended by the caller, never escaped here.
+fn escape_exec_arg(arg: &str) -> String {
+    let mut out = String::with_capacity(arg.len());
+    for ch in arg.chars() {
+        match ch {
+            '%' => out.push_str("%%"),
+            ' ' | '\t' | '\n' | '"' | '\'' | '\\' | '>' | '<' | '~' | '|' | '&' | ';' | '*'
+            | '?' | '#' | '(' | ')' | '`' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 /// Linux desktop entry: `Exec` is the current binary, `%U` receives the URL.
 pub fn desktop_entry(exec: &str) -> String {
-    let quoted = if exec.contains(' ') {
-        format!("\"{exec}\"")
-    } else {
-        exec.to_string()
-    };
+    let escaped = escape_exec_arg(exec);
     let mime = schemes()
         .iter()
         .map(|scheme| format!("x-scheme-handler/{scheme}"))
@@ -41,7 +56,7 @@ pub fn desktop_entry(exec: &str) -> String {
          Type=Application\n\
          Name=Blockfield Launcher\n\
          Comment=Blockfield game launcher\n\
-         Exec={quoted} %U\n\
+         Exec={escaped} %U\n\
          Terminal=false\n\
          Categories=Game;\n\
          MimeType={mime};\n"
@@ -179,6 +194,31 @@ mod tests {
             );
         }
         assert!(asset.contains("%U"));
+    }
+
+    #[test]
+    fn desktop_entry_escapes_reserved_exec_chars() {
+        let line = |exec: &str| {
+            desktop_entry(exec)
+                .lines()
+                .find_map(|line| line.strip_prefix("Exec="))
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(
+            line("/opt/100% ready/launcher;v2"),
+            "/opt/100%%\\ ready/launcher\\;v2 %U"
+        );
+        assert_eq!(
+            line("/opt/dir with spaces/launcher"),
+            "/opt/dir\\ with\\ spaces/launcher %U"
+        );
+        assert_eq!(line("/opt/a\"b\\c"), "/opt/a\\\"b\\\\c %U");
+        // A plain path stays untouched, and %U keeps its field-code meaning.
+        assert_eq!(
+            line("/opt/blockfield/launcher"),
+            "/opt/blockfield/launcher %U"
+        );
     }
 
     #[test]

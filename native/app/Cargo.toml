@@ -34,6 +34,12 @@ skin3d = { path = "../skin3d", features = ["slint"] }
 # e2e golden PNG decode/encode. Same spec as skin3d's: no new code to compile.
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_Threading"] }
+
 [dev-dependencies]
 # Headless Slint testing backend for Layer 1 (ElementHandle tree driving).
 i-slint-backend-testing = "1.18.1"

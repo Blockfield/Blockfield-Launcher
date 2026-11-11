@@ -105,12 +105,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let primary_listener = if harness_run {
         None
     } else {
-        match single_instance::claim(single_instance::port()) {
+        match single_instance::claim() {
             Ok(single_instance::Claim::Secondary) => {
-                if let Err(error) = single_instance::forward(single_instance::port(), &cli_links) {
-                    eprintln!("Cannot forward to the running launcher: {error}");
+                match single_instance::forward(&cli_links) {
+                    Ok(()) => return Ok(()),
+                    // The owner died between election and forward, or the
+                    // endpoint is not ours: elect once more instead of
+                    // dropping the invite, and never exit on a stranger.
+                    Err(error) => {
+                        eprintln!(
+                            "Cannot forward to the running launcher ({error}); retrying election"
+                        );
+                        match single_instance::claim() {
+                            Ok(single_instance::Claim::Primary(listener)) => Some(listener),
+                            Ok(single_instance::Claim::Secondary) => {
+                                eprintln!(
+                                    "Another launcher owns this session; continuing alone: {error}"
+                                );
+                                None
+                            }
+                            Err(error) => {
+                                eprintln!("Single-instance lock failed, continuing alone: {error}");
+                                None
+                            }
+                        }
+                    }
                 }
-                return Ok(());
             }
             Ok(single_instance::Claim::Primary(listener)) => Some(listener),
             Err(error) => {
