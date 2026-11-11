@@ -8,12 +8,14 @@
 //! [`crate::LauncherEvent::AccountExpired`] so the shell adapter maps it back
 //! to today's exact `account://expired` emit. Step order matches
 //! `commands.rs` exactly: gate -> begin -> config/identity/pack -> java
-//! checks -> dependency ensure -> seed options -> args -> pre-launch hook ->
-//! log files -> pending room read+filter -> bridge dir -> room-request
-//! write/remove -> game-presence remove -> spawn with env -> running.started
-//! -> pending clear-if-unchanged -> hide -> status -> exit monitor thread
-//! (finishing, restore, post-exit hook, statuses).
+//! checks -> dependency ensure (incl. self-healing pack repair refusal and
+//! loader-profile refresh) -> seed options -> args -> pre-launch hook
+//! (warn-only) -> log files -> pending room read+filter -> bridge dir ->
+//! room-request write/remove -> game-presence remove -> spawn with env ->
+//! running.started -> pending clear-if-unchanged -> hide -> status -> exit
+//! monitor thread (finishing, restore, post-exit hook, statuses).
 
+use super::install::pack_phase_complete;
 use super::java::{resolved_java_path, system_java_available};
 use super::pack_check::{installed_pack, pack_base_url};
 use crate::rooms::PendingRoom;
@@ -90,6 +92,47 @@ async fn fresh_pack_state() -> Result<PackState, String> {
     let info = launcher_net::pack::fetch_launcher_info(&base).await?;
     let meta = launcher_net::pack::fetch_pack_meta(&info.pack).await?;
     Ok(PackState { info, meta })
+}
+
+/// Blocking pack hash check, designed for `spawn_blocking`: a corrupt pack
+/// must not survive a launch, so the check runs off the async worker.
+async fn pack_phase_done(app_data: PathBuf, game_dir: PathBuf, index_hash: String) -> bool {
+    tokio::task::spawn_blocking(move || pack_phase_complete(&app_data, &game_dir, &index_hash))
+        .await
+        .unwrap_or(false)
+}
+
+async fn pack_files_valid_blocking(app_data: PathBuf, game_dir: PathBuf) -> bool {
+    tokio::task::spawn_blocking(move || {
+        launcher_net::installed_files::pack_files_valid(&game_dir, &app_data)
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// A same-size-corrupted pack must not survive a launch: refuse with a stable
+/// prefix so the UI routes into the sync (which heals) instead of showing a
+/// dead-end error.
+async fn refuse_unverifiable_pack(
+    app_data: &Path,
+    game_dir: &Path,
+    pack: &Option<PackState>,
+) -> Result<(), String> {
+    let verifiable = match pack {
+        Some(pack) => {
+            pack_phase_done(
+                app_data.to_path_buf(),
+                game_dir.to_path_buf(),
+                pack.meta.index_hash.clone(),
+            )
+            .await
+        }
+        None => pack_files_valid_blocking(app_data.to_path_buf(), game_dir.to_path_buf()).await,
+    };
+    verifiable.then_some(()).ok_or_else(|| {
+        "PACK_REPAIR: pack files changed or are missing. Open Updates to repair them, then launch again."
+            .to_string()
+    })
 }
 
 /// Play pressed while the pack was stale routes to Updates; the game must start
@@ -198,6 +241,12 @@ pub(crate) async fn launch_with_identity(
     let game_dir_path = PathBuf::from(&game_dir);
     std::fs::create_dir_all(&game_dir_path).map_err(|e| e.to_string())?;
     let _tracking = launcher_net::installed_files::begin(&state.app_data_dir, &game_dir_path)?;
+    // A same-size-corrupted pack must not survive a launch: refuse with a
+    // stable prefix so the UI routes into the sync (which heals) instead of
+    // showing a dead-end error. Skipped for frozen dev packs.
+    if !launcher_core::dev::freeze_pack() {
+        refuse_unverifiable_pack(&state.app_data_dir, &game_dir_path, &pack).await?;
+    }
 
     let loader_version_id =
         pack.as_ref()
@@ -247,6 +296,17 @@ pub(crate) async fn launch_with_identity(
         // Floor so the frontend always has a non-zero denominator for progress.
         state.downloader.set_grand_total(16 * 1024 * 1024);
         emit_status(&state.events, "launch", "Проверка компонентов игры", false);
+        // A profile truncated by a killed update must heal here, not die in
+        // build_launch_args with a parse error (#68).
+        if let Some((minecraft, loader)) = pack.as_ref().and_then(|pack| {
+            pack.meta
+                .loader
+                .as_deref()
+                .map(|loader| (pack.meta.minecraft.as_str(), loader))
+        }) {
+            launcher_net::minecraft::ensure_loader_profile(&game_dir_path, minecraft, loader)
+                .await?;
+        }
         let launch_status = minecraft_status_sink(&state.events);
         launcher_net::minecraft::ensure_launch_dependencies(
             &state.downloader,
@@ -283,7 +343,7 @@ pub(crate) async fn launch_with_identity(
         );
         let hook_config = config.clone();
         let hook_java = java.clone();
-        tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             launcher_net::launch_hooks::run_hook(
                 &hook_config.pre_launch_command,
                 &hook_config,
@@ -292,7 +352,18 @@ pub(crate) async fn launch_with_identity(
             )
         })
         .await
-        .map_err(|e| format!("Pre-launch task failed: {e}"))??;
+        .map_err(|e| format!("Pre-launch task failed: {e}"))
+        .and_then(|result| result);
+        // A user hook (e.g. display switching) must not block the game itself.
+        if let Err(error) = result {
+            log::warn!("Pre-launch command failed: {error}");
+            emit_status(
+                &state.events,
+                "hook-error",
+                format!("Команда перед запуском: {error}"),
+                false,
+            );
+        }
     }
     emit_status(&state.events, "launch", "Запуск игры", false);
     let log_dir = game_dir_path.join("logs");
@@ -348,7 +419,12 @@ pub(crate) async fn launch_with_identity(
                 let message = match result {
                     Ok(()) => format!("Game exited ({exit})"),
                     Err(error) => {
-                        emit_status(&events, "hook-error", &error, false);
+                        emit_status(
+                            &events,
+                            "hook-error",
+                            format!("Команда после выхода: {error}"),
+                            false,
+                        );
                         format!("Post-exit command failed: {error}")
                     }
                 };
@@ -432,6 +508,36 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// The repair gate fires before any spawn: an empty game dir (nothing
+    /// verifiable) refuses with PACK_REPAIR so the UI routes into the sync.
+    /// Drives the gate helper directly: no operation lock, no tracking, so it
+    /// cannot race the other launch tests on the single-installation guard.
+    #[test]
+    fn launch_refuses_unverifiable_pack_with_repair_routing() {
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-launch-repair-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let app_data = root.join("app-data");
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let error = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(refuse_unverifiable_pack(&app_data, &game_dir, &None));
+        assert_eq!(
+            error.unwrap_err(),
+            "PACK_REPAIR: pack files changed or are missing. Open Updates to repair them, then launch again."
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// Order proof with a fake java (a shell script that exits 0): the
     /// room-request bridge file is written before spawn, pending is cleared
     /// after spawn, hide runs once, restore runs after exit, statuses arrive
@@ -479,6 +585,27 @@ mod tests {
         let index_dir = game_dir.join("assets").join("indexes");
         std::fs::create_dir_all(&index_dir).unwrap();
         std::fs::write(index_dir.join("test-index.json"), r#"{"objects": {}}"#).unwrap();
+
+        // The launch-time repair gate needs a verifiable pack: one tracked
+        // mod with a correct hash (same shape as install.rs's pack_phase test).
+        let mod_jar = game_dir.join("mods").join("order-mod.jar");
+        std::fs::create_dir_all(mod_jar.parent().unwrap()).unwrap();
+        std::fs::write(&mod_jar, b"order-bytes").unwrap();
+        std::fs::write(
+            game_dir.join("packwiz.json"),
+            serde_json::to_string(&serde_json::json!({ "cachedFiles": {
+                "order-mod": {
+                    "cachedLocation": "mods/order-mod.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": launcher_net::download::Downloader::sha256_file(&mod_jar)
+                            .unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
 
         // Fake java: answers -version like a real runtime (validated_active
         // runs it), otherwise records the spawn and what it could see, then
