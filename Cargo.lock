@@ -2299,13 +2299,16 @@ name = "launcher-app"
 version = "0.0.0"
 dependencies = [
  "blockfield-shared",
+ "flate2",
  "fs2",
  "launcher-core",
  "launcher-net",
  "log",
  "serde",
  "serde_json",
+ "tar",
  "tokio",
+ "url",
  "zip",
 ]
 
@@ -2341,6 +2344,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "url",
  "zip",
 ]
 
