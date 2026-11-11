@@ -137,9 +137,25 @@ pub fn wire(app: &AppWindow, core: Core) {
             }
         }
     });
-    // No rfd dependency in this crate. u45 owns the platform dialog callback.
-    app.global::<SettingsForm>()
-        .on_browse(|field| eprintln!("HANDOFF u45: settings browse {field}"));
+    // Game-dir/java pickers (G1): Tauri `handleBrowse` ports. Fixtures keep
+    // the silent stub so Layer-1 tests never open a dialog.
+    if core.is_some() {
+        let weak = app.as_weak();
+        app.global::<SettingsForm>().on_browse(move |field| {
+            if let Some(app) = weak.upgrade() {
+                let picked = if field == "dir" {
+                    crate::pickers::pick_game_dir()
+                } else if field == "java" {
+                    crate::pickers::pick_java()
+                } else {
+                    return;
+                };
+                crate::pickers::apply_settings_browse(&app, &field, picked);
+            }
+        });
+    } else {
+        app.global::<SettingsForm>().on_browse(|_| {});
+    }
     let weak = app.as_weak();
     let profile_core = core.clone();
     let profile_snapshot = saved.clone();

@@ -8,11 +8,13 @@ pub mod fixtures;
 pub mod idle_self_check;
 mod main_e2e;
 pub mod main_ops;
+pub mod pickers;
 pub mod runtime;
 pub mod settings_e2e;
 pub mod settings_fixtures;
 pub mod settings_tabs;
 pub mod skin;
+pub mod skin_upload;
 pub mod stats;
 pub mod update;
 pub mod window_activity;
@@ -88,8 +90,38 @@ pub fn wire_app(
             skin::sync_visibility(&app, &slim_host);
         }
     });
-    app.on_browse_skin(|| eprintln!("POC settings: skin browse is a stub (no backend)"));
-    app.on_browse_cape(|| eprintln!("POC settings: cape browse is a stub (no backend)"));
+    match &backend {
+        backend::Backend::Fixtures => {
+            app.on_browse_skin(|| eprintln!("POC settings: skin browse is a stub (no backend)"));
+            app.on_browse_cape(|| eprintln!("POC settings: cape browse is a stub (no backend)"));
+        }
+        backend::Backend::Core(_) => {
+            // Same PNG filter as Tauri `handleBrowsePng`; the picked file
+            // refreshes the 3D preview at once like the debounced Tauri effect.
+            let skin_host = skin_host.clone();
+            let cape_host = skin_host.clone();
+            let weak = app.as_weak();
+            app.on_browse_skin(move || {
+                if let Some(app) = weak.upgrade()
+                    && let Some(path) = crate::pickers::pick_png()
+                {
+                    app.set_skin_path(path.into());
+                    app.set_skin_message("".into());
+                    crate::skin::sync_visibility(&app, &skin_host);
+                }
+            });
+            let weak = app.as_weak();
+            app.on_browse_cape(move || {
+                if let Some(app) = weak.upgrade()
+                    && let Some(path) = crate::pickers::pick_png()
+                {
+                    app.set_cape_path(path.into());
+                    app.set_skin_message("".into());
+                    crate::skin::sync_visibility(&app, &cape_host);
+                }
+            });
+        }
+    }
     app.on_upload_skin(|| eprintln!("POC settings: skin upload is a stub (no backend)"));
     app.on_settings_reset(|| eprintln!("POC settings: reset is a stub (no backend)"));
     app.on_settings_save(|| eprintln!("POC settings: save is a stub (no backend)"));

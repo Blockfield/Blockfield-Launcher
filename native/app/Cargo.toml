@@ -33,6 +33,9 @@ slint = { version = "~1.18", default-features = false, features = ["std", "backe
 skin3d = { path = "../skin3d", features = ["slint"] }
 # e2e golden PNG decode/encode. Same spec as skin3d's: no new code to compile.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Native file pickers (game dir, java, skin/cape PNG): same rfd line the
+# Tauri dialog plugin already pulls in, Windows+Linux only like the shell.
+rfd = "0.16"
 
 [dev-dependencies]
 # Headless Slint testing backend for Layer 1 (ElementHandle tree driving).

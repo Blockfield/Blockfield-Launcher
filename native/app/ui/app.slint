@@ -100,6 +100,9 @@ export component AppWindow inherits Window {
     in property <image> skin-frame;
     in property <string> skin-error;
     in property <string> skin-caption;
+    in property <string> skin-message;
+    in property <string> skin-raw-error;
+    in-out property <bool> skin-busy: false;
     in property <UpdateData> update-data;
     in property <LauncherUpdateData> launcher-update-data;
     in property <DevData> dev-data;
@@ -262,6 +265,9 @@ export component AppWindow inherits Window {
                 skin-frame: root.skin-frame;
                 skin-error: root.skin-error;
                 caption: root.skin-caption;
+                skin-message: root.skin-message;
+                skin-raw-error: root.skin-raw-error;
+                skin-busy <=> root.skin-busy;
                 launcher-data: root.launcher-update-data;
                 dev-data: root.dev-data;
                 check => { root.launcher-check(); }

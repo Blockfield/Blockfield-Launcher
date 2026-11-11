@@ -235,7 +235,11 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
         let settings_state = state.clone();
         let _ = weak.upgrade_in_event_loop(move |app| {
             crate::settings_tabs::apply_response(&app, &settings);
-            crate::settings_tabs::wire(&app, Some((settings_state, settings_handle)));
+            crate::settings_tabs::wire(
+                &app,
+                Some((settings_state.clone(), settings_handle.clone())),
+            );
+            crate::skin_upload::wire_upload(&app, settings_state, settings_handle);
             app.set_username(settings["username"].as_str().unwrap_or_default().into());
             app.set_workshop(settings["activeProfile"] == "workshop");
             // Shell avatar follows the signed-in user like Tauri's Shell block.
