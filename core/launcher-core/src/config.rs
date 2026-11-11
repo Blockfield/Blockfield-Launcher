@@ -167,7 +167,9 @@ impl LauncherConfig {
         // Only the built-in Workshop host is trusted then; a custom address
         // could be the Game host, so it waits for an online check.
         if game_server.trim().is_empty() {
-            if server_host(server)? == server_host(DEFAULT_WORKSHOP_SERVER)? {
+            // Exact match: the same host on another port can route to Game.
+            server_host(server)?;
+            if server == DEFAULT_WORKSHOP_SERVER {
                 return Ok(Some(server.to_owned()));
             }
             return Err(
@@ -810,6 +812,13 @@ mod tests {
             ..LauncherConfig::default()
         };
         assert!(custom.target("").is_err());
+        // Same host, Game port: must not pass as the built-in address.
+        let same_host = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: "raknet;WORKSHOP.blockfield.pro.:25566".into(),
+            ..LauncherConfig::default()
+        };
+        assert!(same_host.target("").is_err());
         // Empty Workshop address still refuses with the same message as online.
         let empty = LauncherConfig {
             active_profile: ClientProfile::Workshop,
