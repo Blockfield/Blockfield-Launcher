@@ -167,10 +167,16 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
             let busy = busy.clone();
             let cancel_requested = cancel_requested.clone();
             handle.spawn(async move {
-                let outcome = run_retry(&state, &cancel_requested).await;
-                let busy = busy.clone();
+                let _guard = ClearBusy(busy.clone());
+                let started = weak.clone();
+                let outcome = run_retry(&state, &cancel_requested, |version| {
+                    let version = version.clone();
+                    let _ = started.upgrade_in_event_loop(move |app| {
+                        mark_download_started(&app, &version);
+                    });
+                })
+                .await;
                 let _ = weak.upgrade_in_event_loop(move |app| {
-                    busy.store(false, Ordering::SeqCst);
                     apply_retry_outcome(&app, outcome);
                 });
             });
@@ -186,13 +192,11 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
             if !busy.load(Ordering::SeqCst) {
                 return;
             }
-            cancel_requested.store(true, Ordering::SeqCst);
             let mut data = app.get_update_data();
-            if data.phase != "downloading" || !data.can_cancel {
+            if !try_begin_cancel(&mut data) {
                 return;
             }
-            data.can_cancel = false;
-            data.status_message = "Отмена загрузки...".into();
+            cancel_requested.store(true, Ordering::SeqCst);
             app.set_update_data(data);
             let state = state.clone();
             handle.spawn(async move {
@@ -229,6 +233,7 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
             let restore = weak.clone();
             let busy = busy.clone();
             handle.spawn(async move {
+                let _guard = ClearBusy(busy.clone());
                 let pending = PendingRoom::default();
                 let result = launch::launch_game(
                     &state,
@@ -249,9 +254,7 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
                     },
                 )
                 .await;
-                let busy = busy.clone();
                 let _ = weak.upgrade_in_event_loop(move |app| {
-                    busy.store(false, Ordering::SeqCst);
                     let mut data = app.get_update_data();
                     data.launching = false;
                     match result {
@@ -304,7 +307,14 @@ fn reset_for_run(app: &AppWindow) {
 
 /// One pack-sync run: check the manifest, download when outdated (Tauri
 /// `UpdateScreen` run: setup → java/loader/prune → download → verify).
-async fn run_retry(state: &LauncherAppState, cancel_requested: &AtomicBool) -> RetryOutcome {
+/// `on_download_start` arms the UI (downloading phase, cancel) the moment the
+/// install starts, mirroring the Tauri screen — the check phase alone leaves
+/// cancel unreachable.
+async fn run_retry(
+    state: &LauncherAppState,
+    cancel_requested: &AtomicBool,
+    on_download_start: impl FnOnce(&VersionCheckResult),
+) -> RetryOutcome {
     let version = match pack_check::check_modpack_version(state, |dir, meta| {
         let loader = meta
             .loader
@@ -323,6 +333,7 @@ async fn run_retry(state: &LauncherAppState, cancel_requested: &AtomicBool) -> R
     if !version.needs_update && version.java_ok && version.loader_ok {
         return RetryOutcome::UpToDate(version);
     }
+    on_download_start(&version);
     match install::download_modpack(state).await {
         Ok(()) => RetryOutcome::Complete(version),
         Err(error) => RetryOutcome::DownloadFailed(if cancel_requested.load(Ordering::SeqCst) {
@@ -338,6 +349,50 @@ enum RetryOutcome {
     Complete(VersionCheckResult),
     CheckFailed(String),
     DownloadFailed(String),
+}
+
+/// Tauri `UpdateScreen` run: once the check says an update is needed, the
+/// screen enters `downloading` before the backend install tasks run — that
+/// transition is what arms cancel.
+fn mark_download_started(app: &AppWindow, version: &VersionCheckResult) {
+    let mut data = app.get_update_data();
+    data.phase = "downloading".into();
+    data.can_cancel = true;
+    data.mirror_name = host_of(&version.mirror).into();
+    data.step0 = 2;
+    data.step1 = 1;
+    let ts = stamp();
+    let started = format!(
+        "Update needed: {} → {}",
+        version.installed_version, version.remote_version
+    );
+    data.log = log(&[
+        (ts.as_str(), started.as_str(), 1),
+        (ts.as_str(), "Waiting for backend install tasks...", 1),
+    ]);
+    app.set_update_data(data);
+}
+
+/// Cancel reaches the installer only from a cancelable download; anything
+/// else leaves `cancel_requested` clear so a later failure is not mislabeled
+/// as a cancel.
+fn try_begin_cancel(data: &mut crate::UpdateData) -> bool {
+    if data.phase != "downloading" || !data.can_cancel {
+        return false;
+    }
+    data.can_cancel = false;
+    data.status_message = "Отмена загрузки...".into();
+    true
+}
+
+/// Clears `busy` when a spawned run ends, even on panic or a dead window —
+/// without it one wedged task blocks every later retry/launch/cancel.
+struct ClearBusy(Arc<AtomicBool>);
+
+impl Drop for ClearBusy {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 /// Apply a finished pack-sync run on the UI thread (Tauri phase/step/log flow).
@@ -411,14 +466,9 @@ fn stamp() -> String {
 }
 
 fn launcher_version() -> &'static str {
-    // Native crate version is independent of the shipped launcher version.
-    include_str!("../../../src-tauri/Cargo.toml")
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("version = \"")
-                .and_then(|v| v.strip_suffix('"'))
-        })
-        .expect("launcher package version")
+    // Shell-crate version, like the Tauri shell's `env!("CARGO_PKG_VERSION")`
+    // at its call site (a core crate would see 0.0.0).
+    env!("CARGO_PKG_VERSION")
 }
 
 pub fn checking_log() -> ModelRc<UpdateLogLine> {
@@ -529,6 +579,49 @@ mod tests {
             super::host_of("mirror.blockfield.pro"),
             "mirror.blockfield.pro"
         );
+    }
+    #[test]
+    fn download_start_arms_cancel_mid_download() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        crate::fixtures::apply(&app);
+        // A fresh retry sits in checking: cancel must not arm there.
+        super::reset_for_run(&app);
+        let mut data = app.get_update_data();
+        assert_eq!(data.phase, "checking");
+        assert!(!super::try_begin_cancel(&mut data));
+        // The install starting moves to downloading: cancel becomes reachable.
+        let version = VersionCheckResult {
+            needs_update: true,
+            remote_version: "2.75".into(),
+            installed_version: "2.74".into(),
+            mirror: "https://mirror.blockfield.pro/pack".into(),
+            file_count: 0,
+            total_size: 0,
+            java: None,
+            java_ok: true,
+            loader_ok: true,
+        };
+        super::mark_download_started(&app, &version);
+        let mut data = app.get_update_data();
+        assert_eq!(data.phase, "downloading");
+        assert!(data.can_cancel);
+        assert_eq!(data.mirror_name, "mirror.blockfield.pro");
+        assert!(super::try_begin_cancel(&mut data));
+        assert!(!data.can_cancel);
+        assert!(!data.status_message.is_empty());
+        // Second cancel is a no-op once disarmed.
+        assert!(!super::try_begin_cancel(&mut data));
+    }
+    #[test]
+    fn launcher_version_is_compile_time() {
+        assert!(!super::launcher_version().is_empty());
+    }
+    #[test]
+    fn busy_guard_clears_on_drop() {
+        let busy = Arc::new(AtomicBool::new(true));
+        drop(super::ClearBusy(busy.clone()));
+        assert!(!busy.load(Ordering::SeqCst));
     }
     #[test]
     fn fixture_transitions_follow_the_tauri_flow() {

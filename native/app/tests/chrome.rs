@@ -5,7 +5,7 @@
 //! must cover the titlebar (a zero-height area misses every drag), and the
 //! three chrome buttons must minimize, toggle maximize, and request close.
 
-use blockfield_native::{fixtures, wire_app, AppWindow};
+use blockfield_native::{AppWindow, fixtures, wire_app};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use slint::ComponentHandle;
 
