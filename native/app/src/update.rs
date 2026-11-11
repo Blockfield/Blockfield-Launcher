@@ -740,9 +740,17 @@ fn stamp() -> String {
 }
 
 fn launcher_version() -> &'static str {
-    // Shell-crate version, like the Tauri shell's `env!("CARGO_PKG_VERSION")`
-    // at its call site (a core crate would see 0.0.0).
-    env!("CARGO_PKG_VERSION")
+    // Release-line version, not the native crate version: the self-update
+    // channel ships the Tauri 1.x line, so reporting the crate version
+    // (0.1.0) would stage that line as an "update" over the native build.
+    // Same source as `main_ops::launcher_version`; keep the two in sync.
+    include_str!("../../../src-tauri/Cargo.toml")
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("version = \"")
+                .and_then(|v| v.strip_suffix('"'))
+        })
+        .expect("launcher package version")
 }
 
 /// Signed self-update for the native launcher: same release channel, pinned
@@ -1706,6 +1714,18 @@ mod tests {
     #[test]
     fn launcher_version_is_compile_time() {
         assert!(!super::launcher_version().is_empty());
+    }
+
+    #[test]
+    fn launcher_version_is_on_the_release_line() {
+        // The self-update channel ships the Tauri 1.x line: reporting the
+        // native crate version (0.1.0) would stage that line as an "update"
+        // over the native build.
+        let version = semver::Version::parse(super::launcher_version()).expect("launcher semver");
+        assert!(
+            version >= semver::Version::new(1, 0, 0),
+            "native self-update check would see Tauri 1.x as newer: {version}"
+        );
     }
     #[test]
     fn busy_guard_clears_on_drop() {
