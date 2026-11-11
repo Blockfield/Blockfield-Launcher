@@ -236,11 +236,12 @@ class NativeManifestNewerTests(unittest.TestCase):
         self.assertTrue(newer("1.0.20-alpha.1", "1.0.20-beta"))
         self.assertTrue(newer("1.0.20-beta.2", "1.0.20-beta.11"))
         self.assertTrue(newer("1.0.20-beta.11", "1.0.20-rc.1"))
-        self.assertFalse(newer("1.0.20-rc.1", "1.0.20-rc.1"))
+        # Equal precedence republishes (re-run of the same release).
+        self.assertTrue(newer("1.0.20-rc.1", "1.0.20-rc.1"))
         # Numeric identifiers rank below alphanumeric ones.
         self.assertTrue(newer("1.0.20-1", "1.0.20-alpha"))
-        # Build metadata does not affect precedence.
-        self.assertFalse(
+        # Build metadata does not affect precedence: equal, so it republishes.
+        self.assertTrue(
             updater.native_manifest_newer(
                 self.write_published("1.0.20"), "1.0.20+build.1"
             )
