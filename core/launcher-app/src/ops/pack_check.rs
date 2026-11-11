@@ -57,6 +57,15 @@ pub fn require_pack_profile(pack: &PackState, profile: ClientProfile) -> Result<
     Ok(())
 }
 
+/// Fail closed when the profile switched while a check was in flight: the
+/// captured profile's manifest must never bind the other profile's game dir.
+fn ensure_profile_unchanged(captured: ClientProfile, current: ClientProfile) -> Result<(), String> {
+    if captured != current {
+        return Err("Профиль изменился. Повторите проверку.".into());
+    }
+    Ok(())
+}
+
 /// Pure URL selection + validation so unit tests pin both profiles without env mutation.
 pub fn select_pack_base_url(
     var: &str,
@@ -92,6 +101,7 @@ pub async fn check_modpack_version(
         .try_lock()
         .map_err(|_| "Дождитесь завершения текущей операции.")?;
     let config = state.config.read().await.active();
+    ensure_profile_unchanged(profile, config.active_profile)?;
     let game_dir = PathBuf::from(&config.game_dir);
     let (installed_hash, installed) = installed_pack(&game_dir);
     // A frozen dev pack must not turn "Играть" into "Обновить": the developer manages these files.
@@ -287,6 +297,20 @@ mod tests {
         assert_eq!(
             select_pack_base_url("VITE_BLOCKFIELD_PACK_URL", None, None).unwrap_err(),
             "VITE_BLOCKFIELD_PACK_URL is required",
+        );
+    }
+
+    #[test]
+    fn profile_switch_mid_check_fails_closed() {
+        ensure_profile_unchanged(ClientProfile::Game, ClientProfile::Game).unwrap();
+        ensure_profile_unchanged(ClientProfile::Workshop, ClientProfile::Workshop).unwrap();
+        assert_eq!(
+            ensure_profile_unchanged(ClientProfile::Game, ClientProfile::Workshop).unwrap_err(),
+            "Профиль изменился. Повторите проверку.",
+        );
+        assert_eq!(
+            ensure_profile_unchanged(ClientProfile::Workshop, ClientProfile::Game).unwrap_err(),
+            "Профиль изменился. Повторите проверку.",
         );
     }
 

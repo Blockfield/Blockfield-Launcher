@@ -79,6 +79,22 @@ pub fn tcp_target_for(target: &str) -> Option<String> {
     }
 }
 
+/// True only when the target may use the proxy's TCP route: a Game RakNet
+/// address on the proxy's own host (the pack's game server). A custom or
+/// developer-overridden :25566 target must never remap: its TCP 25565 may
+/// serve a different server, and the player would land there.
+pub fn is_proxy_target(target: &str, game_server: &str) -> bool {
+    let (host, _) = match raknet_endpoint(target) {
+        Some(endpoint) => endpoint,
+        None => return false,
+    };
+    // Both sides normalized by server_host (lowercase, brackets/DNS rules).
+    match launcher_core::config::server_host(game_server) {
+        Ok(proxy) => host == proxy,
+        Err(_) => false,
+    }
+}
+
 /// Address to hand the game: TCP when a fresh fallback is remembered for the
 /// host, otherwise the target unchanged.
 pub fn resolve_target(target: &str, state: &FallbackState, now: u64) -> String {
@@ -202,6 +218,32 @@ fn probe_addrs(addrs: impl Iterator<Item = std::net::SocketAddr>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tcp_fallback_only_for_the_proxy_own_host() {
+        let game_server = "raknet;play.example:25566";
+        // The proxy's own route remaps.
+        assert!(is_proxy_target("raknet;play.example:25566", game_server));
+        // A custom/dev server on the same RakNet port must never remap: its
+        // TCP 25565 may serve a different server.
+        assert!(!is_proxy_target("raknet;custom.example:25566", game_server));
+        assert!(!is_proxy_target(
+            "raknet;play.example:25566",
+            "raknet;other.example:25566"
+        ));
+        // No TCP equivalent anyway.
+        assert!(!is_proxy_target(
+            "raknet;workshop.example:25567",
+            game_server
+        ));
+        assert!(!is_proxy_target("play.example:25565", game_server));
+        // Unparseable pack server: fail closed, no remap.
+        assert!(!is_proxy_target("raknet;play.example:25566", ""));
+        assert!(!is_proxy_target(
+            "raknet;play.example:25566",
+            "not a host!!"
+        ));
+    }
 
     #[test]
     fn game_raknet_target_maps_to_tcp_25565() {
