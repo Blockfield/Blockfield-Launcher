@@ -188,7 +188,7 @@ export component MainScreen inherits Rectangle {
         if root.banner: Rectangle { x: 0px;
             y: play.y + play.height + 8px; height: 18px;
             Text { x: 0px; y: 0px;text: root.room-message != "" ? root.room-message : "Есть приглашение в игру. Для входа выберите профиль «Игра»."; color: Tokens.secondary-foreground; font-size: 12px; }
-            ActionArea { y: 0px;x: parent.width - 60px; width: 60px; height: 18px; label: "Закрыть"; clicked => { root.room-message = ""; } Text { x: 0px; y: 0px;text: "Закрыть"; color: Tokens.secondary-foreground; font-size: 12px; } }
+            if root.room-message != "": ActionArea { y: 0px;x: parent.width - 60px; width: 60px; height: 18px; label: "Закрыть"; clicked => { root.room-message = ""; } Text { x: 0px; y: 0px;text: "Закрыть"; color: Tokens.secondary-foreground; font-size: 12px; } }
         }
         details := Rectangle { x: 0px;
             y: play.y + play.height + 16px + (root.banner ? 26px : 0px); height: parent.height - self.y;
