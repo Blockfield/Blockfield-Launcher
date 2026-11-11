@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use launcher_app::LauncherAppState;
 use launcher_core::config::LauncherConfig;
-use launcher_core::errors::{friendly_error, ErrorContext};
+use launcher_core::errors::{ErrorContext, friendly_error};
 use slint::ComponentHandle;
 use tokio::runtime::Handle;
 
@@ -120,7 +120,7 @@ mod tests {
     use crate::runtime;
     use launcher_app::LauncherAppState;
     use launcher_core::game::GameState;
-    use launcher_net::download::{noop_guard_sink, Downloader};
+    use launcher_net::download::{Downloader, noop_guard_sink};
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
 
