@@ -515,8 +515,33 @@ mod tests {
 
     /// The single-installation tracking guard is process-wide: tests driving
     /// launch_with_identity serialize on it so parallel runs cannot fail with
-    /// "Another installation is being tracked".
+    /// "Another installation is being tracked". Poison-tolerant: a failing
+    /// test must not fail the rest at lock time (CI 43072204998: one assert
+    /// poisoned the guard and the next test died with PoisonError).
     static TRACKING_GUARD: StdMutex<()> = StdMutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        TRACKING_GUARD
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// Process env is process-wide too: restore on drop (including panic
+    /// unwind) so a failing test cannot leak a version into the survivors.
+    struct EnvVar(&'static str);
+
+    impl EnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            std::env::set_var(key, value);
+            EnvVar(key)
+        }
+    }
+
+    impl Drop for EnvVar {
+        fn drop(&mut self) {
+            std::env::remove_var(self.0);
+        }
+    }
 
     fn pack_for(profile: ClientProfile) -> PackState {
         PackState {
@@ -582,7 +607,7 @@ mod tests {
             eprintln!("skipped: the fake java is a unix shell script");
             return;
         }
-        let _tracking_guard = TRACKING_GUARD.lock().unwrap();
+        let _tracking_guard = serial();
         let unique = format!(
             "blockfield-workshop-offline-{}-{}",
             std::process::id(),
@@ -604,7 +629,7 @@ mod tests {
         // Same offline fixtures as the launch-order test, in the Workshop dir:
         // every runtime file resolve hits local disk, so the dependency pass
         // runs with no network.
-        std::env::set_var("BLOCKFIELD_MINECRAFT_VERSION", "9.9.9-test");
+        let _minecraft_version = EnvVar::set("BLOCKFIELD_MINECRAFT_VERSION", "9.9.9-test");
         let version_json = serde_json::json!({
             "mainClass": "net.minecraft.client.main.Main",
             "assetIndex": {"id": "test-index", "url": "https://example.com/index.json"},
@@ -777,9 +802,15 @@ mod tests {
         // failed before spawning.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         loop {
+            // `>` creates the file before the child writes a byte: a 0-byte
+            // read is the shell's creat/write window, not the value (a real
+            // empty BLOCKFIELD_SERVER still writes "\n", so this retries only
+            // the transient window and still fails fast on a genuine mismatch).
             if let Ok(target) = std::fs::read_to_string(&server_file) {
-                assert_eq!(target.trim(), workshop_server);
-                break;
+                if !target.is_empty() {
+                    assert_eq!(target.trim(), workshop_server);
+                    break;
+                }
             }
             assert!(
                 std::time::Instant::now() < deadline,
@@ -804,7 +835,6 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
 
-        std::env::remove_var("BLOCKFIELD_MINECRAFT_VERSION");
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -818,7 +848,7 @@ mod tests {
             eprintln!("skipped: the fake java is a unix shell script");
             return;
         }
-        let _tracking_guard = TRACKING_GUARD.lock().unwrap();
+        let _tracking_guard = serial();
         let unique = format!(
             "blockfield-workshop-refuse-{}-{}",
             std::process::id(),
@@ -947,7 +977,14 @@ mod tests {
 
     #[test]
     fn game_options_are_seeded_once_and_never_overwrite_the_player() {
-        let dir = std::env::temp_dir().join(format!("blockfield-options-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "blockfield-options-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let options = dir.join("options.txt");
 
         seed_game_options(&dir).unwrap();
@@ -1006,7 +1043,7 @@ mod tests {
             eprintln!("skipped: the fake java is a unix shell script");
             return;
         }
-        let _tracking_guard = TRACKING_GUARD.lock().unwrap();
+        let _tracking_guard = serial();
         let unique = format!(
             "blockfield-launch-order-{}-{}",
             std::process::id(),
@@ -1024,7 +1061,7 @@ mod tests {
         // A version fixture with no libraries/assets to fetch: every runtime
         // file resolve hits local disk, so ensure_launch_dependencies and
         // build_launch_args run with no network.
-        std::env::set_var("BLOCKFIELD_MINECRAFT_VERSION", "9.9.9-test");
+        let _minecraft_version = EnvVar::set("BLOCKFIELD_MINECRAFT_VERSION", "9.9.9-test");
         let version_json = serde_json::json!({
             "mainClass": "net.minecraft.client.main.Main",
             "assetIndex": {"id": "test-index", "url": "https://example.com/index.json"},
@@ -1186,12 +1223,16 @@ mod tests {
             "hide runs exactly once, synchronously after spawn"
         );
 
-        // The child has started: spawn fully happened, and the bridge file
-        // predates it (the child itself saw room-request.json).
+        // The child has started: spawn fully happened. Wait for the child's
+        // own verdict line (present/missing), not just `spawn`: appends are
+        // prefix-ordered, so seeing the verdict guarantees `spawn` is there
+        // too, with no second-read window between the two lines.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         loop {
             let log = std::fs::read_to_string(&order_log).unwrap_or_default();
-            if log.lines().any(|line| line == "spawn") {
+            if log.lines().any(|line| {
+                line == "spawn-room-request-present" || line == "spawn-room-request-missing"
+            }) {
                 break;
             }
             assert!(
@@ -1279,7 +1320,6 @@ mod tests {
         assert!(exited.1.starts_with("Game exited ("), "{exited:?}");
         assert!(game_dir.join("logs").join("launcher-game.log").exists());
 
-        std::env::remove_var("BLOCKFIELD_MINECRAFT_VERSION");
         std::fs::remove_dir_all(root).unwrap();
     }
 }
