@@ -20,6 +20,8 @@ slint = { version = "~1.18", default-features = false, features = ["std", "backe
 skin3d = { path = "../skin3d", features = ["slint"] }
 # e2e golden PNG decode/encode. Same spec as skin3d's: no new code to compile.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Avatar face pipeline decodes the `preview_skin` data URLs it already fetches.
+base64 = "0.23"
 
 [dev-dependencies]
 # Headless Slint testing backend for Layer 1 (ElementHandle tree driving).

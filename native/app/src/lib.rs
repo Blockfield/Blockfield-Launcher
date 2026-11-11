@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod avatars;
 pub mod backend;
 pub mod bridge;
 pub mod capture;

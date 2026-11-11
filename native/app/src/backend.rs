@@ -183,6 +183,27 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
     crate::main_ops::attach(app, state.clone(), handle.clone());
     crate::update::attach_core(app, state.clone(), handle.clone());
     crate::stats::wire_live(app, handle.clone(), state.clone());
+    // The shell avatar resolves as soon as the username is known, without
+    // waiting for the first visit to the TOP screen (Tauri Shell parity).
+    {
+        let weak = app.as_weak();
+        let state = state.clone();
+        let face_spawn = handle.clone();
+        let face_handle = handle.clone();
+        face_spawn.spawn(async move {
+            let username = state.config.read().await.username.clone();
+            let skins = state
+                .pack
+                .read()
+                .await
+                .as_ref()
+                .and_then(|pack| pack.info.skins.clone());
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                crate::avatars::refresh_shell(&app);
+                crate::avatars::request_faces(&app.as_weak(), &face_handle, skins, vec![username]);
+            });
+        });
+    }
     let settings_handle = handle.clone();
     let weak = app.as_weak();
     handle.spawn(async move {
@@ -217,6 +238,8 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
             crate::settings_tabs::wire(&app, Some((settings_state, settings_handle)));
             app.set_username(settings["username"].as_str().unwrap_or_default().into());
             app.set_workshop(settings["activeProfile"] == "workshop");
+            // Shell avatar follows the signed-in user like Tauri's Shell block.
+            crate::avatars::refresh_shell(&app);
         });
         let pack_state = state.clone();
         let pack_weak = weak.clone();

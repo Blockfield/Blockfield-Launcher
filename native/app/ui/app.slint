@@ -75,6 +75,7 @@ export component AppWindow inherits Window {
     in property <string> stats-self-stale-label;
     in property <string> stats-self-uuid;
     in property <string> stats-self-name;
+    in property <image> stats-self-face;
     in property <string> stats-self-rank;
     in property <string> stats-self-rank-code;
     in property <string> stats-self-mmr;
@@ -127,6 +128,7 @@ export component AppWindow inherits Window {
     in property <string> brand;
     in property <string> subtitle;
     in property <string> username;
+    in property <image> shell-face;
     in property <string> role;
     in property <[string]> nav-labels;
     in property <string> launcher-label;
@@ -170,7 +172,7 @@ export component AppWindow inherits Window {
         maximize => { root.maximize(); }
         request-close => { root.request-close(); }
         if !root.show-login && !root.show-firstrun: Shell {
-            fixture-face: root.show-main || root.active == 3;
+            face: root.shell-face;
             active <=> root.active;
             brand: root.brand;
             subtitle: root.subtitle;
@@ -220,6 +222,7 @@ export component AppWindow inherits Window {
                 self-stale: root.stats-self-stale;
                 self-stale-label: root.stats-self-stale-label;
                 self-name: root.stats-self-name;
+                self-face: root.stats-self-face;
                 self-rank: root.stats-self-rank;
                 self-rank-code: root.stats-self-rank-code;
                 self-mmr: root.stats-self-mmr;
