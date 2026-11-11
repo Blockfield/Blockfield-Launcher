@@ -144,16 +144,36 @@ class PrepareNativeUpdaterTests(unittest.TestCase):
                 asset = self.root / name
                 content = asset.read_bytes()
                 asset.unlink()
-                with self.assertRaisesRegex(ValueError, "Missing native updater asset"):
+                with self.assertRaisesRegex(ValueError, "Incomplete native asset set"):
                     updater.prepare_native(self.root, self.version)
                 self.assertFalse((self.root / "latest-native.json").exists())
                 asset.write_bytes(content)
                 signature = self.root / (name + ".sig")
                 signature.write_text(" \n\t")
-                with self.assertRaisesRegex(ValueError, "Empty native updater signature"):
+                with self.assertRaisesRegex(ValueError, "Incomplete native asset set"):
                     updater.prepare_native(self.root, self.version)
                 self.assertFalse((self.root / "latest-native.json").exists())
                 signature.write_text("signature-" + name + "\n")
+
+    def test_partial_set_failure_names_everything_missing(self):
+        names = list(self.names.values())
+        (self.root / names[0]).unlink()
+        (self.root / (names[1] + ".sig")).unlink()
+        with self.assertRaisesRegex(
+            ValueError, "Incomplete native asset set"
+        ) as raised:
+            updater.prepare_native(self.root, self.version)
+        self.assertIn(names[0], str(raised.exception))
+        self.assertIn(names[1] + ".sig", str(raised.exception))
+        self.assertFalse((self.root / "latest-native.json").exists())
+
+    def test_empty_directory_fails_without_publishing(self):
+        for name in self.names.values():
+            (self.root / name).unlink()
+            (self.root / (name + ".sig")).unlink()
+        with self.assertRaisesRegex(ValueError, "Incomplete native asset set"):
+            updater.prepare_native(self.root, self.version)
+        self.assertFalse((self.root / "latest-native.json").exists())
 
 
 if __name__ == "__main__":

@@ -765,9 +765,10 @@ pub mod self_update {
     /// `src-tauri/tauri.conf.json` `plugins.updater.pubkey`.
     pub const UPDATE_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0RTBFNTI0NUE1MjBGQTYKUldTbUQxSmFKT1hnbEY3SllsMkF0dm1BNTdBK1Bnc29KWVdVK2x6SG93RmJhWUUyaGYzaUpISmMK";
     /// Native-only manifest endpoint: same format and signing key as the
-    /// Tauri `latest.json`, but a separate file the Tauri updater never
-    /// reads, so a newer Tauri release is never offered to the native build.
-    pub const UPDATE_ENDPOINT: &str = "https://github.com/Blockfield/Blockfield-Launcher/releases/latest/download/latest-native.json";
+    /// Tauri `latest.json`, but served from the rolling `native-channel`
+    /// release the Tauri updater never reads, so a newer Tauri-only release
+    /// can neither stage over the native build nor hide a native update.
+    pub const UPDATE_ENDPOINT: &str = "https://github.com/Blockfield/Blockfield-Launcher/releases/download/native-channel/latest-native.json";
 
     const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
     const MAX_PACKAGE_BYTES: u64 = 256 * 1024 * 1024;
@@ -1444,12 +1445,11 @@ pub mod self_update {
 
         #[test]
         fn native_channel_never_points_at_the_tauri_manifest() {
-            // Sharing latest.json would let the next Tauri release stage over
-            // the native build. The native channel is a separate file next
-            // to it, same format and signing key.
+            // Pinned: the rolling native-channel release, never the
+            // latest-release redirect a Tauri-only release would capture.
             assert_eq!(
-                UPDATE_ENDPOINT.rsplit('/').next(),
-                Some("latest-native.json")
+                UPDATE_ENDPOINT,
+                "https://github.com/Blockfield/Blockfield-Launcher/releases/download/native-channel/latest-native.json"
             );
             assert!(!UPDATE_ENDPOINT.ends_with("/latest.json"));
         }

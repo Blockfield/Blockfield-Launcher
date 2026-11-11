@@ -305,14 +305,19 @@ jobs:
             gh release upload "$tag" rn/release-notes.md --clobber
           fi
           [ ! -f rn/announcement.json ] || gh release upload "$tag" rn/announcement.json --clobber
-          # Native channel: latest-native.json ships only once signed native
-          # artifacts are attached; until then the file stays absent and the
-          # native check quietly reports "no update". The Tauri latest.json
-          # above is untouched.
+          gh release edit "$tag" --notes-file rn/release-notes.md --draft=false --latest
+          # Native channel: the rolling `native-channel` release whose
+          # latest-native.json is replaced on every native release, so a
+          # later Tauri-only release can never hide a native update.
+          # Tauri-only releases never touch it. No native assets at all =
+          # skip; a partial Linux+Windows set fails loudly below, after the
+          # Tauri release is already published.
           if compgen -G "release/blockfield-native_*" > /dev/null; then
             just python scripts/prepare-updater.py native release "$version"
-            gh release upload "$tag" release/latest-native.json --clobber
+            gh release view native-channel >/dev/null 2>&1 || \
+              gh release create native-channel --title "Native channel" \
+                --notes "Rolling self-update channel for the native launcher; latest-native.json is replaced on every native release."
+            gh release upload native-channel release/latest-native.json --clobber
           else
-            echo "no native artifacts: latest-native.json not published"
+            echo "no native artifacts: native channel untouched"
           fi
-          gh release edit "$tag" --notes-file rn/release-notes.md --draft=false --latest

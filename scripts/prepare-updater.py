@@ -38,9 +38,8 @@ def prepare(directory, version):
 
 
 # Native launcher artifacts mirror the Tauri naming scheme with the native
-# binary name. Only the platforms the native updater polls (Linux deb and
-# Windows msi/setup) ship; the manifest reuses the release signing key and
-# format, never Tauri asset URLs.
+# binary name. Linux + Windows only (no macOS): the manifest requires exactly
+# this set with signatures; a partial set fails the publish job loudly.
 NATIVE_ASSETS = {
     "linux-x86_64-deb": "blockfield-native_{version}_amd64.deb",
     "windows-x86_64": "blockfield-native_{version}_x64_en-US.msi",
@@ -49,18 +48,31 @@ NATIVE_ASSETS = {
 
 
 def prepare_native(directory, version):
+    # Asset bytes stay on the versioned release; only the manifest rides the
+    # rolling native-channel tag (see release.yml).
     base = f"https://github.com/Blockfield/Blockfield-Launcher/releases/download/launcher-v{version}/"
-    platforms = {}
+    missing = []
     for platform, template in NATIVE_ASSETS.items():
         name = template.format(version=version)
         if not (directory / name).is_file():
-            raise ValueError(f"Missing native updater asset: {name}")
+            missing.append(name)
+            continue
+        sig = directory / (name + ".sig")
+        if not sig.is_file() or not sig.read_text().strip():
+            missing.append(name + ".sig")
+    if missing:
+        raise ValueError(
+            "Incomplete native asset set, refusing to publish: " + ", ".join(missing)
+        )
+    platforms = {}
+    for platform, template in NATIVE_ASSETS.items():
+        name = template.format(version=version)
         signature = (directory / (name + ".sig")).read_text().strip()
-        if not signature:
-            raise ValueError(f"Empty native updater signature: {name}")
         platforms[platform] = {"signature": signature, "url": base + quote(name)}
     path = directory / "latest-native.json"
-    path.write_text(json.dumps({"version": version, "platforms": platforms}, indent=2) + "\n")
+    path.write_text(
+        json.dumps({"version": version, "platforms": platforms}, indent=2) + "\n"
+    )
 
 
 if __name__ == "__main__":
