@@ -3,6 +3,7 @@
 //! `src-tauri/src/commands.rs`; the Tauri adapter keeps thin wrappers with
 //! identical signatures, error strings and serde shapes.
 
+use crate::ops::pack_check::pack_base_url_for;
 use crate::LauncherAppState;
 use launcher_core::config::ClientProfile;
 use launcher_core::dev::{self, DevStatus};
@@ -18,9 +19,12 @@ pub async fn server_status(
     pack_base: &str,
 ) -> Result<ServerStatus, String> {
     let config = state.config.read().await.clone();
+    // Profile-aware pack base (coordination#40): the Workshop profile reads its
+    // second pack URL; the passed base stays as fallback when it is unset.
+    let base = pack_base_url_for(config.active_profile).unwrap_or_else(|_| pack_base.to_string());
     let game_target = match state.pack.read().await.as_ref() {
         Some(pack) => pack.info.server.clone(),
-        None => pack::fetch_launcher_info(pack_base).await?.server,
+        None => pack::fetch_launcher_info(&base).await?.server,
     };
     let target = config
         .target(&game_target)?
@@ -32,7 +36,7 @@ pub async fn server_status(
         status::locate(&host, port),
         async {
             if config.active_profile == ClientProfile::Game {
-                status::fetch_rooms(pack_base).await
+                status::fetch_rooms(&base).await
             } else {
                 None
             }
