@@ -4,13 +4,35 @@ use std::sync::Arc;
 use launcher_app::{
     LauncherAppState, VersionCheckResult,
     ops::{install, launch, pack_check},
-    rooms::PendingRoom,
+    rooms::{PendingRoom, pending_room},
 };
 use launcher_net::minecraft;
 use slint::ComponentHandle;
 use tokio::runtime::Handle;
 
 use crate::{AppWindow, MainData};
+
+/// One pending-invite store per process: the Discord presence loop, the
+/// RoomPending auto-join and the manual join flow must see the same target
+/// (Tauri keeps a single `PendingRoom` on its app handle).
+pub fn shared_pending() -> Arc<PendingRoom> {
+    static PENDING: std::sync::OnceLock<Arc<PendingRoom>> = std::sync::OnceLock::new();
+    PENDING
+        .get_or_init(|| Arc::new(PendingRoom::default()))
+        .clone()
+}
+
+/// Serializes the tests that share the process-wide pending-invite store (and
+/// the bridge auto-join one-shot): Rust runs tests on threads, so without
+/// this two tests reset and read the store under each other.
+#[cfg(test)]
+pub(crate) fn test_serial() -> std::sync::MutexGuard<'static, ()> {
+    static SERIAL: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    SERIAL
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 pub fn launch_sub(status: slint::SharedString, progress: i32) -> slint::SharedString {
     let status = if status.is_empty() {
@@ -59,7 +81,7 @@ pub fn attach_fixtures(app: &AppWindow) {
 }
 
 pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
-    let pending = Arc::new(PendingRoom::default());
+    let pending = shared_pending();
     for action in [
         Action::Deploy,
         Action::Verify,
@@ -117,6 +139,9 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
                         Err(error) => data.launch_error = error.into(),
                     }
                     app.set_main_data(data);
+                    // Pack check done / launch idle: a still-waiting invite
+                    // retries now (Tauri MainScreen.tsx pending-room effect).
+                    crate::bridge::retry_pending_join(&app);
                 });
             });
         };
@@ -128,7 +153,17 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
         }
     }
     let weak = app.as_weak();
+    app.on_retry_join(move || {
+        // main.slint `changed workshop`: the profile flipped back to Game.
+        if let Some(app) = weak.upgrade() {
+            crate::bridge::retry_pending_join(&app);
+        }
+    });
+    let weak = app.as_weak();
     app.on_join(move |id| {
+        // A join was attempted: consume the auto-join one-shot so later
+        // state changes do not rejoin the same invite (Tauri `handledRoom`).
+        crate::bridge::note_join(&id);
         let state = state.clone();
         let pending = pending.clone();
         let weak = weak.clone();
@@ -179,8 +214,34 @@ async fn run(
     };
     if matches!(action, Action::Download) || needs_setup {
         install::download_modpack(state).await?;
-        return check(state, false).await.map(Some);
+        let version = check(state, false).await?;
+        if !join_continues(action, pending) {
+            return Ok(Some(version));
+        }
+        // Invite auto-join, Tauri auto-launch-after-sync
+        // (src/lib/auto-launch.ts + UpdateScreen effect, ported as
+        // ops::launch::should_auto_launch_after_sync): a join-triggered
+        // deploy continues into launch with the saved room instead of
+        // stopping on the done version.
+        launch(state, pending, weak).await?;
+        return Ok(Some(version));
     }
+    launch(state, pending, weak).await?;
+    Ok(None)
+}
+
+/// Invite auto-join continuation: only a deploy with a saved invite proceeds
+/// into launch after the pack sync; a manual download stays on the done
+/// version, like Tauri's Play-triggered-only auto-launch.
+fn join_continues(action: Action, pending: &PendingRoom) -> bool {
+    matches!(action, Action::Deploy) && pending_room(pending).is_some()
+}
+
+async fn launch(
+    state: &LauncherAppState,
+    pending: &PendingRoom,
+    weak: &slint::Weak<AppWindow>,
+) -> Result<(), String> {
     let hide = weak.clone();
     let restore = weak.clone();
     launch::launch_game(
@@ -201,8 +262,7 @@ async fn run(
             }),
         },
     )
-    .await?;
-    Ok(None)
+    .await
 }
 
 pub async fn check(state: &LauncherAppState, verify: bool) -> Result<VersionCheckResult, String> {
@@ -253,6 +313,25 @@ fn launcher_version() -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn join_continues_into_launch_only_for_pending_deploys() {
+        // After a join-triggered deploy finishes the pack sync, the saved
+        // room continues into launch (Tauri auto-launch-after-sync,
+        // src/lib/auto-launch.ts + UpdateScreen effect, ported as
+        // ops::launch::should_auto_launch_after_sync); a manual download or
+        // a deploy with no invite stays on the done version.
+        let _serial = super::test_serial();
+        let pending = super::shared_pending();
+        *pending.0.lock().unwrap() = None;
+        assert!(!super::join_continues(super::Action::Deploy, &pending));
+        *pending.0.lock().unwrap() = Some("room-1".to_owned());
+        assert!(super::join_continues(super::Action::Deploy, &pending));
+        assert!(!super::join_continues(super::Action::Download, &pending));
+        assert!(!super::join_continues(super::Action::Verify, &pending));
+        assert!(!super::join_continues(super::Action::Cancel, &pending));
+        *pending.0.lock().unwrap() = None;
+    }
+
     #[test]
     fn launch_sub_matches_react_slice_and_suffix() {
         assert_eq!(super::launch_sub("".into(), -1), "ЗАПУСК");

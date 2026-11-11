@@ -124,6 +124,7 @@ export component AppWindow inherits Window {
     callback deploy();
     callback verify();
     callback join(string);
+    callback retry-join();
     in property <string> chrome-title;
     in property <string> brand;
     in property <string> subtitle;
@@ -199,6 +200,7 @@ export component AppWindow inherits Window {
                 deploy => { root.deploy(); }
                 verify => { root.verify(); }
                 join(id) => { root.join(id); }
+                retry-join => { root.retry-join(); }
             }
             if root.active == 2: StatsScreen {
                 modes: root.stats-modes;
