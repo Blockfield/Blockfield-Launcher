@@ -31,10 +31,11 @@ fn texture_bytes(path: &str) -> Result<Option<Vec<u8>>, String> {
     }
     // Reject by size before reading: the preview syncs on the event-loop
     // thread, so a huge file must never be fully loaded to be refused.
-    let too_big = std::fs::metadata(path)
-        .map(|meta| meta.len() > MAX_TEXTURE_BYTES)
-        .map_err(|error| format!("Не удалось прочитать файл: {error}"))?;
-    if too_big {
+    // Only regular files: opening a FIFO or device blocks this thread, and
+    // their metadata length (often 0) says nothing about what a read returns.
+    let meta =
+        std::fs::metadata(path).map_err(|error| format!("Не удалось прочитать файл: {error}"))?;
+    if !meta.is_file() || meta.len() > MAX_TEXTURE_BYTES {
         return Err("Файл должен быть PNG не больше 1 МБ".into());
     }
     let file =
@@ -285,6 +286,20 @@ mod tests {
         // bounded helper must stop at the cap instead of loading it all.
         let bytes = read_bounded(Endless).expect("bounded read terminates");
         assert_eq!(bytes.len() as u64, MAX_TEXTURE_BYTES + 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_rejected_without_opening() {
+        let dir = std::env::temp_dir().join(format!("bf-skin-fifo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("skin.png");
+        let _ = std::fs::remove_file(&fifo);
+        let status = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+        assert!(status.success());
+        // Returns instead of blocking on open: a FIFO is not a regular file.
+        assert!(texture_bytes(fifo.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
