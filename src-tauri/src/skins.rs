@@ -298,12 +298,12 @@ async fn fetch_png(client: &reqwest::Client, url: Option<&str>) -> Option<String
 /// The account snapshot the UI saw at click time must still be the active one; a missing
 /// snapshot (older UI) skips the check, anything else aborts before any file or network touch.
 fn check_upload_account(started: Option<&str>, current_uuid: &str) -> Result<(), String> {
-    if let Some(started) = started.filter(|s| !s.is_empty()) {
-        if started != current_uuid {
-            return Err(ACCOUNT_SWITCHED.to_string());
-        }
+    // Fail closed: the bundled UI always sends the account it showed, so a
+    // missing or empty uuid cannot prove the upload targets that account.
+    match started.filter(|s| !s.is_empty()) {
+        Some(started) if started == current_uuid => Ok(()),
+        _ => Err(ACCOUNT_SWITCHED.to_string()),
     }
-    Ok(())
 }
 
 fn read_texture(path: &str) -> Result<String, String> {
@@ -374,8 +374,8 @@ mod tests {
     #[test]
     fn account_switch_between_click_and_run_aborts_upload() {
         assert!(check_upload_account(Some("uuid-a"), "uuid-a").is_ok());
-        assert!(check_upload_account(None, "uuid-a").is_ok());
-        assert!(check_upload_account(Some(""), "uuid-a").is_ok());
+        assert!(check_upload_account(None, "uuid-a").is_err());
+        assert!(check_upload_account(Some(""), "uuid-a").is_err());
         let err = check_upload_account(Some("uuid-a"), "uuid-b").unwrap_err();
         assert_eq!(err, ACCOUNT_SWITCHED);
     }
