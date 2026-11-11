@@ -111,3 +111,22 @@ fn chrome_min_max_close_wired() {
     when_click_control(&app, "Закрыть");
     println!("PASS chrome min/max/close wired");
 }
+
+#[test]
+fn chrome_close_while_busy_hides() {
+    let app = given_chrome();
+    // Idle main: the chrome close quits (queued without a running loop in
+    // the testing backend), the window stays visible.
+    when_click_control(&app, "Закрыть");
+    assert!(app.window().is_visible(), "idle close quits, not hides");
+    // Running game (Tauri CloseRequested guard): the same button hides the
+    // window instead; the launch exit thread restores it on game exit.
+    fixtures::apply_main(&app, "main", "running").expect("running fixtures");
+    app.show().expect("show test window");
+    when_click_control(&app, "Закрыть");
+    assert!(
+        !app.window().is_visible(),
+        "busy close hides instead of quitting"
+    );
+    println!("PASS chrome close while busy hides");
+}

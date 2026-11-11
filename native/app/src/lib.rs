@@ -21,9 +21,36 @@ pub use skin3d::slint::PreviewHost;
 
 use std::rc::Rc;
 
+use launcher_app::status_ops;
 use slint::ComponentHandle;
 
 slint::include_modules!();
+
+/// Support link target, mirroring `DISCORD_URL` in src/app/constants.ts:
+/// a runtime override wins, then the build-time Vite value, then the invite
+/// fallback. Runtime first follows the `pack_base_url` precedent so tests
+/// and dev shells can point elsewhere without rebuilding.
+pub fn support_url() -> String {
+    std::env::var("VITE_DISCORD_URL")
+        .ok()
+        .filter(|url| !url.is_empty())
+        .or_else(|| option_env!("VITE_DISCORD_URL").map(str::to_string))
+        .unwrap_or_else(|| "https://discord.gg/cAUcpeCVDM".to_owned())
+}
+
+/// Tauri `CloseRequested` parity (src-tauri/src/lib.rs): while the game is
+/// busy the window hides instead of quitting; the launch exit thread always
+/// runs `restore` (core ops::launch), so the window comes back on game exit.
+/// `main-data.phase` mirrors `GameState` through the bridge; `launching`
+/// covers the click-to-event gap before the first status arrives.
+pub fn hide_instead_of_quit(app: &AppWindow) -> bool {
+    let data = app.get_main_data();
+    if data.phase == "idle" && !data.launching {
+        return false;
+    }
+    let _ = app.hide();
+    true
+}
 
 /// Build the app window and wire every callback exactly as the shipped binary
 /// does, so headless integration tests drive the real UI tree (same code path
@@ -45,9 +72,26 @@ pub fn wire_app(
             app.window().set_maximized(!app.window().is_maximized());
         }
     });
-    app.on_request_close(|| {
+    let weak = app.as_weak();
+    app.on_request_close(move || {
+        if let Some(app) = weak.upgrade()
+            && hide_instead_of_quit(&app)
+        {
+            return;
+        }
         if let Err(error) = slint::quit_event_loop() {
             eprintln!("Cannot close launcher: {error}");
+        }
+    });
+    // OS-level close (Alt+F4 / window manager): same guard as the chrome
+    // button, so an idle close still quits instead of lingering hidden.
+    let weak = app.as_weak();
+    app.window().on_close_requested(move || {
+        if weak.upgrade().is_some_and(|app| hide_instead_of_quit(&app)) {
+            slint::CloseRequestResponse::HideWindow
+        } else {
+            let _ = slint::quit_event_loop();
+            slint::CloseRequestResponse::HideWindow
         }
     });
     let weak = app.as_weak();
@@ -71,7 +115,13 @@ pub fn wire_app(
             skin::sync_visibility(&app, &update_host);
         }
     });
-    app.on_support(|| eprintln!("POC support action: https://discord.gg/cAUcpeCVDM"));
+    // Tauri Shell opens DISCORD_URL through the open_url command; the
+    // native footer calls the same shared helper (stats open-site does too).
+    app.on_support(|| {
+        if let Err(error) = status_ops::open_url(&support_url()) {
+            eprintln!("Cannot open support link: {error}");
+        }
+    });
     let weak = app.as_weak();
     let tab_host = skin_host.clone();
     app.on_settings_tab_changed(move |index| {
@@ -153,4 +203,67 @@ pub fn wire_app(
     });
     backend.start(app);
     Ok((skin_host, activity))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `std::env` is process-global while libtest runs threads in one
+    /// process: serialize the override test so no other test can observe it.
+    fn env_serial() -> std::sync::MutexGuard<'static, ()> {
+        static SERIAL: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        SERIAL
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn support_url_matches_the_tauri_discord_fallback() {
+        let _serial = env_serial();
+        unsafe { std::env::remove_var("VITE_DISCORD_URL") };
+        // option_env! is baked at compile time; a local build without the
+        // Vite var falls back to the same invite the Tauri shell links.
+        if option_env!("VITE_DISCORD_URL").is_none() {
+            assert_eq!(support_url(), "https://discord.gg/cAUcpeCVDM");
+        }
+        // The shared allowlist accepts whatever the URL resolves to, so the
+        // footer action can never hand open_url a refused scheme.
+        assert!(status_ops::validate_open_url(&support_url()).is_ok());
+        unsafe {
+            std::env::set_var("VITE_DISCORD_URL", "https://example.com/support");
+        }
+        assert_eq!(support_url(), "https://example.com/support");
+        unsafe { std::env::remove_var("VITE_DISCORD_URL") };
+    }
+
+    #[test]
+    fn busy_close_hides_instead_of_quitting() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        app.show().unwrap();
+        // Idle main: the close path quits, the window stays visible.
+        let mut data = app.get_main_data();
+        data.phase = "idle".into();
+        data.launching = false;
+        app.set_main_data(data);
+        assert!(!hide_instead_of_quit(&app));
+        assert!(app.window().is_visible());
+        // Running game: the close is absorbed by hiding, like Tauri.
+        let mut data = app.get_main_data();
+        data.phase = "running".into();
+        app.set_main_data(data);
+        assert!(hide_instead_of_quit(&app));
+        assert!(!app.window().is_visible());
+        // Deploy clicked but no game status yet: still hides (Tauri already
+        // began the session; only the event has not arrived).
+        app.show().unwrap();
+        let mut data = app.get_main_data();
+        data.phase = "idle".into();
+        data.launching = true;
+        app.set_main_data(data);
+        assert!(hide_instead_of_quit(&app));
+        assert!(!app.window().is_visible());
+    }
 }

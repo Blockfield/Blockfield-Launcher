@@ -34,7 +34,11 @@ export struct UpdateData {
     log: [UpdateLogLine],
     // 0 pending, 1 active, 2 done
     step0: int, step1: int, step2: int, step3: int,
+    // Friendly message; the raw backend text for the "Подробности" spoiler
+    // (Tauri ErrorDetail) stays in error-raw, empty when there is nothing
+    // to diagnose (user-facing notes like cancel/busy guards).
     error: string,
+    error-raw: string,
     launching: bool,
     // idle = ready; anything else blocks actions like on the main screen.
     game-phase: string,
@@ -53,7 +57,9 @@ export struct LauncherUpdateData {
     percent: int,
     has-total: bool,
     checked-at: string,
+    // Friendly message + raw backend text behind "Подробности", like UpdateData.
     error: string,
+    error-raw: string,
     installed: bool,
 }
 
@@ -128,6 +134,7 @@ export component UpdateScreen inherits Rectangle {
     callback retry();
     callback cancel();
     callback launch();
+    in-out property <bool> error-details: false;
     private property <bool> game-busy: root.data.game-phase != "idle";
     private property <bool> transferring: root.data.phase == "downloading" || root.data.phase == "launching";
     private property <string> status-text: root.game-busy ? root.data.game-label :
@@ -142,6 +149,10 @@ export component UpdateScreen inherits Rectangle {
         root.data.phase == "complete" || root.data.phase == "uptodate" ? Tokens.success : Tokens.primary;
     private property <string> mirror-status: root.transferring ? root.data.speed :
         root.data.mirror-status != "" ? root.data.mirror-status : "ПРОВЕРКА...";
+    // Error block geometry: ids inside `if` are invisible to siblings, so the
+    // block stays instantiated with `visible` and the stats row anchors to it.
+    private property <bool> show-err: root.data.phase == "error" && root.data.error != "";
+    private property <bool> show-raw: root.error-details && root.data.error-raw != "";
     background: Tokens.background;
     TopoBackdrop { x: 0px; y: 0px; }
     GridBackdrop { x: 0px; y: 0px; intensity: 0.5; }
@@ -213,12 +224,22 @@ export component UpdateScreen inherits Rectangle {
                 Rectangle { x: 0px; y: 0px; width: parent.width * Math.min(100, Math.max(0, root.data.progress)) / 100; height: parent.height;
                     background: @linear-gradient(90deg, #8a571c, #f5a524 60%, #ffc861); }
             }
-            if root.data.phase == "error" && root.data.error != "": Rectangle { x: 16px; y: bar.y + bar.height + 6px;
-                width: parent.width - 32px; height: 18px;
-                Text { x: 0px; y: 0px; width: parent.width; height: parent.height; text: root.data.error;
+            err-block := Rectangle { x: 16px; y: bar.y + bar.height + 6px;
+                width: parent.width - 32px; visible: root.show-err;
+                height: 18px + (root.data.error-raw != "" ? 20px : 0px) + (root.show-raw ? err-raw.preferred-height + 4px : 0px);
+                err-msg := Text { x: 0px; y: 0px; width: parent.width; height: 18px; text: root.data.error;
                     font-size: 11px; color: #c98b8b; overflow: elide; }
+                // Raw backend error behind "Подробности", like the main
+                // screen and Tauri ErrorDetail; hidden when there is no raw.
+                if root.data.error-raw != "": ActionArea { x: 0px; y: 22px; width: err-toggle.preferred-width + 11px; height: 16px; label: "Подробности";
+                    clicked => { root.error-details = !root.error-details; }
+                    Path { x: 0px; y: 5px; width: 5px; height: 5px; viewbox-width: 7; viewbox-height: 7; fill: Tokens.muted-foreground; commands: root.error-details ? "M 0 0 L 7 0 L 3.5 7 Z" : "M 0 0 L 7 3.5 L 0 7 Z"; }
+                    err-toggle := SmallLabel { x: 11px; y: 0px; height: parent.height; text: "Подробности"; letter-spacing: 1px; }
+                }
+                err-raw := Text { x: 0px; y: 42px; width: parent.width; text: root.data.error-raw; visible: root.show-raw;
+                    font-family: Tokens.mono; font-size: 10px; color: Tokens.muted-foreground; wrap: word-wrap; }
             }
-            stats := Rectangle { x: 16px; y: bar.y + bar.height + (root.data.phase == "error" && root.data.error != "" ? 24px : 8px);
+            stats := Rectangle { x: 16px; y: root.show-err ? err-block.y + err-block.height + 6px : bar.y + bar.height + 8px;
                 width: parent.width - 32px; height: 58px;
                 HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: parent.height; spacing: 1px;
                     UpdateStat { label: "ТЕКУЩИЙ ФАЙЛ"; value: root.data.current-file != "" ? root.data.current-file : "—"; mono: true; }
@@ -283,6 +304,7 @@ export component LauncherUpdatePanel inherits Rectangle {
     callback check();
     callback install();
     callback restart();
+    in-out property <bool> error-details: false;
     private property <bool> busy: root.data.phase == "checking" || root.data.phase == "downloading" || root.data.phase == "verifying" || root.data.phase == "installing" || root.data.phase == "restarting";
     private property <bool> transferring: root.data.phase == "downloading" || root.data.phase == "verifying" || root.data.phase == "installing";
     private property <string> status-text: root.data.phase == "idle" ? "Проверка ещё не выполнялась" :
@@ -317,6 +339,13 @@ export component LauncherUpdatePanel inherits Rectangle {
         if root.data.checked-at != "": Text { text: "Последняя проверка: " + root.data.checked-at; font-size: 11px;
             color: Tokens.secondary-foreground; }
         if root.data.error != "": Text { text: root.data.error; font-size: 12px; color: #c98b8b; wrap: word-wrap; width: parent.width; }
+        if root.data.error-raw != "": ActionArea { height: 16px; width: panel-toggle.preferred-width + 11px; label: "Подробности";
+            clicked => { root.error-details = !root.error-details; }
+            Path { x: 0px; y: 5px; width: 5px; height: 5px; viewbox-width: 7; viewbox-height: 7; fill: Tokens.muted-foreground; commands: root.error-details ? "M 0 0 L 7 0 L 3.5 7 Z" : "M 0 0 L 7 3.5 L 0 7 Z"; }
+            panel-toggle := SmallLabel { x: 11px; y: 0px; height: parent.height; text: "Подробности"; font-size: 10px; letter-spacing: 1px; }
+        }
+        if root.error-details && root.data.error-raw != "": Text { text: root.data.error-raw; font-size: 10px;
+            font-family: Tokens.mono; color: Tokens.muted-foreground; wrap: word-wrap; width: parent.width; }
         if root.data.error == "" && root.data.update-body != "": Text { text: root.data.update-body; font-size: 12px;
             color: Tokens.secondary-foreground; wrap: word-wrap; width: parent.width; }
         if root.data.error == "" && root.data.update-body == "": Text {
