@@ -1,6 +1,6 @@
 use std::{rc::Rc, sync::Arc, time::Duration};
 
-use skin3d::slint::{ClockMode, FrameSink, HostOptions, PreviewHost};
+use skin3d::slint::{ClockMode, FrameSink, HostOptions, PreviewHost, default_source};
 use slint::{
     ComponentHandle, Timer,
     platform::WindowEvent,
@@ -9,12 +9,66 @@ use slint::{
 
 use crate::{AppWindow, window_activity::Activity};
 
+const MAX_TEXTURE_BYTES: u64 = 1024 * 1024;
+const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
+const LOCAL_CAPTION: &str = "ПРЕДПРОСМОТР ФАЙЛА";
+
 /// The preview is live only on the Skin tab of the settings screen.
 pub fn skin_visible(app: &AppWindow) -> bool {
     app.get_active() == 3 && app.get_settings_tab() == 3
 }
 
+fn texture_bytes(path: &str) -> Result<Option<Vec<u8>>, String> {
+    if path.is_empty() {
+        return Ok(None);
+    }
+    let bytes =
+        std::fs::read(path).map_err(|error| format!("Не удалось прочитать файл: {error}"))?;
+    if bytes.len() as u64 > MAX_TEXTURE_BYTES || !bytes.starts_with(PNG_MAGIC) {
+        return Err("Файл должен быть PNG не больше 1 МБ".into());
+    }
+    Ok(Some(bytes))
+}
+
+/// Mirror the Tauri preview: local PNGs override the bundled fallback and the
+/// slim toggle selects the arm model. Visibility transitions only; the key
+/// check keeps steady state free of file IO.
+pub fn sync_source(app: &AppWindow, host: &Rc<PreviewHost>) {
+    let key = (
+        app.get_skin_path().to_string(),
+        app.get_cape_path().to_string(),
+        app.get_slim(),
+    );
+    if host.source_matches(&key) && !host.failed() {
+        return;
+    }
+    let staged = match (texture_bytes(&key.0), texture_bytes(&key.1)) {
+        (Ok(skin), Ok(cape)) => {
+            let mut source = default_source(key.2);
+            if let Some(bytes) = skin {
+                source.skin = bytes;
+            }
+            if let Some(bytes) = cape {
+                source.cape = Some(bytes);
+            }
+            source
+        }
+        (Err(error), _) | (_, Err(error)) => {
+            app.set_skin_error(error.into());
+            return;
+        }
+    };
+    host.set_source(key, staged);
+    app.set_skin_error("".into());
+    if !app.get_skin_path().is_empty() || !app.get_cape_path().is_empty() {
+        app.set_skin_caption(LOCAL_CAPTION.into());
+    } else {
+        app.set_skin_caption("ВАШ СКИН".into());
+    }
+}
+
 pub fn sync_visibility(app: &AppWindow, host: &Rc<PreviewHost>) {
+    sync_source(app, host);
     host.set_tab_visible(skin_visible(app));
     host.refresh();
 }
