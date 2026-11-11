@@ -229,15 +229,14 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
     });
     let weak = app.as_weak();
     app.on_firstrun_browse_dir(move || {
-        if weak.upgrade().is_some() {
-            // Pickers are U11; settings skin browse is a stub the same way.
-            eprintln!("POC firstrun: game-dir browse is a stub (no backend)");
+        if let Some(app) = weak.upgrade() {
+            crate::pickers::apply_firstrun_browse_dir(&app, crate::pickers::pick_game_dir());
         }
     });
     let weak = app.as_weak();
     app.on_firstrun_browse_java(move || {
-        if weak.upgrade().is_some() {
-            eprintln!("POC firstrun: java browse is a stub (no backend)");
+        if let Some(app) = weak.upgrade() {
+            crate::pickers::apply_firstrun_browse_java(&app, crate::pickers::pick_java());
         }
     });
     let weak = app.as_weak();

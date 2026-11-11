@@ -65,6 +65,9 @@ export component SettingsScreen inherits Rectangle {
     in property <image> skin-frame;
     in property <string> skin-error;
     in property <string> caption;
+    in property <string> skin-message;
+    in property <string> skin-raw-error;
+    in-out property <bool> skin-busy: false;
     in property <LauncherUpdateData> launcher-data;
     in property <DevData> dev-data;
     callback browse-skin();
@@ -249,11 +252,23 @@ export component SettingsScreen inherits Rectangle {
                             SettingsButton {
                                 x: parent.width - self.width;
                                 y: 12px;
-                                text: "ЗАГРУЗИТЬ";
+                                text: root.skin-busy ? "ЗАГРУЗКА..." : "ЗАГРУЗИТЬ";
                                 icon: @image-url("../assets/icons/upload.svg");
                                 primary: true;
-                                enabled: root.skin-path != "" || root.cape-path != "";
+                                enabled: (root.skin-path != "" || root.cape-path != "") && !root.skin-busy;
                                 clicked => { root.upload(); }
+                            }
+                            if root.skin-message != "": Text {
+                                x: 0px;
+                                y: 44px;
+                                width: parent.width;
+                                height: 12px;
+                                text: root.skin-message;
+                                font-size: 11px;
+                                color: #F5A524;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                                overflow: elide;
                             }
                         }
                     }

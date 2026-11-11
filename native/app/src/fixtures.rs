@@ -309,6 +309,9 @@ pub fn apply_settings(app: &AppWindow) -> Result<(), String> {
     app.set_slim(false);
     app.set_skin_caption("ВАШ СКИН".into());
     app.set_skin_error("".into());
+    app.set_skin_message("".into());
+    app.set_skin_raw_error("".into());
+    app.set_skin_busy(false);
     crate::avatars::apply_fixture_faces(app);
     Ok(())
 }
