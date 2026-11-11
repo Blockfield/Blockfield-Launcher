@@ -37,5 +37,34 @@ def prepare(directory, version):
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+# Native launcher artifacts mirror the Tauri naming scheme with the native
+# binary name. Only the platforms the native updater polls (Linux deb and
+# Windows msi/setup) ship; the manifest reuses the release signing key and
+# format, never Tauri asset URLs.
+NATIVE_ASSETS = {
+    "linux-x86_64-deb": "blockfield-native_{version}_amd64.deb",
+    "windows-x86_64": "blockfield-native_{version}_x64_en-US.msi",
+    "windows-x86_64-nsis": "blockfield-native_{version}_x64-setup.exe",
+}
+
+
+def prepare_native(directory, version):
+    base = f"https://github.com/Blockfield/Blockfield-Launcher/releases/download/launcher-v{version}/"
+    platforms = {}
+    for platform, template in NATIVE_ASSETS.items():
+        name = template.format(version=version)
+        if not (directory / name).is_file():
+            raise ValueError(f"Missing native updater asset: {name}")
+        signature = (directory / (name + ".sig")).read_text().strip()
+        if not signature:
+            raise ValueError(f"Empty native updater signature: {name}")
+        platforms[platform] = {"signature": signature, "url": base + quote(name)}
+    path = directory / "latest-native.json"
+    path.write_text(json.dumps({"version": version, "platforms": platforms}, indent=2) + "\n")
+
+
 if __name__ == "__main__":
-    prepare(Path(sys.argv[1]), sys.argv[2])
+    if len(sys.argv) == 4 and sys.argv[1] == "native":
+        prepare_native(Path(sys.argv[2]), sys.argv[3])
+    else:
+        prepare(Path(sys.argv[1]), sys.argv[2])

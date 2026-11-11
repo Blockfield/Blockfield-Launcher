@@ -107,5 +107,54 @@ class PrepareUpdaterTests(unittest.TestCase):
                 signature.write_text(content)
 
 
+class PrepareNativeUpdaterTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.version = "1.0.20"
+        self.names = {
+            "linux-x86_64-deb": f"blockfield-native_{self.version}_amd64.deb",
+            "windows-x86_64": f"blockfield-native_{self.version}_x64_en-US.msi",
+            "windows-x86_64-nsis": f"blockfield-native_{self.version}_x64-setup.exe",
+        }
+        for name in self.names.values():
+            (self.root / name).write_bytes(b"bundle")
+            (self.root / (name + ".sig")).write_text("signature-" + name + "\n")
+
+    def test_builds_native_manifest_without_touching_tauri_files(self):
+        tauri = self.root / "latest.json"
+        tauri.write_text(json.dumps({"version": self.version}))
+        updater.prepare_native(self.root, self.version)
+        data = json.loads((self.root / "latest-native.json").read_text())
+        self.assertEqual(data["version"], self.version)
+        self.assertEqual(set(data["platforms"]), set(self.names))
+        base = f"https://github.com/Blockfield/Blockfield-Launcher/releases/download/launcher-v{self.version}/"
+        for platform, name in self.names.items():
+            with self.subTest(platform=platform):
+                entry = data["platforms"][platform]
+                self.assertEqual(entry["signature"], "signature-" + name)
+                self.assertEqual(unquote(entry["url"]), base + name)
+        # The Tauri channel is untouched: same bytes, no native keys in it.
+        self.assertEqual(json.loads(tauri.read_text()), {"version": self.version})
+
+    def test_rejects_missing_or_empty_native_asset_signature(self):
+        for name in self.names.values():
+            with self.subTest(asset=name):
+                asset = self.root / name
+                content = asset.read_bytes()
+                asset.unlink()
+                with self.assertRaisesRegex(ValueError, "Missing native updater asset"):
+                    updater.prepare_native(self.root, self.version)
+                self.assertFalse((self.root / "latest-native.json").exists())
+                asset.write_bytes(content)
+                signature = self.root / (name + ".sig")
+                signature.write_text(" \n\t")
+                with self.assertRaisesRegex(ValueError, "Empty native updater signature"):
+                    updater.prepare_native(self.root, self.version)
+                self.assertFalse((self.root / "latest-native.json").exists())
+                signature.write_text("signature-" + name + "\n")
+
+
 if __name__ == "__main__":
     unittest.main()

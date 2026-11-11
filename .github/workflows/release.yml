@@ -305,4 +305,14 @@ jobs:
             gh release upload "$tag" rn/release-notes.md --clobber
           fi
           [ ! -f rn/announcement.json ] || gh release upload "$tag" rn/announcement.json --clobber
+          # Native channel: latest-native.json ships only once signed native
+          # artifacts are attached; until then the file stays absent and the
+          # native check quietly reports "no update". The Tauri latest.json
+          # above is untouched.
+          if compgen -G "release/blockfield-native_*" > /dev/null; then
+            just python scripts/prepare-updater.py native release "$version"
+            gh release upload "$tag" release/latest-native.json --clobber
+          else
+            echo "no native artifacts: latest-native.json not published"
+          fi
           gh release edit "$tag" --notes-file rn/release-notes.md --draft=false --latest

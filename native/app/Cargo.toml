@@ -1,6 +1,8 @@
 [package]
 name = "blockfield-native"
-version = "0.1.0"
+# Native release line: the cutover ships the launcher version, not 0.1.0, so
+# the self-update check compares against its own channel.
+version = "1.0.20"
 edition = "2024"
 publish = false
 license = "GPL-3.0-only"

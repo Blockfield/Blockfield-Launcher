@@ -301,14 +301,9 @@ fn apply_version(data: &mut MainData, version: VersionCheckResult) {
 }
 
 fn launcher_version() -> &'static str {
-    // Native crate version is independent of the shipped launcher version.
-    include_str!("../../../src-tauri/Cargo.toml")
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("version = \"")
-                .and_then(|v| v.strip_suffix('"'))
-        })
-        .expect("launcher package version")
+    // Own crate version on the native release line; keep in sync with
+    // `update::launcher_version` (same value, same source).
+    env!("CARGO_PKG_VERSION")
 }
 
 #[cfg(test)]
