@@ -1,4 +1,6 @@
-use blockfield_native::{AppWindow, backend, fixtures, idle_self_check, runtime, skin};
+use blockfield_native::{
+    AppWindow, backend, deep_link, fixtures, idle_self_check, runtime, single_instance, skin,
+};
 use slint::ComponentHandle;
 
 // Resident set size in KiB (Linux only; None elsewhere) for the RENDERER_PROBE cost line.
@@ -94,6 +96,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         selector = selector.renderer_name(if software { "skia-software" } else { "skia" }.into());
     }
     selector.select()?;
+    // Single instance (Tauri plugin parity): the owner keeps the window, a
+    // second launch forwards its invite links and exits. Probe children exit
+    // above, fixture/capture/e2e runs bypass the lock like parallel harnesses.
+    let cli_args: Vec<String> = std::env::args().skip(1).collect();
+    let harness_run = backend::fixtures_requested(&cli_args);
+    let cli_links = single_instance::collect_links(&cli_args);
+    let primary_listener = if harness_run {
+        None
+    } else {
+        match single_instance::claim(single_instance::port()) {
+            Ok(single_instance::Claim::Secondary) => {
+                if let Err(error) = single_instance::forward(single_instance::port(), &cli_links) {
+                    eprintln!("Cannot forward to the running launcher: {error}");
+                }
+                return Ok(());
+            }
+            Ok(single_instance::Claim::Primary(listener)) => Some(listener),
+            Err(error) => {
+                eprintln!("Single-instance lock failed, continuing alone: {error}");
+                None
+            }
+        }
+    };
     let app = AppWindow::new()?;
     let mut state = std::env::var("BLOCKFIELD_CAPTURE_STATE").unwrap_or_else(|_| "main".into());
     let mut scenario = "default".to_string();
@@ -105,9 +130,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dev = false;
     let mut self_check = false;
     let mut idle_self_check_flag = false;
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    let use_fixtures = backend::fixtures_requested(&args);
-    let mut args = args.into_iter();
+    let use_fixtures = harness_run;
+    let mut args = cli_args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--capture-dir" => capture_dir = Some(args.next().ok_or("--capture-dir needs a path")?),
@@ -129,6 +153,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--self-check" => self_check = true,
             "--idle-self-check" => idle_self_check_flag = true,
             "--dev" => dev = true,
+            // Invite links travel through the single-instance channel; the
+            // parser tolerates them here, handling happens below.
+            _ if single_instance::is_link(&arg) => {}
             _ => return Err(format!("Unknown argument: {arg}").into()),
         }
     }
@@ -138,6 +165,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => backend::Backend::Fixtures,
     };
     let (skin_host, activity) = blockfield_native::wire_app(&app, backend)?;
+    if let Some(listener) = primary_listener {
+        single_instance::spawn_listener(listener, app.as_weak());
+    }
+    if !harness_run {
+        for link in &cli_links {
+            single_instance::handle_link(&app, link);
+        }
+        if let Err(error) = deep_link::register() {
+            eprintln!("Cannot register deep links: {error}");
+        }
+    }
     if dev {
         app.set_dev_build(true);
     }
