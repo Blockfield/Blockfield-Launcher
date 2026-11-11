@@ -1299,8 +1299,17 @@ fn classpath_separator() -> &'static str {
 mod tests {
     use super::*;
 
+    /// `BLOCKFIELD_MOJANG_MANIFEST_URL` / `BLOCKFIELD_FABRIC_META_URL` are
+    /// process-global: a parallel test would read another test's URL (or see
+    /// it removed) mid-`heal`, fetching the wrong local server or the real
+    /// network. Tests that set these vars, or read them via
+    /// `prepare_download_plan` / `heal_runtime_manifests` /
+    /// `ensure_loader_profile`, hold this lock for the whole test.
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[tokio::test]
     async fn runtime_plan_counts_missing_client_libraries_and_assets_once() {
+        let _env = ENV_LOCK.lock().await;
         let root =
             std::env::temp_dir().join(format!("blockfield-runtime-plan-{}", std::process::id()));
         let version = "1.20.1";
@@ -1639,6 +1648,7 @@ mod tests {
 
     #[tokio::test]
     async fn corrupt_runtime_manifests_heal_by_redownload() {
+        let _env = ENV_LOCK.lock().await;
         use sha1::Digest as _;
         let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
         // Bind first so the version json can point at the real index URL.
@@ -1824,6 +1834,7 @@ mod tests {
 
     #[tokio::test]
     async fn corrupt_loader_profile_is_refreshed_not_accepted() {
+        let _env = ENV_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         // Closed port: the refresh attempt must fail loudly instead of Ok.
@@ -2057,6 +2068,7 @@ mod tests {
 
     #[tokio::test]
     async fn heal_rejects_metadata_that_misses_its_pin() {
+        let _env = ENV_LOCK.lock().await;
         use sha1::Digest as _;
         let hex = |bytes: &[u8]| crate::download::hex_digest(&sha1::Sha1::digest(bytes));
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
