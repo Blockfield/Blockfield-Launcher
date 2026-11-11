@@ -163,6 +163,13 @@ impl LauncherConfig {
         if server.is_empty() {
             return Err("Укажите адрес мастерской в настройках выбранного профиля.".into());
         }
+        // Offline (or never-checked) launch: no Game host to compare against,
+        // so the configured Workshop address is used without another network
+        // request. The distinct-host check still runs whenever the pack
+        // manifest supplied a Game host.
+        if game_server.trim().is_empty() {
+            return Ok(Some(server.to_owned()));
+        }
         if server_host(server)? == server_host(game_server)? {
             return Err(
                 "Мастерской нужен отдельный адрес: смена порта игрового адреса не меняет профиль."
@@ -774,6 +781,31 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some("raknet;game.example:25566")
+        );
+    }
+
+    #[test]
+    fn workshop_target_without_game_host_uses_configured_address_offline() {
+        // Offline (or never-checked) launch: no Game host to compare against,
+        // so the configured Workshop address is used without a network fetch.
+        let config = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: "raknet;workshop.example:25567".into(),
+            ..LauncherConfig::default()
+        };
+        assert_eq!(
+            config.target("").unwrap().as_deref(),
+            Some("raknet;workshop.example:25567")
+        );
+        // Empty Workshop address still refuses with the same message as online.
+        let empty = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: "  ".into(),
+            ..LauncherConfig::default()
+        };
+        assert_eq!(
+            empty.target("").unwrap_err(),
+            "Укажите адрес мастерской в настройках выбранного профиля."
         );
     }
 

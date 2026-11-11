@@ -287,9 +287,21 @@ pub(crate) async fn launch_with_identity(
     let game_server = match &pack {
         Some(pack) => pack.info.server.clone(),
         None if config.active_profile == ClientProfile::Workshop => {
-            launcher_net::pack::fetch_launcher_info(&pack_base_url_for(ClientProfile::Workshop)?)
-                .await?
-                .server
+            // Offline after a profile switch: the manifest is unreachable and
+            // the cached pack (if any) was checked for the other profile, so
+            // it cannot verify the install — but its launcher info still
+            // carries the Game host needed to validate the configured
+            // Workshop address. Reuse it with no network request (state.pack
+            // still holds the pre-drop cache; launch_game only overwrites it
+            // on a fresh fetch). Empty when never checked: target() then uses
+            // the configured Workshop address without the host check.
+            state
+                .pack
+                .read()
+                .await
+                .as_ref()
+                .map(|cached| cached.info.server.clone())
+                .unwrap_or_default()
         }
         None => String::new(),
     };
@@ -551,6 +563,241 @@ mod tests {
         )
         .is_none());
         assert!(offline_pack_for_launch(None, ClientProfile::Game).is_none());
+    }
+
+    /// Offline Workshop launch after a profile switch: the manifest is
+    /// unreachable and the only cached pack was checked for Game, so the
+    /// launch drops it (pack=None). The Workshop target must still resolve
+    /// locally with no network request: the cached Game launcher info
+    /// supplies the Game host for validation, and the game spawns with
+    /// BLOCKFIELD_SERVER set to the configured Workshop address.
+    #[test]
+    fn offline_workshop_launch_uses_cached_game_server_without_network() {
+        if cfg!(windows) {
+            eprintln!("skipped: the fake java is a unix shell script");
+            return;
+        }
+        let unique = format!(
+            "blockfield-workshop-offline-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let app_data = root.join("app-data");
+        let game_dir = root.join("game");
+        let workshop_dir = root.join("workshop-game");
+        std::fs::create_dir_all(&workshop_dir).unwrap();
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let server_file = root.join("blockfield-server.txt");
+        let release = root.join("release");
+        let order_log = root.join("order.log");
+
+        // Same offline fixtures as the launch-order test, in the Workshop dir:
+        // every runtime file resolve hits local disk, so the dependency pass
+        // runs with no network.
+        std::env::set_var("BLOCKFIELD_MINECRAFT_VERSION", "9.9.9-test");
+        let version_json = serde_json::json!({
+            "mainClass": "net.minecraft.client.main.Main",
+            "assetIndex": {"id": "test-index", "url": "https://example.com/index.json"},
+            "assets": "test-index",
+            "downloads": {"client": {"url": "https://example.com/client.jar", "size": 3}},
+            "libraries": [],
+            "arguments": {"game": ["--username", "${auth_player_name}"]},
+        });
+        let version_dir = workshop_dir.join("versions").join("9.9.9-test");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(
+            version_dir.join("9.9.9-test.json"),
+            serde_json::to_string(&version_json).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(version_dir.join("9.9.9-test.jar"), b"mc!").unwrap();
+        let index_dir = workshop_dir.join("assets").join("indexes");
+        std::fs::create_dir_all(&index_dir).unwrap();
+        std::fs::write(index_dir.join("test-index.json"), r#"{"objects": {}}"#).unwrap();
+
+        // Uncached repair gate needs a verifiable install: one tracked mod
+        // with a correct hash.
+        let mod_jar = workshop_dir.join("mods").join("offline-mod.jar");
+        std::fs::create_dir_all(mod_jar.parent().unwrap()).unwrap();
+        std::fs::write(&mod_jar, b"offline-bytes").unwrap();
+        std::fs::write(
+            workshop_dir.join("packwiz.json"),
+            serde_json::to_string(&serde_json::json!({ "cachedFiles": {
+                "offline-mod": {
+                    "cachedLocation": "mods/offline-mod.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": launcher_net::download::Downloader::sha256_file(&mod_jar)
+                            .unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+
+        // Fake java: answers -version (validated_active runs it), otherwise
+        // records the Workshop target it was given, then blocks until the
+        // test releases it so exit/restore ordering stays deterministic.
+        let java = root.join("fake-java.sh");
+        std::fs::write(
+            &java,
+            format!(
+                "#!/bin/sh\n\
+                 if [ \"$1\" = \"-version\" ]; then\n\
+                   echo 'openjdk version \"21.0.5\"' >&2\n\
+                   exit 0\n\
+                 fi\n\
+                 echo \"$BLOCKFIELD_SERVER\" > '{}'\n\
+                 echo spawn >> '{}'\n\
+                 i=0\n\
+                 while [ ! -f '{}' ] && [ $i -lt 600 ]; do\n\
+                   sleep 0.05\n\
+                   i=$((i+1))\n\
+                 done\n\
+                 exit 0\n",
+                server_file.display(),
+                order_log.display(),
+                release.display(),
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&java).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&java, perms).unwrap();
+        }
+
+        let received = Arc::new(StdMutex::new(Vec::new()));
+        let sink: EventSink = Arc::new({
+            let received = received.clone();
+            move |event| received.lock().unwrap().push(event)
+        });
+        let workshop_server = "raknet;workshop.example:25567";
+        let config = LauncherConfig {
+            game_dir: game_dir.to_string_lossy().to_string(),
+            workshop_game_dir: workshop_dir.to_string_lossy().to_string(),
+            workshop_java_path: java.to_string_lossy().to_string(),
+            workshop_server: workshop_server.to_string(),
+            active_profile: ClientProfile::Workshop,
+            ..LauncherConfig::default()
+        };
+        let config = config.validated_active().unwrap();
+        let mut state = test_state(app_data.clone(), config.clone());
+        state.events = sink;
+        // The pre-switch check cached the Game pack; launch_game drops it for
+        // verification (pack=None) but state still holds its launcher info.
+        *state.pack.blocking_write() = Some(PackState {
+            profile: ClientProfile::Game,
+            info: launcher_net::pack::LauncherInfo {
+                pack: "https://example.com/pack.toml".to_string(),
+                server: "raknet;game.example:25566".to_string(),
+                installer: launcher_net::pack::Artifact {
+                    url: String::new(),
+                    sha256: String::new(),
+                },
+                bootstrap: launcher_net::pack::Artifact {
+                    url: String::new(),
+                    sha256: String::new(),
+                },
+                java: Default::default(),
+                skins: None,
+            },
+            meta: PackMeta {
+                version: "1.0".into(),
+                index_hash: "hash".into(),
+                minecraft: "1.21.1".into(),
+                loader: None,
+            },
+        });
+        let pending = PendingRoom::default();
+        let identity = GameIdentity {
+            username: "WorkshopOfflineTest".to_string(),
+            uuid: "00000000-0000-0000-0000-000000000000".to_string(),
+            access_token: "test-token".to_string(),
+        };
+        let window = LaunchWindow {
+            hide: Box::new(|| {}),
+            restore: Box::new({
+                let order_log = order_log.clone();
+                move || {
+                    use std::io::Write;
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&order_log)
+                        .unwrap()
+                        .write_all(b"restore\n")
+                        .unwrap();
+                }
+            }),
+        };
+
+        // pack=None is what launch_game passes after offline_pack_for_launch
+        // drops the other profile's cached pack. Before the fix this fetches
+        // the Workshop launcher.json over the network and fails offline;
+        // after it the cached Game host validates the Workshop target locally.
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let _operation = state.begin_operation().unwrap();
+                let running = state.game.begin().unwrap();
+                launch_with_identity(
+                    &state,
+                    &pending,
+                    config,
+                    identity,
+                    None,
+                    "9.9.9-test-launcher",
+                    window,
+                    running,
+                )
+                .await
+                .unwrap();
+            });
+
+        // The child saw the configured Workshop address, with no fetch: the
+        // pack URL is unset here, so any launcher.json request would have
+        // failed before spawning.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if let Ok(target) = std::fs::read_to_string(&server_file) {
+                assert_eq!(target.trim(), workshop_server);
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "fake java never started"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        std::fs::write(&release, b"go").unwrap();
+        loop {
+            let log = std::fs::read_to_string(&order_log).unwrap_or_default();
+            let exited = received.lock().unwrap().iter().any(|event| {
+                matches!(event, LauncherEvent::Status(payload) if payload.phase == "exited")
+            });
+            if log.lines().any(|line| line == "restore") && exited {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "exit thread did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        std::env::remove_var("BLOCKFIELD_MINECRAFT_VERSION");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
