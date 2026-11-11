@@ -192,8 +192,8 @@ class NativeManifestNewerTests(unittest.TestCase):
             updater.native_manifest_newer(self.write_published("1.0.20"), "1.0.21")
         )
 
-    def test_same_version_skips(self):
-        self.assertFalse(
+    def test_same_version_republishes(self):
+        self.assertTrue(
             updater.native_manifest_newer(self.write_published("1.0.20"), "1.0.20")
         )
 
