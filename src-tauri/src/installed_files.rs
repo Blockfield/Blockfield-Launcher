@@ -1007,6 +1007,7 @@ mod tests {
     }
 
     #[cfg(test)]
+    #[cfg(unix)]
     fn index_keeps(root: &Path, location: &str) -> bool {
         let index: serde_json::Value =
             serde_json::from_slice(&fs::read(root.join("packwiz.json")).unwrap()).unwrap();
