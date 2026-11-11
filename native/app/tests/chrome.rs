@@ -10,6 +10,7 @@ use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use slint::ComponentHandle;
 
 fn given_chrome() -> AppWindow {
+    // Slint's platform is per thread and libtest runs each test on its own thread, so every test installs it.
     i_slint_backend_testing::init_no_event_loop();
     let app = AppWindow::new().expect("test window");
     wire_app(&app, blockfield_native::backend::Backend::Fixtures).expect("wire test app");

@@ -327,6 +327,14 @@ pub fn drop_bad_pack_files(root: &Path, app_data: &Path) -> (Vec<String>, Vec<St
                 failed.push(relative.clone());
                 continue;
             }
+        } else if truly_absent(&root, relative) {
+            // Nothing on disk: no removal needed, the entry can go.
+        } else {
+            // Any blocker (symlink, special file, non-dir parent, directory)
+            // stays on disk: keep the entry so the next check still fails.
+            log::error!("Cannot remove damaged pack file {relative}: blocked, entry kept");
+            failed.push(relative.clone());
+            continue;
         }
         removed.push(relative.clone());
     }
@@ -346,6 +354,42 @@ pub fn drop_bad_pack_files(root: &Path, app_data: &Path) -> (Vec<String>, Vec<St
         }
     }
     (removed, failed)
+}
+
+/// True when nothing stands at `relative`: lstat reports NotFound while every
+/// parent is a real directory (no symlinks, no files). Anything else — a
+/// symlink, special file, non-directory parent or directory at the path — is
+/// a blocker that stays on disk, so the entry must stay too.
+fn truly_absent(root: &Path, relative: &str) -> bool {
+    if !valid_relative(relative) {
+        return false;
+    }
+    let mut full = root.to_path_buf();
+    for part in relative.split('/') {
+        full.push(part);
+    }
+    // lstat only: never follow a link, and only NotFound means absent.
+    if !matches!(
+        fs::symlink_metadata(&full).map(|_| ()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    ) {
+        return false;
+    }
+    let mut parent = root.to_path_buf();
+    let mut parts = relative.split('/').peekable();
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            break;
+        }
+        parent.push(part);
+        let Ok(metadata) = fs::symlink_metadata(&parent) else {
+            return false;
+        };
+        if is_link(&metadata) || !metadata.is_dir() {
+            return false;
+        }
+    }
+    true
 }
 
 fn record_file(root: &Path, relative: &str) {
@@ -828,6 +872,153 @@ mod tests {
         assert_eq!(files.len(), 2);
         // With the bad entry gone the check passes on the surviving files.
         assert!(pack_files_valid(&root, &data));
+    }
+
+    #[test]
+    fn heal_keeps_index_entry_when_directory_blocks_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods/bad.jar")).unwrap();
+        fs::write(root.join("mods/blocker.txt"), b"blocker").unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/bad.pw.toml": {
+                    "cachedLocation": "mods/bad.jar",
+                    "hash": { "type": "sha256", "value": Downloader::sha256_file(&root.join("mods/blocker.txt")).unwrap() }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        assert!(removed.is_empty());
+        assert_eq!(failed, ["mods/bad.jar".to_string()]);
+        // The directory cannot be removed here: the entry must stay so the
+        // next check still fails instead of forgetting the blocked file.
+        assert!(root.join("mods/bad.jar").is_dir());
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("packwiz.json")).unwrap()).unwrap();
+        assert!(index["cachedFiles"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|file| file["cachedLocation"] == "mods/bad.jar"));
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn heal_keeps_index_entry_when_symlink_blocks_file() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        let target = root.join("mods/real.jar");
+        fs::write(&target, b"target-bytes!").unwrap();
+        symlink(&target, root.join("mods/bad.jar")).unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/bad.pw.toml": {
+                    "cachedLocation": "mods/bad.jar",
+                    "hash": { "type": "sha256", "value": Downloader::sha256_file(&target).unwrap() }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        assert!(removed.is_empty());
+        assert_eq!(failed, ["mods/bad.jar".to_string()]);
+        // Never delete or follow the link: it stays, the target is intact,
+        // the entry stays so the next check still fails.
+        assert!(fs::symlink_metadata(root.join("mods/bad.jar"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read(&target).unwrap(), b"target-bytes!");
+        assert!(index_keeps(&root, "mods/bad.jar"));
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn heal_keeps_index_entry_when_parent_is_symlink() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        let real_mods = temp.path().join("real-mods");
+        fs::create_dir_all(&real_mods).unwrap();
+        fs::write(real_mods.join("bad.jar"), b"blocked-bytes").unwrap();
+        fs::create_dir_all(&root).unwrap();
+        symlink(&real_mods, root.join("mods")).unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/bad.pw.toml": {
+                    "cachedLocation": "mods/bad.jar",
+                    "hash": { "type": "sha256", "value": "00".repeat(32) }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        assert!(removed.is_empty());
+        assert_eq!(failed, ["mods/bad.jar".to_string()]);
+        assert!(fs::symlink_metadata(root.join("mods"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(index_keeps(&root, "mods/bad.jar"));
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn heal_keeps_index_entry_when_parent_is_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("mods"), b"not-a-directory").unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/bad.pw.toml": {
+                    "cachedLocation": "mods/bad.jar",
+                    "hash": { "type": "sha256", "value": "00".repeat(32) }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        assert!(removed.is_empty());
+        assert_eq!(failed, ["mods/bad.jar".to_string()]);
+        assert_eq!(fs::read(root.join("mods")).unwrap(), b"not-a-directory");
+        assert!(index_keeps(&root, "mods/bad.jar"));
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[cfg(test)]
+    #[cfg(unix)]
+    fn index_keeps(root: &Path, location: &str) -> bool {
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("packwiz.json")).unwrap()).unwrap();
+        index["cachedFiles"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|file| file["cachedLocation"] == location)
     }
 
     #[test]
