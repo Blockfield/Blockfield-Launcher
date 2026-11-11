@@ -357,6 +357,13 @@ async fn fresh_pack_state(profile: ClientProfile) -> Result<PackState, String> {
     })
 }
 
+/// Offline fallback after a failed manifest fetch: a cached pack checked for
+/// the other profile must not verify the current game dir (a valid offline
+/// install would be refused with PACK_REPAIR); use the uncached path instead.
+fn offline_pack_for_launch(cached: Option<PackState>, active: ClientProfile) -> Option<PackState> {
+    cached.filter(|pack| pack.profile == active)
+}
+
 #[tauri::command]
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
@@ -1152,7 +1159,7 @@ pub async fn launch_game(
             }
             Err(error) => {
                 log::warn!("launch: pack manifest unreachable, using cached state: {error}");
-                pack
+                offline_pack_for_launch(pack, config.active_profile)
             }
         }
     } else {
@@ -1241,22 +1248,27 @@ pub async fn launch_game(
     let mut quick_play = quick_play;
     let mut via_tcp_fallback = false;
     if let Some(target) = quick_play.clone() {
-        let fallback_state = crate::tcp_fallback::FallbackState::load(&state.app_data_dir);
-        let now = crate::tcp_fallback::now_secs();
-        let resolved = crate::tcp_fallback::resolve_target(&target, &fallback_state, now);
-        if resolved != target {
-            quick_play = Some(resolved);
-            via_tcp_fallback = true;
-        } else if let Some((host, port)) = crate::tcp_fallback::raknet_endpoint(&target) {
-            if !crate::tcp_fallback::raknet_reachable(&host, port) {
-                log::warn!("RakNet path to {host}:{port} unreachable, using TCP fallback");
-                let mut updated = fallback_state;
-                updated.record(&host, now);
-                if let Err(error) = updated.save(&state.app_data_dir, now) {
-                    log::warn!("Cannot persist TCP fallback state: {error}");
-                }
-                quick_play = crate::tcp_fallback::tcp_target_for(&target).or(quick_play);
+        // TCP fallback is the proxy's own route only (the pack's game host):
+        // a custom/dev RakNet target must never remap, its TCP port may serve
+        // another server.
+        if crate::tcp_fallback::is_proxy_target(&target, &game_server) {
+            let fallback_state = crate::tcp_fallback::FallbackState::load(&state.app_data_dir);
+            let now = crate::tcp_fallback::now_secs();
+            let resolved = crate::tcp_fallback::resolve_target(&target, &fallback_state, now);
+            if resolved != target {
+                quick_play = Some(resolved);
                 via_tcp_fallback = true;
+            } else if let Some((host, port)) = crate::tcp_fallback::raknet_endpoint(&target) {
+                if !crate::tcp_fallback::raknet_reachable(&host, port) {
+                    log::warn!("RakNet path to {host}:{port} unreachable, using TCP fallback");
+                    let mut updated = fallback_state;
+                    updated.record(&host, now);
+                    if let Err(error) = updated.save(&state.app_data_dir, now) {
+                        log::warn!("Cannot persist TCP fallback state: {error}");
+                    }
+                    quick_play = crate::tcp_fallback::tcp_target_for(&target).or(quick_play);
+                    via_tcp_fallback = true;
+                }
             }
         }
     }
@@ -2247,6 +2259,32 @@ mod tests {
                 loader: None,
             },
         }
+    }
+
+    #[test]
+    fn offline_launch_drops_a_cached_pack_of_the_other_profile() {
+        assert!(
+            offline_pack_for_launch(Some(test_pack(ClientProfile::Game)), ClientProfile::Game)
+                .is_some()
+        );
+        assert!(offline_pack_for_launch(
+            Some(test_pack(ClientProfile::Workshop)),
+            ClientProfile::Workshop
+        )
+        .is_some());
+        // Switched profile after the check + lost manifest: the Game pack's
+        // index hash must not verify the Workshop dir (PACK_REPAIR). Uncached.
+        assert!(offline_pack_for_launch(
+            Some(test_pack(ClientProfile::Game)),
+            ClientProfile::Workshop
+        )
+        .is_none());
+        assert!(offline_pack_for_launch(
+            Some(test_pack(ClientProfile::Workshop)),
+            ClientProfile::Game
+        )
+        .is_none());
+        assert!(offline_pack_for_launch(None, ClientProfile::Game).is_none());
     }
 
     #[test]
