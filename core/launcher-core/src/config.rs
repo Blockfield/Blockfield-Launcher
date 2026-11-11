@@ -163,12 +163,17 @@ impl LauncherConfig {
         if server.is_empty() {
             return Err("Укажите адрес мастерской в настройках выбранного профиля.".into());
         }
-        // Offline (or never-checked) launch: no Game host to compare against,
-        // so the configured Workshop address is used without another network
-        // request. The distinct-host check still runs whenever the pack
-        // manifest supplied a Game host.
+        // Offline (or never-checked) launch: no Game host to compare against.
+        // Only the built-in Workshop host is trusted then; a custom address
+        // could be the Game host, so it waits for an online check.
         if game_server.trim().is_empty() {
-            return Ok(Some(server.to_owned()));
+            if server_host(server)? == server_host(DEFAULT_WORKSHOP_SERVER)? {
+                return Ok(Some(server.to_owned()));
+            }
+            return Err(
+                "Нет связи с сервером: свой адрес мастерской проверяется онлайн. Подключитесь к сети или верните стандартный адрес."
+                    .into(),
+            );
         }
         if server_host(server)? == server_host(game_server)? {
             return Err(
@@ -790,13 +795,21 @@ mod tests {
         // so the configured Workshop address is used without a network fetch.
         let config = LauncherConfig {
             active_profile: ClientProfile::Workshop,
-            workshop_server: "raknet;workshop.example:25567".into(),
+            workshop_server: DEFAULT_WORKSHOP_SERVER.into(),
             ..LauncherConfig::default()
         };
         assert_eq!(
             config.target("").unwrap().as_deref(),
-            Some("raknet;workshop.example:25567")
+            Some(DEFAULT_WORKSHOP_SERVER)
         );
+        // A custom address may be the Game host; without a known Game host it
+        // must not bypass the distinct-host check.
+        let custom = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: "raknet;play.example:25567".into(),
+            ..LauncherConfig::default()
+        };
+        assert!(custom.target("").is_err());
         // Empty Workshop address still refuses with the same message as online.
         let empty = LauncherConfig {
             active_profile: ClientProfile::Workshop,

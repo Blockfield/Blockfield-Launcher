@@ -513,6 +513,11 @@ mod tests {
     use crate::{EventSink, LauncherEvent};
     use std::sync::{Arc, Mutex as StdMutex};
 
+    /// The single-installation tracking guard is process-wide: tests driving
+    /// launch_with_identity serialize on it so parallel runs cannot fail with
+    /// "Another installation is being tracked".
+    static TRACKING_GUARD: StdMutex<()> = StdMutex::new(());
+
     fn pack_for(profile: ClientProfile) -> PackState {
         PackState {
             profile,
@@ -577,6 +582,7 @@ mod tests {
             eprintln!("skipped: the fake java is a unix shell script");
             return;
         }
+        let _tracking_guard = TRACKING_GUARD.lock().unwrap();
         let unique = format!(
             "blockfield-workshop-offline-{}-{}",
             std::process::id(),
@@ -679,7 +685,9 @@ mod tests {
             let received = received.clone();
             move |event| received.lock().unwrap().push(event)
         });
-        let workshop_server = "raknet;workshop.example:25567";
+        // The built-in Workshop host: the only address trusted without a
+        // known Game host (target() refuses a custom address offline).
+        let workshop_server = "raknet;workshop.blockfield.pro:25567";
         let config = LauncherConfig {
             game_dir: game_dir.to_string_lossy().to_string(),
             workshop_game_dir: workshop_dir.to_string_lossy().to_string(),
@@ -800,6 +808,104 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Offline Workshop launch with a custom address and no cached Game host
+    /// (never checked online): the distinct-host check cannot run, so the
+    /// launch refuses instead of risking the Game server. Only the built-in
+    /// Workshop host is trusted without a known Game host.
+    #[test]
+    fn offline_workshop_launch_with_custom_address_and_no_cached_host_refuses() {
+        if cfg!(windows) {
+            eprintln!("skipped: the fake java is a unix shell script");
+            return;
+        }
+        let _tracking_guard = TRACKING_GUARD.lock().unwrap();
+        let unique = format!(
+            "blockfield-workshop-refuse-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let app_data = root.join("app-data");
+        let workshop_dir = root.join("workshop-game");
+        std::fs::create_dir_all(&workshop_dir).unwrap();
+
+        // Verifiable install so the repair gate (which runs before target
+        // resolution) lets the launch reach the server-target check.
+        let mod_jar = workshop_dir.join("mods").join("offline-mod.jar");
+        std::fs::create_dir_all(mod_jar.parent().unwrap()).unwrap();
+        std::fs::write(&mod_jar, b"offline-bytes").unwrap();
+        std::fs::write(
+            workshop_dir.join("packwiz.json"),
+            serde_json::to_string(&serde_json::json!({ "cachedFiles": {
+                "offline-mod": {
+                    "cachedLocation": "mods/offline-mod.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": launcher_net::download::Downloader::sha256_file(&mod_jar)
+                            .unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+
+        // Any existing executable: resolved_java_path only checks existence
+        // here (no -version probe outside validated_active), and the launch
+        // must refuse before spawning it.
+        let java = std::env::current_exe().unwrap();
+        let config = LauncherConfig {
+            game_dir: workshop_dir.to_string_lossy().to_string(),
+            workshop_game_dir: workshop_dir.to_string_lossy().to_string(),
+            java_path: java.to_string_lossy().to_string(),
+            workshop_server: "raknet;play.example:25567".to_string(),
+            active_profile: ClientProfile::Workshop,
+            ..LauncherConfig::default()
+        };
+        let state = test_state(app_data, config.clone());
+        let pending = PendingRoom::default();
+        let identity = GameIdentity {
+            username: "WorkshopRefuseTest".to_string(),
+            uuid: "00000000-0000-0000-0000-000000000000".to_string(),
+            access_token: "test-token".to_string(),
+        };
+        let window = LaunchWindow {
+            hide: Box::new(|| {}),
+            restore: Box::new(|| {}),
+        };
+
+        // pack=None and no cached pack: game_server is empty (never checked),
+        // so a custom Workshop address must refuse without any network.
+        let error = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let _operation = state.begin_operation().unwrap();
+                let running = state.game.begin().unwrap();
+                launch_with_identity(
+                    &state,
+                    &pending,
+                    config,
+                    identity,
+                    None,
+                    "9.9.9-test-launcher",
+                    window,
+                    running,
+                )
+                .await
+            });
+        let error = error.unwrap_err();
+        assert!(
+            error.contains("Нет связи"),
+            "custom offline address must refuse, got: {error}"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn stale_pack_message_fires_only_on_index_mismatch() {
         let meta = PackMeta {
@@ -900,6 +1006,7 @@ mod tests {
             eprintln!("skipped: the fake java is a unix shell script");
             return;
         }
+        let _tracking_guard = TRACKING_GUARD.lock().unwrap();
         let unique = format!(
             "blockfield-launch-order-{}-{}",
             std::process::id(),
