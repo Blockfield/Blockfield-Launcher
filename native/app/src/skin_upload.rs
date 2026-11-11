@@ -40,7 +40,7 @@ pub async fn perform_upload(
     let current = state.config.read().await;
     if current.player_uuid != started.player_uuid || current.api_token != started.api_token {
         return Err(
-            "Account changed during skin upload — upload was not sent. Choose the skin again."
+            "Аккаунт сменился до загрузки, скин не отправлен. Выберите его ещё раз."
                 .to_string(),
         );
     }
@@ -237,7 +237,7 @@ mod tests {
             (Some(png.to_string_lossy().into_owned()), None),
         ] {
             match runtime.block_on(perform_upload(&state, &started, paths.0, paths.1, false)) {
-                Err(err) => assert!(err.contains("Account changed"), "got: {err}"),
+                Err(err) => assert!(err.contains("Аккаунт сменился"), "got: {err}"),
                 Ok(_) => panic!("upload ran with another account's session"),
             }
         }
