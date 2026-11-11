@@ -9,7 +9,7 @@
 //! of steps are exactly as in `commands.rs`.
 
 use super::java::{java_runtime_ready, resolved_java_path, system_java_available};
-use super::pack_check::{installed_pack, INSTALLED_VERSION_FILE};
+use super::pack_check::{installed_pack, require_pack_profile, INSTALLED_VERSION_FILE};
 use crate::{DownloadMirrorPayload, EventSink, LauncherAppState, LauncherEvent};
 use launcher_core::config::ClientProfile;
 use launcher_net::download::Downloader;
@@ -58,6 +58,14 @@ async fn pack_phase_done(app_data: PathBuf, game_dir: PathBuf, index_hash: Strin
         .unwrap_or(false)
 }
 
+async fn pack_files_valid_blocking(app_data: PathBuf, game_dir: PathBuf) -> bool {
+    tokio::task::spawn_blocking(move || {
+        launcher_net::installed_files::pack_files_valid(&game_dir, &app_data)
+    })
+    .await
+    .unwrap_or(false)
+}
+
 pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
     let _operation = state.begin_operation()?;
     if state.game.is_busy() {
@@ -70,6 +78,7 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         .clone()
         .ok_or_else(|| "No pack info cached – call check_modpack_version first".to_string())?;
     let mut config = state.config.read().await.validated_active()?;
+    require_pack_profile(&pack, config.active_profile)?;
     let game_dir = PathBuf::from(&config.game_dir);
     std::fs::create_dir_all(&game_dir).map_err(|e| format!("Failed to create game dir: {e}"))?;
     let _tracking = launcher_net::installed_files::begin(&state.app_data_dir, &game_dir)?;
@@ -130,6 +139,7 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         None => None,
     };
 
+    emit_status(&state.events, "modpack", "Обновление файлов модпака", true);
     if pack_phase_done(
         state.app_data_dir.clone(),
         game_dir.clone(),
@@ -144,9 +154,44 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
             false,
         );
     } else {
-        emit_status(&state.events, "modpack", "Обновление файлов модпака", true);
         ensure_jar(state, &game_dir, BOOTSTRAP_JAR, &pack.info.bootstrap).await?;
         ensure_jar(state, &game_dir, INSTALLER_JAR, &pack.info.installer).await?;
+        // packwiz trusts its own cached hashes and reports "already up to
+        // date" without touching a corrupted file: delete the bad files and
+        // drop their index entries first, so the installer downloads them
+        // again. A no-op when the check fails only on the marker. A frozen dev
+        // pack is never touched, like the installer itself.
+        let frozen = launcher_core::dev::freeze_pack();
+        let repaired = if frozen {
+            (Vec::<String>::new(), Vec::<String>::new())
+        } else {
+            let (repair_data, repair_dir) = (state.app_data_dir.clone(), game_dir.clone());
+            tokio::task::spawn_blocking(move || {
+                launcher_net::installed_files::drop_bad_pack_files(&repair_dir, &repair_data)
+            })
+            .await
+            .map_err(|e| format!("Pack repair task failed: {e}"))?
+        };
+        let (repaired, repair_failed) = repaired;
+        if !repair_failed.is_empty() {
+            log::error!(
+                "[download_modpack] pack repair could not remove {} files: {}",
+                repair_failed.len(),
+                repair_failed.join(", ")
+            );
+        }
+        if !repaired.is_empty() {
+            // The dropped entries leave the launch check; without the marker an
+            // interrupted install cannot pass as a complete pack.
+            let _ = std::fs::remove_file(game_dir.join(INSTALLED_VERSION_FILE));
+            log::info!("[download_modpack] repairing {} files", repaired.len());
+            emit_status(
+                &state.events,
+                "modpack",
+                format!("Восстановление {} файлов", repaired.len()),
+                true,
+            );
+        }
         let cancel = state.cancel_flag.clone();
         let events = state.events.clone();
         let (java_for_installer, dir, pack_url) =
@@ -161,6 +206,15 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
             format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
         )
         .map_err(|e| format!("Failed to record installed version: {e}"))?;
+        // Single pass, no loop: a pack that is still bad after a repair +
+        // reinstall needs eyes, not another installer run.
+        if !frozen && !pack_files_valid_blocking(state.app_data_dir.clone(), game_dir.clone()).await
+        {
+            return Err(
+                "Pack files are still damaged after the repair. Open Updates to retry, and report the failing files from the log."
+                    .to_string(),
+            );
+        }
         emit_status(&state.events, "modpack", "Файлы модпака готовы", false);
     }
 
@@ -509,6 +563,7 @@ pub async fn verify_files(
         }
         config.validated_active()?
     };
+    require_pack_profile(&pack, config.active_profile)?;
     let game_dir = PathBuf::from(&config.game_dir);
     let java = resolved_java_path(&config);
     std::fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
@@ -792,6 +847,60 @@ mod tests {
         // Stale marker: full run even with verified files.
         std::fs::write(&good, b"correct-bytes!").unwrap();
         assert!(!pack_phase_complete(&data, &game, "other"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn blocking_pack_check_reports_corrupt_files() {
+        // Covers the post-repair gate in download_modpack without a network run.
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-pack-blocking-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let data = root.join("app-data");
+        let game = root.join("game");
+        std::fs::create_dir_all(game.join("mods")).unwrap();
+        let file = game.join("mods/a.jar");
+        std::fs::write(&file, b"correct-bytes!").unwrap();
+        std::fs::write(
+            game.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "a": {
+                    "cachedLocation": "mods/a.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&file).unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        let run = |data: PathBuf, game: PathBuf| pack_files_valid_blocking(data, game);
+        let block_on = |future| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(future)
+        };
+        assert!(block_on(run(data.clone(), game.clone())));
+        // Same-size corruption is still caught after the mtime moves, as a
+        // real edit later in time would.
+        std::fs::write(&file, b"corrupt-bytes!").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        assert!(!block_on(run(data.clone(), game.clone())));
+        std::fs::remove_file(&file).unwrap();
+        assert!(!block_on(run(data.clone(), game.clone())));
         let _ = std::fs::remove_dir_all(root);
     }
 

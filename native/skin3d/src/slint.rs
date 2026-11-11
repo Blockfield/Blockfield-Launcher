@@ -41,6 +41,47 @@ pub struct FrameSink {
     pub poll_window: Box<dyn Fn() -> (bool, f32)>,
 }
 
+/// Staged preview textures. `slim` selects the Alex arm model exactly like the
+/// Tauri `loadSkin({model})` call; unstaged hosts render bundled fixtures.
+#[derive(Clone, Debug)]
+pub struct SkinSource {
+    pub skin: Vec<u8>,
+    pub cape: Option<Vec<u8>>,
+    pub slim: bool,
+}
+
+/// Bundled fallback textures (the files the worker used before staging).
+#[must_use]
+pub fn default_source(slim: bool) -> SkinSource {
+    SkinSource {
+        skin: include_bytes!("../../../src/lib/fixtures/skin.png").to_vec(),
+        cape: Some(include_bytes!("../../../src/lib/fixtures/cape.png").to_vec()),
+        slim,
+    }
+}
+
+/// Decode staged textures, or the bundled fallback when nothing was staged.
+/// Pure decode: no GPU, safe to unit test.
+fn decode_source(staged: Option<&SkinSource>) -> super::Result<(Skin, Option<Cape>)> {
+    let fallback;
+    let source = match staged {
+        Some(source) => source,
+        None => {
+            fallback = default_source(false);
+            &fallback
+        }
+    };
+    let model = if source.slim {
+        Model::Slim
+    } else {
+        Model::Classic
+    };
+    Ok((
+        Skin::from_png(&source.skin, model)?,
+        source.cape.as_deref().map(Cape::from_png).transpose()?,
+    ))
+}
+
 /// Called on the event-loop thread after each delivered frame as (index, time).
 pub type FrameHook = Box<dyn Fn(u64, f64)>;
 
@@ -56,6 +97,10 @@ enum Request {
         time: f64,
         scale: f32,
         generation: u64,
+        tex_gen: u64,
+    },
+    Textures {
+        source: SkinSource,
     },
     DragState(f64, bool),
     DragBy(f32, f32),
@@ -79,6 +124,8 @@ pub struct PreviewHost {
     window_live: Cell<bool>,
     scale: Cell<f32>,
     generation: Cell<u64>,
+    source_key: RefCell<Option<(String, String, bool)>>,
+    tex_gen: Cell<u64>,
     failed: Cell<bool>,
     delivered: Cell<u64>,
     drag_moves: Cell<u32>,
@@ -107,6 +154,8 @@ impl PreviewHost {
             window_live: Cell::new(false),
             scale: Cell::new(1.0),
             generation: Cell::new(0),
+            source_key: RefCell::new(None),
+            tex_gen: Cell::new(0),
             failed: Cell::new(false),
             delivered: Cell::new(0),
             drag_moves: Cell::new(0),
@@ -173,6 +222,21 @@ impl PreviewHost {
         self.refresh();
     }
 
+    /// Staged-source identity for change detection; `None` until the first sync.
+    pub fn source_matches(&self, key: &(String, String, bool)) -> bool {
+        self.source_key.borrow().as_ref() == Some(key)
+    }
+
+    /// Stage new textures; decoded lazily on the next visible frame, never
+    /// hidden. Clears a previous failure so a corrected path restarts.
+    pub fn set_source(self: &Rc<Self>, key: (String, String, bool), source: SkinSource) {
+        self.source_key.replace(Some(key));
+        self.tex_gen.set(self.tex_gen.get() + 1);
+        let _ = self.sender.send(Request::Textures { source });
+        self.failed.set(false);
+        self.refresh();
+    }
+
     fn schedule_frame(self: &Rc<Self>) {
         if !self.enabled.load(Ordering::SeqCst) {
             return;
@@ -207,6 +271,7 @@ impl PreviewHost {
                 time: self.time(),
                 scale: self.scale.get(),
                 generation: self.generation.get(),
+                tex_gen: self.tex_gen.get(),
             })
             .is_err()
         {
@@ -293,10 +358,15 @@ fn render_worker(
 ) {
     let mut renderer: Option<Renderer> = None;
     let mut renderer_scale = 0.0;
+    let mut current: Option<SkinSource> = None;
+    let mut applied_tex = 0;
     let mut previous_time = None;
     while let Ok(request) = receiver.recv() {
         match request {
             Request::Stop => break,
+            Request::Textures { source } => {
+                current = Some(source);
+            }
             Request::DragState(time, active) => {
                 if let Some(renderer) = &mut renderer
                     && let Err(error) = renderer.controls.set_dragging(time, active)
@@ -315,19 +385,15 @@ fn render_worker(
                 time,
                 scale,
                 generation,
+                tex_gen,
             } => {
                 if !enabled.load(Ordering::SeqCst) {
                     busy.store(false, Ordering::SeqCst);
                     continue;
                 }
                 let result = (|| -> super::Result<_> {
-                    if renderer.is_none() || renderer_scale != scale {
-                        let skin = Skin::from_png(
-                            include_bytes!("../../../src/lib/fixtures/skin.png"),
-                            Model::Classic,
-                        )?;
-                        let cape =
-                            Cape::from_png(include_bytes!("../../../src/lib/fixtures/cape.png"))?;
+                    if renderer.is_none() || renderer_scale != scale || tex_gen != applied_tex {
+                        let (skin, cape) = decode_source(current.as_ref())?;
                         let mut replacement = pollster::block_on(Renderer::new(
                             RenderSize {
                                 width: PREVIEW_WIDTH,
@@ -335,7 +401,7 @@ fn render_worker(
                                 scale_factor: scale,
                             },
                             &skin,
-                            Some(&cape),
+                            cape.as_ref(),
                             false,
                         ))?;
                         if let Some(old) = &renderer {
@@ -344,6 +410,7 @@ fn render_worker(
                         println!("ADAPTER {:?}", replacement.adapter_info());
                         renderer = Some(replacement);
                         renderer_scale = scale;
+                        applied_tex = tex_gen;
                     }
                     // skinview3d animates before incrementing progress; rotation uses this frame's dt.
                     let frame = renderer.as_mut().unwrap().render_frame_with_pose_time(
@@ -372,5 +439,37 @@ fn render_worker(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staged_sources_decode_with_explicit_model() {
+        let (skin, cape) = decode_source(None).unwrap();
+        assert_eq!(skin.model(), Model::Classic);
+        assert!(cape.is_some());
+        let slim = SkinSource {
+            skin: include_bytes!("../fixtures/uv-slim.png").to_vec(),
+            cape: None,
+            slim: true,
+        };
+        let (skin, _) = decode_source(Some(&slim)).unwrap();
+        assert_eq!(skin.model(), Model::Slim);
+        let classic = SkinSource {
+            skin: include_bytes!("../fixtures/uv-skin.png").to_vec(),
+            cape: None,
+            slim: false,
+        };
+        let (skin, _) = decode_source(Some(&classic)).unwrap();
+        assert_eq!(skin.model(), Model::Classic);
+        let bad = SkinSource {
+            skin: b"not a png".to_vec(),
+            cape: None,
+            slim: false,
+        };
+        assert!(decode_source(Some(&bad)).is_err());
     }
 }

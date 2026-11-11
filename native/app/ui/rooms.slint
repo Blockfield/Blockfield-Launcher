@@ -68,7 +68,7 @@ export component RoomList inherits Rectangle {
         }
     }
     if root.rooms.length == 0: Text { x: 0px; y: 0px;
-        width: parent.width; text: root.maintenance != "" ? "Идут технические работы: " + root.maintenance + " Матчи откроются после завершения работ." : root.updating ? "Игровой сервер обновляется — лобби открыто. Нажмите «Играть» — вас перенесут в игру, когда сервер запустится." : !root.rooms-available ? "Список матчей недоступен. Повторим запрос автоматически." : "Сейчас матчей нет. Нажмите «Играть» и выберите режим в хабе: Casual или Рейтинг.";
+        width: parent.width; text: root.maintenance != "" ? "Идут технические работы: " + root.maintenance + ". Матчи откроются после завершения работ." : root.updating ? "Игровой сервер обновляется — лобби открыто. Нажмите «Играть» — вас перенесут в игру, когда сервер запустится." : !root.rooms-available ? "Список матчей недоступен. Повторим запрос автоматически." : "Сейчас матчей нет. Нажмите «Играть» и выберите режим в хабе: Casual или Рейтинг.";
         color: Tokens.secondary-foreground; font-size: 12px; wrap: word-wrap; line-height-factor: 1.625 * 2048 / 2478;
     }
     Rectangle { x: 0px; y: parent.height - 41px; height: 1px; background: Tokens.border; }

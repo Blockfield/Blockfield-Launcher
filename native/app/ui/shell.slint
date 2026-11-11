@@ -1,5 +1,6 @@
 import { Tokens } from "tokens.slint";
 import { ActionArea, ChromeButton, NavItem, StatusDot } from "controls.slint";
+import { PlayerHead } from "avatars.slint";
 
 export component WindowChrome inherits Rectangle {
     in property <string> title;
@@ -19,7 +20,7 @@ export component WindowChrome inherits Rectangle {
         height: Tokens.chrome-height;
         background: Tokens.chrome;
         Rectangle { y: parent.height - 1phx; height: 1phx; background: Tokens.secondary; }
-        WindowMoveArea { width: parent.width - 128px; }
+        WindowMoveArea { x: 0px; y: 0px; width: parent.width - 128px; height: parent.height; }
         Rectangle {
             x: 12px;
             y: (parent.height - 1phx - self.height) / 2;
@@ -75,7 +76,7 @@ export component WindowChrome inherits Rectangle {
 }
 
 export component Shell inherits Rectangle {
-    in property <bool> fixture-face: false;
+    in property <image> face;
     in-out property <int> active: 0;
     in property <string> brand;
     in property <string> subtitle;
@@ -150,23 +151,10 @@ export component Shell inherits Rectangle {
             background: Tokens.card;
             border-width: 1phx;
             border-color: Tokens.border;
-            Image {
+            PlayerHead {
                 x: 12px + 1phx;
                 y: 6px;
-                width: 24px;
-                height: 24px;
-                source: @image-url("../assets/default-player-head.svg");
-                image-rendering: pixelated;
-                accessible-role: none;
-            }
-            if root.fixture-face: Rectangle {
-                x: 12px + 1phx; y: 6px; width: 24px; height: 24px;
-                for offset in [8, 40]: Image {
-                    x: 0px; y: 0px; width: 24px; height: 24px;
-                    source: @image-url("../assets/fixtures/skin.png");
-                    source-clip-x: offset; source-clip-y: 8; source-clip-width: 8; source-clip-height: 8;
-                    image-rendering: pixelated;
-                }
+                face: root.face;
             }
             user-text := Text {
                 x: 48px + 1phx;

@@ -104,6 +104,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 
 [[package]]
+name = "ar"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d67af77d68a931ecd5cbd8a3b5987d63a1d1d1278f7f6a60ae33db485cdebb69"
+
+[[package]]
 name = "arboard"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -442,19 +448,28 @@ dependencies = [
 
 [[package]]
 name = "blockfield-native"
-version = "0.1.0"
+version = "1.0.20"
 dependencies = [
+ "ar",
+ "base64",
  "chrono",
  "dirs",
+ "flate2",
  "i-slint-backend-testing",
  "image",
  "launcher-app",
  "launcher-core",
  "launcher-net",
+ "minisign-verify",
+ "reqwest",
+ "semver",
+ "serde",
  "serde_json",
  "skin3d",
  "slint",
  "slint-build",
+ "tar",
+ "tempfile",
  "tokio",
 ]
 
@@ -2649,13 +2664,16 @@ name = "launcher-app"
 version = "0.0.0"
 dependencies = [
  "blockfield-shared",
+ "flate2",
  "fs2",
  "launcher-core",
  "launcher-net",
  "log",
  "serde",
  "serde_json",
+ "tar",
  "tokio",
+ "url",
  "zip",
 ]
 
@@ -2688,6 +2706,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.21",
  "tokio",
+ "url",
  "zip",
 ]
 
@@ -2928,6 +2947,12 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "minisign-verify"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22f9645cb765ea72b8111f36c522475d2daa0d22c957a9826437e97534bc4e9e"
 
 [[package]]
 name = "miniz_oxide"

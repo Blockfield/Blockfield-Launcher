@@ -7,7 +7,7 @@ import { RoomList, Room } from "rooms.slint";
 
 export struct MainData {
     online: bool, updating: bool, maintenance: string, rooms-available: bool,
-    players: string, ping: string, region: string, location: string,
+    players: string, ping: string, region: string, location: string, server-address: string,
     installed: string, latest: string, size: string, checked: bool, checking: bool,
     needs-setup: bool, needs-update: bool, check-error: string,
     phase: string, launching: bool, launch-status: string, progress: int, launch-error: string, launch-stale: bool,
@@ -73,6 +73,10 @@ export component MainScreen inherits Rectangle {
     callback deploy();
     callback verify();
     callback join(string);
+    // Fired when the profile flips back to Game (and only then matters):
+    // a pending invite must be retried once readiness may have cleared.
+    callback retry-join();
+    changed workshop => { root.retry-join(); }
     private property <bool> game-busy: root.data.phase != "idle";
     private property <bool> disabled: !root.data.checked || root.data.checking || root.data.launching || root.game-busy || root.data.profile-changing || root.data.profile-blocked;
     private property <bool> room-disabled: root.data.launching || (root.data.phase != "running" && (root.data.checking || !root.data.checked || root.game-busy));
@@ -113,7 +117,7 @@ export component MainScreen inherits Rectangle {
                 }
                 Image { x: 16px + 1phx; y: 20px + 1phx + Tokens.line-height(15px, 1phx) + (Tokens.line-height(19.5px, 1phx) - 14px) / 2; width: 14px; height: 14px; source: @image-url("../assets/icons/shield-check.svg"); colorize: Tokens.primary; }
                 Text { x: 38px + 1phx; y: 20px + 1phx + Tokens.line-height(15px, 1phx); height: Tokens.line-height(19.5px, 1phx); width: parent.width - 54px - 2phx; text: root.workshop ? "Мастерская" : "BLOCKFIELD · ОСНОВНОЙ"; color: Tokens.neutral-100; font-size: 13px; letter-spacing: 2.34px; overflow: elide; }
-                SmallLabel { x: 16px + 1phx; y: 28px + 1phx + Tokens.line-height(15px, 1phx) + Tokens.line-height(19.5px, 1phx); height: Tokens.line-height(15px, 1phx); width: parent.width - 32px - 2phx; text: "play.blockfield.pro:25565"; letter-spacing: 0.8px; overflow: elide; }
+                SmallLabel { x: 16px + 1phx; y: 28px + 1phx + Tokens.line-height(15px, 1phx) + Tokens.line-height(19.5px, 1phx); height: Tokens.line-height(15px, 1phx); width: parent.width - 32px - 2phx; text: root.data.server-address != "" ? root.data.server-address : "play.blockfield.pro:25565"; letter-spacing: 0.8px; overflow: elide; }
             }
         }
         play := GlowPanel { x: 0px;
@@ -188,7 +192,7 @@ export component MainScreen inherits Rectangle {
         if root.banner: Rectangle { x: 0px;
             y: play.y + play.height + 8px; height: 18px;
             Text { x: 0px; y: 0px;text: root.room-message != "" ? root.room-message : "Есть приглашение в игру. Для входа выберите профиль «Игра»."; color: Tokens.secondary-foreground; font-size: 12px; }
-            ActionArea { y: 0px;x: parent.width - 60px; width: 60px; height: 18px; label: "Закрыть"; clicked => { root.room-message = ""; } Text { x: 0px; y: 0px;text: "Закрыть"; color: Tokens.secondary-foreground; font-size: 12px; } }
+            if root.room-message != "": ActionArea { y: 0px;x: parent.width - 60px; width: 60px; height: 18px; label: "Закрыть"; clicked => { root.room-message = ""; } Text { x: 0px; y: 0px;text: "Закрыть"; color: Tokens.secondary-foreground; font-size: 12px; } }
         }
         details := Rectangle { x: 0px;
             y: play.y + play.height + 16px + (root.banner ? 26px : 0px); height: parent.height - self.y;

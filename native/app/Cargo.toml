@@ -1,6 +1,8 @@
 [package]
 name = "blockfield-native"
-version = "0.1.0"
+# Native release line: the cutover ships the launcher version, not 0.1.0, so
+# the self-update check compares against its own channel.
+version = "1.0.20"
 edition = "2024"
 publish = false
 license = "GPL-3.0-only"
@@ -15,7 +17,18 @@ launcher-net = { path = "../../core/launcher-net" }
 chrono = { version = "0.4", default-features = false, features = ["alloc", "clock", "std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 dirs = "7"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Signed self-update backend (same release channel and pinned key as the
+# Tauri updater): HTTP + semver + minisign verify + deb extraction.
+reqwest = { version = "0.13", features = ["gzip", "json", "query", "stream"] }
+semver = "1"
+minisign-verify = "0.2"
+base64 = "0.23"
+ar = "0.9"
+tar = "0.4"
+flate2 = "1"
+tempfile = "3"
 slint = { version = "~1.18", default-features = false, features = ["std", "backend-winit", "renderer-skia-opengl", "renderer-software", "compat-1-2"] }
 skin3d = { path = "../skin3d", features = ["slint"] }
 # e2e golden PNG decode/encode. Same spec as skin3d's: no new code to compile.

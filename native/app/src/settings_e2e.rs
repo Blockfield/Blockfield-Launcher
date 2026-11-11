@@ -13,7 +13,9 @@ pub fn start(
     let state = match app.get_settings_tab() {
         0 => "settings-general",
         1 => "settings-runtime",
-        _ => "settings-commands",
+        2 => "settings-commands",
+        3 => "settings-skin",
+        _ => "settings-launcher",
     };
     let weak = app.as_weak();
     let timer = Timer::default();

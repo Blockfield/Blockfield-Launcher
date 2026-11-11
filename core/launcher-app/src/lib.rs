@@ -6,7 +6,7 @@
 //! [`LauncherEvent`] back to today's exact event names and payloads. The later
 //! Slint app uses the same state and sink with a different adapter.
 
-use launcher_core::config::LauncherConfig;
+use launcher_core::config::{ClientProfile, LauncherConfig};
 use launcher_core::game::{GameState, GameStatus};
 use launcher_net::download::{DownloadProgressPayload, Downloader};
 use launcher_net::pack::{JavaInfo, LauncherInfo, PackMeta};
@@ -36,9 +36,12 @@ pub struct LauncherAppState {
     pub events: EventSink,
 }
 
-/// What `check_modpack_version` learned about the hosted pack.
+/// What `check_modpack_version` learned about the hosted pack, bound to the
+/// profile it was checked for so an update cannot install it into the other
+/// profile's game directory after a profile switch.
 #[derive(Clone)]
 pub struct PackState {
+    pub profile: ClientProfile,
     pub info: LauncherInfo,
     pub meta: PackMeta,
 }

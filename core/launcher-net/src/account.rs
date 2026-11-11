@@ -284,10 +284,17 @@ pub fn drasl_base(skins_base: Option<&str>) -> Result<String, String> {
     let base = skins_base
         .unwrap_or(super::skins::DEFAULT_SERVER)
         .to_string();
-    let dev = ["http://127.0.0.1", "http://localhost"]
-        .iter()
-        .any(|prefix| base.starts_with(prefix));
-    if !base.starts_with("https://") && !(cfg!(debug_assertions) && dev) {
+    if cfg!(debug_assertions) {
+        // Exact host match: a prefix check accepts http://localhost.evil.com/.
+        if let Ok(parsed) = url::Url::parse(&base) {
+            if parsed.scheme() == "http"
+                && matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost"))
+            {
+                return Ok(base);
+            }
+        }
+    }
+    if !base.starts_with("https://") {
         return Err("Drasl server URL must use https".to_string());
     }
     Ok(base)
@@ -560,5 +567,23 @@ mod tests {
         };
         assert!(fired.load(Ordering::SeqCst));
         assert!(error.starts_with(SESSION_EXPIRED), "{error}");
+    }
+
+    #[test]
+    fn drasl_base_rejects_lookalike_local_hosts() {
+        for evil in ["http://localhost.evil.com/", "http://127.0.0.1.evil.com/"] {
+            assert!(drasl_base(Some(evil)).is_err(), "{evil} must be refused");
+        }
+        // Exact dev-local hosts (with port/path) stay allowed in debug builds.
+        if cfg!(debug_assertions) {
+            for dev in [
+                "http://localhost:8080/",
+                "http://127.0.0.1:8080/auth/validate",
+            ] {
+                assert!(drasl_base(Some(dev)).is_ok(), "{dev} must stay allowed");
+            }
+        }
+        assert!(drasl_base(Some("https://example.com/")).is_ok());
+        assert!(drasl_base(Some("http://example.com/")).is_err());
     }
 }

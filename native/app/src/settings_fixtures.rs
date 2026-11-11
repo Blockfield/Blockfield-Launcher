@@ -31,45 +31,70 @@ pub fn apply(app: &AppWindow, state: &str, scenario: &str) -> Result<(), String>
         "settings-general" => 0,
         "settings-runtime" => 1,
         "settings-commands" => 2,
+        "settings-skin" => 3,
+        "settings-launcher" => 4,
         _ => return Err(format!("Unknown settings state: {state}")),
     });
     let form = app.global::<SettingsForm>();
     match scenario {
         "default" => {}
         "edited" => {
-            let mut data = form.get_data();
             match app.get_settings_tab() {
                 0 => {
+                    let mut data = form.get_data();
                     data.auto_update = true;
                     data.discord_presence = true;
                     data.hide_while_playing = true;
+                    form.set_data(data);
                     form.set_password_open(true);
+                    form.invoke_edited();
                 }
                 1 => {
+                    let mut data = form.get_data();
                     data.ram = 8;
                     data.java_path = "/capture/java/bin/java".into();
+                    form.set_data(data);
+                    form.invoke_edited();
                 }
-                _ => {
+                2 => {
+                    let mut data = form.get_data();
                     data.pre_launch = "echo preparing\necho \"$INST_DIR\"".into();
                     data.post_exit = "echo finished".into();
+                    form.set_data(data);
+                    form.invoke_edited();
+                }
+                3 => {
+                    // Skin picks live outside the settings form: choosing a
+                    // file must not enable the form save (upload is separate).
+                    app.set_skin_path("/capture/skin.png".into());
+                    app.set_slim(true);
+                }
+                _ => {
+                    crate::fixtures::apply_launcher_update(app, "available")
+                        .expect("launcher fixtures");
                 }
             }
-            form.set_data(data);
-            form.invoke_edited();
         }
-        "error" => {
-            if app.get_settings_tab() == 0 {
+        "error" => match app.get_settings_tab() {
+            0 => {
                 form.set_password_open(true);
                 form.set_password("short".into());
                 form.invoke_change_password();
-            } else {
+            }
+            3 => {
+                app.set_skin_error("Не удалось загрузить предпросмотр".into());
+            }
+            4 => {
+                crate::fixtures::apply_launcher_update(app, "error").expect("launcher fixtures");
+            }
+            _ => {
                 let mut data = form.get_data();
                 data.java_path = "/missing/java".into();
                 form.set_data(data);
                 form.invoke_edited();
                 form.invoke_save();
             }
-        }
+        },
         _ => return Err(format!("Unknown settings scenario: {scenario}")),
     }
     Ok(())

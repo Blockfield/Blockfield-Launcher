@@ -163,6 +163,20 @@ impl LauncherConfig {
         if server.is_empty() {
             return Err("Укажите адрес мастерской в настройках выбранного профиля.".into());
         }
+        // Offline (or never-checked) launch: no Game host to compare against.
+        // Only the built-in Workshop host is trusted then; a custom address
+        // could be the Game host, so it waits for an online check.
+        if game_server.trim().is_empty() {
+            // Exact match: the same host on another port can route to Game.
+            server_host(server)?;
+            if server == DEFAULT_WORKSHOP_SERVER {
+                return Ok(Some(server.to_owned()));
+            }
+            return Err(
+                "Нет связи с сервером: свой адрес мастерской проверяется онлайн. Подключитесь к сети или верните стандартный адрес."
+                    .into(),
+            );
+        }
         if server_host(server)? == server_host(game_server)? {
             return Err(
                 "Мастерской нужен отдельный адрес: смена порта игрового адреса не меняет профиль."
@@ -193,9 +207,16 @@ fn default_workshop_server_from(env: Option<String>, compiled: Option<&str>) -> 
         .unwrap_or_else(|| DEFAULT_WORKSHOP_SERVER.to_string())
 }
 
-const DEFAULT_WORKSHOP_SERVER: &str = "raknet;workshop.blockfield.pro:25566";
-/// Shipped default up to launcher 1.0.17; the proxy now refuses TCP logins.
-const LEGACY_WORKSHOP_SERVER: &str = "workshop.blockfield.pro:25565";
+/// The proxy picks the Workshop backend by inbound RakNet port: 25567 is the
+/// Workshop, any other port (25566) is the game.
+const DEFAULT_WORKSHOP_SERVER: &str = "raknet;workshop.blockfield.pro:25567";
+/// Earlier shipped defaults, replaced on load: the TCP one (up to launcher
+/// 1.0.17; the proxy refuses TCP logins) and RakNet 25566, which the proxy
+/// routes to the game since it routes by port.
+const LEGACY_WORKSHOP_SERVERS: [&str; 2] = [
+    "workshop.blockfield.pro:25565",
+    "raknet;workshop.blockfield.pro:25566",
+];
 
 fn workshop_directory(game_dir: &str) -> String {
     let path = Path::new(game_dir);
@@ -288,11 +309,11 @@ pub fn load_config(app_data_dir: &Path) -> LauncherConfig {
     if config.workshop_game_dir.is_empty() {
         config.workshop_game_dir = workshop_directory(&config.game_dir);
     }
-    if config.workshop_server.trim().is_empty()
-        || config
-            .workshop_server
-            .trim()
-            .eq_ignore_ascii_case(LEGACY_WORKSHOP_SERVER)
+    let saved = config.workshop_server.trim();
+    if saved.is_empty()
+        || LEGACY_WORKSHOP_SERVERS
+            .iter()
+            .any(|legacy| saved.eq_ignore_ascii_case(legacy))
     {
         config.workshop_server = default_workshop_server();
     }
@@ -516,7 +537,7 @@ mod tests {
         );
         assert_eq!(
             default_workshop_server_from(None, None),
-            "raknet;workshop.blockfield.pro:25566"
+            "raknet;workshop.blockfield.pro:25567"
         );
     }
 
@@ -712,13 +733,14 @@ mod tests {
         for legacy in [
             "workshop.blockfield.pro:25565",
             "  WORKSHOP.Blockfield.PRO:25565 ",
+            "raknet;workshop.blockfield.pro:25566",
         ] {
             assert_eq!(load(legacy), default_workshop_server());
         }
         for custom in [
             "workshop.blockfield.pro:25570",
             "workshop.blockfield.pro",
-            "raknet;workshop.blockfield.pro:25566",
+            "raknet;workshop.blockfield.pro:25568",
             "other.example:25565",
         ] {
             assert_eq!(load(custom), custom);
@@ -766,6 +788,46 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some("raknet;game.example:25566")
+        );
+    }
+
+    #[test]
+    fn workshop_target_without_game_host_uses_configured_address_offline() {
+        // Offline (or never-checked) launch: no Game host to compare against,
+        // so the configured Workshop address is used without a network fetch.
+        let config = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: DEFAULT_WORKSHOP_SERVER.into(),
+            ..LauncherConfig::default()
+        };
+        assert_eq!(
+            config.target("").unwrap().as_deref(),
+            Some(DEFAULT_WORKSHOP_SERVER)
+        );
+        // A custom address may be the Game host; without a known Game host it
+        // must not bypass the distinct-host check.
+        let custom = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: "raknet;play.example:25567".into(),
+            ..LauncherConfig::default()
+        };
+        assert!(custom.target("").is_err());
+        // Same host, Game port: must not pass as the built-in address.
+        let same_host = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: "raknet;WORKSHOP.blockfield.pro.:25566".into(),
+            ..LauncherConfig::default()
+        };
+        assert!(same_host.target("").is_err());
+        // Empty Workshop address still refuses with the same message as online.
+        let empty = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: "  ".into(),
+            ..LauncherConfig::default()
+        };
+        assert_eq!(
+            empty.target("").unwrap_err(),
+            "Укажите адрес мастерской в настройках выбранного профиля."
         );
     }
 

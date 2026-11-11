@@ -107,5 +107,169 @@ class PrepareUpdaterTests(unittest.TestCase):
                 signature.write_text(content)
 
 
+class PrepareNativeUpdaterTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.version = "1.0.20"
+        self.names = {
+            "linux-x86_64-deb": f"blockfield-native_{self.version}_amd64.deb",
+            "windows-x86_64": f"blockfield-native_{self.version}_x64_en-US.msi",
+            "windows-x86_64-nsis": f"blockfield-native_{self.version}_x64-setup.exe",
+        }
+        for name in self.names.values():
+            (self.root / name).write_bytes(b"bundle")
+            (self.root / (name + ".sig")).write_text("signature-" + name + "\n")
+
+    def test_builds_native_manifest_without_touching_tauri_files(self):
+        tauri = self.root / "latest.json"
+        tauri.write_text(json.dumps({"version": self.version}))
+        updater.prepare_native(self.root, self.version)
+        data = json.loads((self.root / "latest-native.json").read_text())
+        self.assertEqual(data["version"], self.version)
+        self.assertEqual(set(data["platforms"]), set(self.names))
+        base = f"https://github.com/Blockfield/Blockfield-Launcher/releases/download/launcher-v{self.version}/"
+        for platform, name in self.names.items():
+            with self.subTest(platform=platform):
+                entry = data["platforms"][platform]
+                self.assertEqual(entry["signature"], "signature-" + name)
+                self.assertEqual(unquote(entry["url"]), base + name)
+        # The Tauri channel is untouched: same bytes, no native keys in it.
+        self.assertEqual(json.loads(tauri.read_text()), {"version": self.version})
+
+    def test_rejects_missing_or_empty_native_asset_signature(self):
+        for name in self.names.values():
+            with self.subTest(asset=name):
+                asset = self.root / name
+                content = asset.read_bytes()
+                asset.unlink()
+                with self.assertRaisesRegex(ValueError, "Incomplete native asset set"):
+                    updater.prepare_native(self.root, self.version)
+                self.assertFalse((self.root / "latest-native.json").exists())
+                asset.write_bytes(content)
+                signature = self.root / (name + ".sig")
+                signature.write_text(" \n\t")
+                with self.assertRaisesRegex(ValueError, "Incomplete native asset set"):
+                    updater.prepare_native(self.root, self.version)
+                self.assertFalse((self.root / "latest-native.json").exists())
+                signature.write_text("signature-" + name + "\n")
+
+    def test_partial_set_failure_names_everything_missing(self):
+        names = list(self.names.values())
+        (self.root / names[0]).unlink()
+        (self.root / (names[1] + ".sig")).unlink()
+        with self.assertRaisesRegex(
+            ValueError, "Incomplete native asset set"
+        ) as raised:
+            updater.prepare_native(self.root, self.version)
+        self.assertIn(names[0], str(raised.exception))
+        self.assertIn(names[1] + ".sig", str(raised.exception))
+        self.assertFalse((self.root / "latest-native.json").exists())
+
+    def test_empty_directory_fails_without_publishing(self):
+        for name in self.names.values():
+            (self.root / name).unlink()
+            (self.root / (name + ".sig")).unlink()
+        with self.assertRaisesRegex(ValueError, "Incomplete native asset set"):
+            updater.prepare_native(self.root, self.version)
+        self.assertFalse((self.root / "latest-native.json").exists())
+
+
+class NativeManifestNewerTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def write_published(self, version):
+        path = self.root / "published-native.json"
+        path.write_text(json.dumps({"version": version, "platforms": {}}))
+        return path
+
+    def test_newer_version_publishes(self):
+        self.assertTrue(
+            updater.native_manifest_newer(self.write_published("1.0.20"), "1.0.21")
+        )
+
+    def test_same_version_republishes(self):
+        self.assertTrue(
+            updater.native_manifest_newer(self.write_published("1.0.20"), "1.0.20")
+        )
+
+    def test_older_version_skips(self):
+        self.assertFalse(
+            updater.native_manifest_newer(self.write_published("1.0.21"), "1.0.20")
+        )
+
+    def test_numeric_not_lexicographic(self):
+        # 1.0.9 < 1.0.20 numerically, but "9" > "2" lexicographically.
+        self.assertTrue(
+            updater.native_manifest_newer(self.write_published("1.0.9"), "1.0.20")
+        )
+        self.assertFalse(
+            updater.native_manifest_newer(self.write_published("1.0.20"), "1.0.9")
+        )
+
+    def test_missing_or_broken_manifest_publishes(self):
+        self.assertTrue(
+            updater.native_manifest_newer(self.root / "absent.json", "1.0.20")
+        )
+        broken = self.root / "broken.json"
+        broken.write_text("not json")
+        self.assertTrue(updater.native_manifest_newer(broken, "1.0.20"))
+
+    def test_stable_beats_its_prerelease(self):
+        # Semver §11: 1.0.20-rc.1 < 1.0.20, so the stable release publishes.
+        self.assertTrue(
+            updater.native_manifest_newer(self.write_published("1.0.20-rc.1"), "1.0.20")
+        )
+        self.assertFalse(
+            updater.native_manifest_newer(self.write_published("1.0.20"), "1.0.20-rc.1")
+        )
+
+    def test_prerelease_identifiers_ordered(self):
+        newer = lambda pub, new: updater.native_manifest_newer(
+            self.write_published(pub), new
+        )
+        self.assertTrue(newer("1.0.20-alpha", "1.0.20-alpha.1"))
+        self.assertTrue(newer("1.0.20-alpha.1", "1.0.20-beta"))
+        self.assertTrue(newer("1.0.20-beta.2", "1.0.20-beta.11"))
+        self.assertTrue(newer("1.0.20-beta.11", "1.0.20-rc.1"))
+        # Equal precedence republishes (re-run of the same release).
+        self.assertTrue(newer("1.0.20-rc.1", "1.0.20-rc.1"))
+        # Numeric identifiers rank below alphanumeric ones.
+        self.assertTrue(newer("1.0.20-1", "1.0.20-alpha"))
+        # Build metadata does not affect precedence: equal, so it republishes.
+        self.assertTrue(
+            updater.native_manifest_newer(
+                self.write_published("1.0.20"), "1.0.20+build.1"
+            )
+        )
+
+
+class DownloadErrorIsMissingTests(unittest.TestCase):
+    def test_missing_channel_or_asset(self):
+        self.assertTrue(updater.download_error_is_missing("HTTP 404: not found"))
+        self.assertTrue(
+            updater.download_error_is_missing("release not found: native-channel")
+        )
+        self.assertTrue(
+            updater.download_error_is_missing(
+                "no assets match the pattern 'latest-native.json'"
+            )
+        )
+
+    def test_other_failures_are_not_missing(self):
+        for log in (
+            "HTTP 500: internal server error",
+            "network is unreachable",
+            "Bad credentials",
+            "",
+        ):
+            with self.subTest(log=log):
+                self.assertFalse(updater.download_error_is_missing(log))
+
+
 if __name__ == "__main__":
     unittest.main()

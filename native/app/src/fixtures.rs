@@ -237,6 +237,7 @@ pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), St
     )));
     app.set_rooms(ModelRc::new(VecModel::from(rooms)));
     app.set_main_data(data);
+    crate::avatars::apply_fixture_faces(app);
     Ok(())
 }
 
@@ -308,6 +309,7 @@ pub fn apply_settings(app: &AppWindow) -> Result<(), String> {
     app.set_slim(false);
     app.set_skin_caption("ВАШ СКИН".into());
     app.set_skin_error("".into());
+    crate::avatars::apply_fixture_faces(app);
     Ok(())
 }
 
@@ -497,6 +499,7 @@ pub fn apply_stats(app: &AppWindow, scenario: &str) -> Result<(), String> {
             );
         }
     }
+    crate::avatars::apply_fixture_faces(app);
     Ok(())
 }
 
@@ -524,6 +527,7 @@ pub fn apply_stats_page(app: &AppWindow, page: i32) {
         STATS_UUID,
         i64::from(page),
     );
+    crate::avatars::apply_fixture_faces(app);
 }
 
 pub fn find_option(options: &slint::ModelRc<slint::SharedString>, search: &str) -> i32 {
