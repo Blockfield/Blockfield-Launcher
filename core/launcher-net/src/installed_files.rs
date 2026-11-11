@@ -238,13 +238,26 @@ fn file_stat(path: &Path) -> Option<PackStat> {
 
 /// Real hash check of the installed pack files against the installer's index
 /// (packwiz.json): a same-size corruption is detected, while unchanged files
-/// (mtime+size match the cache) are not re-hashed. False when there is
-/// nothing to verify (fresh dir) or a file is missing or mismatched.
+/// (mtime+size match the cache) are not re-hashed. Game-mutable files are
+/// skipped (see `game_mutable`). False when there is nothing to verify (fresh
+/// dir) or a checked file is missing or mismatched.
 pub fn pack_files_valid(root: &Path, app_data: &Path) -> bool {
+    let (checked, bad) = pack_check(root, app_data);
+    checked && bad.is_empty()
+}
+
+/// Checked entries that are missing or hash-mismatched, as game-dir-relative
+/// paths. Powers the update-path heal; `pack_files_valid` is this list
+/// being empty.
+pub fn pack_files_bad(root: &Path, app_data: &Path) -> Vec<String> {
+    pack_check(root, app_data).1
+}
+
+fn pack_check(root: &Path, app_data: &Path) -> (bool, Vec<String>) {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let files = pack_files(&root);
     if files.is_empty() {
-        return false;
+        return (false, Vec::new());
     }
     let packwiz_mtime = file_stat(&root.join("packwiz.json"))
         .map(|stat| stat.mtime_ns)
@@ -259,8 +272,11 @@ pub fn pack_files_valid(root: &Path, app_data: &Path) -> bool {
         dir.files.clear();
         dir.packwiz_mtime_ns = packwiz_mtime;
     }
-    let mut ok = true;
+    let mut bad = Vec::new();
     for (relative, expected) in &files {
+        if game_mutable(relative) {
+            continue;
+        }
         let entry_ok = match safe_file(&root, relative) {
             Some(path) => match file_stat(&path) {
                 Some(stat) if dir.files.get(relative) == Some(&stat) => true,
@@ -279,13 +295,57 @@ pub fn pack_files_valid(root: &Path, app_data: &Path) -> bool {
             }
         };
         if !entry_ok {
-            ok = false;
+            bad.push(relative.clone());
         }
     }
     if fs::create_dir_all(app_data).is_ok() {
         let _ = fs::write(&cache_path, serde_json::to_vec(&cache).unwrap());
     }
-    ok
+    (true, bad)
+}
+
+/// Deletes missing/mismatched checked files and drops their `packwiz.json`
+/// entries, so the installer downloads them again instead of trusting its
+/// stale hashes and reporting "already up to date". Returns the removed
+/// game-dir-relative paths plus the ones whose removal failed: a failed
+/// entry stays in the manifest so the next check still fails instead of
+/// reporting success with a damaged file. Game-mutable files are never touched.
+pub fn drop_bad_pack_files(root: &Path, app_data: &Path) -> (Vec<String>, Vec<String>) {
+    let bad = pack_files_bad(root, app_data);
+    if bad.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut removed = Vec::new();
+    let mut failed = Vec::new();
+    for relative in &bad {
+        // Deleted through the same guard as the check: symlinks and escapes
+        // are never followed or removed.
+        if let Some(path) = safe_file(&root, relative) {
+            if let Err(error) = fs::remove_file(&path) {
+                log::error!("Cannot remove damaged pack file {relative}: {error}");
+                failed.push(relative.clone());
+                continue;
+            }
+        }
+        removed.push(relative.clone());
+    }
+    let doomed: BTreeSet<&str> = removed.iter().map(String::as_str).collect();
+    let manifest = root.join("packwiz.json");
+    if let Ok(data) = fs::read(&manifest) {
+        if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&data) {
+            if let Some(files) = json.get_mut("cachedFiles").and_then(|v| v.as_object_mut()) {
+                files.retain(|_, entry| {
+                    entry
+                        .get("cachedLocation")
+                        .and_then(serde_json::Value::as_str)
+                        .is_none_or(|path| !doomed.contains(path))
+                });
+                let _ = fs::write(&manifest, serde_json::to_vec(&json).unwrap_or_default());
+            }
+        }
+    }
+    (removed, failed)
 }
 
 fn record_file(root: &Path, relative: &str) {
@@ -325,6 +385,14 @@ pub fn cleanup_partials(root: &Path) {
             }
         }
     }
+}
+
+/// Files the game itself rewrites: mods add default keys to their configs at
+/// start, the client saves options and the server list. packwiz keeps their
+/// index hash and reports "up to date", so checking them would block every
+/// launch after the first one.
+fn game_mutable(relative: &str) -> bool {
+    relative.starts_with("config/") || matches!(relative, "options.txt" | "servers.dat")
 }
 
 fn pack_hash_matches(path: &Path, expected: &serde_json::Value) -> bool {
@@ -669,6 +737,222 @@ mod tests {
         assert!(modified.is_file());
         assert!(root.join("mods/mismatch.jar").is_file());
         assert!(root.join("manual.part").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn heal_keeps_index_entry_when_removal_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        let bad = root.join("mods/bad.jar");
+        fs::write(&bad, b"correct-bytes!").unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/bad.pw.toml": {
+                    "cachedLocation": "mods/bad.jar",
+                    "hash": { "type": "sha256", "value": Downloader::sha256_file(&bad).unwrap() }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(&bad, b"corrupt-bytes!").unwrap();
+        // Read-only parent: removal fails, the manifest stays writable.
+        let mods = root.join("mods");
+        fs::set_permissions(&mods, fs::Permissions::from_mode(0o555)).unwrap();
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        fs::set_permissions(&mods, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(removed.is_empty());
+        assert_eq!(failed, ["mods/bad.jar".to_string()]);
+        // The entry must stay so the next check still fails instead of
+        // reporting success with the damaged file on disk.
+        assert!(bad.is_file());
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("packwiz.json")).unwrap()).unwrap();
+        assert!(index["cachedFiles"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|file| file["cachedLocation"] == "mods/bad.jar"));
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[test]
+    fn heal_removes_bad_files_and_drops_their_index_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        let good = root.join("mods/good.jar");
+        let bad = root.join("mods/bad.jar");
+        let config = root.join("config/edited.yaml");
+        fs::write(&good, b"correct-bytes!").unwrap();
+        fs::write(&bad, b"correct-bytes!").unwrap();
+        fs::write(&config, b"installed-defaults").unwrap();
+        let entry = |path: &Path| {
+            serde_json::json!({
+                "cachedLocation": path.strip_prefix(&root).unwrap().to_str().unwrap().replace('\\', "/"),
+                "hash": { "type": "sha256", "value": Downloader::sha256_file(path).unwrap() }
+            })
+        };
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/good.pw.toml": entry(&good),
+                "mods/bad.pw.toml": entry(&bad),
+                "config/edited.pw.toml": entry(&config),
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        // Same-size corruption plus a game-mutable edit: only the mod is bad.
+        fs::write(&bad, b"corrupt-bytes!").unwrap();
+        fs::write(&config, b"rewritten-by-mod").unwrap();
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        assert!(failed.is_empty());
+        assert_eq!(removed, ["mods/bad.jar".to_string()]);
+        assert!(!bad.exists());
+        assert!(good.is_file());
+        assert_eq!(fs::read(&config).unwrap(), b"rewritten-by-mod");
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("packwiz.json")).unwrap()).unwrap();
+        let files = index["cachedFiles"].as_object().unwrap();
+        assert!(!files
+            .values()
+            .any(|file| file["cachedLocation"] == "mods/bad.jar"));
+        assert_eq!(files.len(), 2);
+        // With the bad entry gone the check passes on the surviving files.
+        assert!(pack_files_valid(&root, &data));
+    }
+
+    #[test]
+    fn game_mutable_files_are_not_hash_checked() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        let good = root.join("mods/mod.jar");
+        let options = root.join("options.txt");
+        let config = root.join("config/kiwi-client.yaml");
+        fs::write(&good, b"correct-bytes!").unwrap();
+        fs::write(&options, b"installed-defaults").unwrap();
+        fs::write(&config, b"default-keys: 1\n").unwrap();
+        fs::create_dir_all(root.join("tacz")).unwrap();
+        let gun = root.join("tacz/gun.json");
+        fs::write(&gun, b"{\"damage\": 5}").unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/mod.pw.toml": {
+                    "cachedLocation": "mods/mod.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&good).unwrap()
+                    }
+                },
+                "options.pw.toml": {
+                    "cachedLocation": "options.txt",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&options).unwrap()
+                    }
+                },
+                "tacz/gun.pw.toml": {
+                    "cachedLocation": "tacz/gun.json",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&gun).unwrap()
+                    }
+                },
+                "config/kiwi-client.pw.toml": {
+                    "cachedLocation": "config/kiwi-client.yaml",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&config).unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        // Mods rewrite their configs at game start: not a corrupt pack.
+        fs::write(&options, b"player-settings!").unwrap();
+        fs::write(&config, b"default-keys: 1\ngained-keys: 2\n").unwrap();
+        assert!(pack_files_valid(&root, &data));
+        // Pinned data outside config/ is still checked, whatever its type.
+        fs::write(&gun, b"{\"damage\": 9}").unwrap();
+        // Same size within one mtime tick would hit the stat cache: move the
+        // mtime so the edit is seen, as a real edit later in time would be.
+        std::fs::File::options()
+            .write(true)
+            .open(&gun)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        fs::write(&gun, b"{\"damage\": 5}").unwrap();
+        assert!(pack_files_valid(&root, &data));
+        // A corrupted mod archive still fails the check.
+        fs::write(&good, b"corrupt-bytes!").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&good)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        // A healed archive passes again, a missing one fails.
+        fs::write(&good, b"correct-bytes!").unwrap();
+        assert!(pack_files_valid(&root, &data));
+        fs::remove_file(&good).unwrap();
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[test]
+    fn same_size_corrupted_mod_fails_pack_check_until_healed() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        let good = root.join("mods/mod.jar");
+        fs::write(&good, b"correct-bytes!").unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/mod.pw.toml": {
+                    "cachedLocation": "mods/mod.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&good).unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(pack_files_valid(&root, &data));
+        // Same byte size, different bytes: no size probe can catch this.
+        fs::write(&good, b"corrupt-bytes!").unwrap();
+        // Real corruption lands long after install; pin a distinct mtime so this
+        // stays deterministic where filesystem timestamp granularity is coarse.
+        std::fs::File::options()
+            .write(true)
+            .open(&good)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        // The installer rewrites the file: the next launch check passes again.
+        fs::write(&good, b"correct-bytes!").unwrap();
+        assert!(pack_files_valid(&root, &data));
+        // A fresh dir with no installer cache is never "valid".
+        assert!(!pack_files_valid(&temp.path().join("empty"), &data));
     }
 
     #[test]
