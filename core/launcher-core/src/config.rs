@@ -193,9 +193,16 @@ fn default_workshop_server_from(env: Option<String>, compiled: Option<&str>) -> 
         .unwrap_or_else(|| DEFAULT_WORKSHOP_SERVER.to_string())
 }
 
-const DEFAULT_WORKSHOP_SERVER: &str = "raknet;workshop.blockfield.pro:25566";
-/// Shipped default up to launcher 1.0.17; the proxy now refuses TCP logins.
-const LEGACY_WORKSHOP_SERVER: &str = "workshop.blockfield.pro:25565";
+/// The proxy picks the Workshop backend by inbound RakNet port: 25567 is the
+/// Workshop, any other port (25566) is the game.
+const DEFAULT_WORKSHOP_SERVER: &str = "raknet;workshop.blockfield.pro:25567";
+/// Earlier shipped defaults, replaced on load: the TCP one (up to launcher
+/// 1.0.17; the proxy refuses TCP logins) and RakNet 25566, which the proxy
+/// routes to the game since it routes by port.
+const LEGACY_WORKSHOP_SERVERS: [&str; 2] = [
+    "workshop.blockfield.pro:25565",
+    "raknet;workshop.blockfield.pro:25566",
+];
 
 fn workshop_directory(game_dir: &str) -> String {
     let path = Path::new(game_dir);
@@ -288,11 +295,11 @@ pub fn load_config(app_data_dir: &Path) -> LauncherConfig {
     if config.workshop_game_dir.is_empty() {
         config.workshop_game_dir = workshop_directory(&config.game_dir);
     }
-    if config.workshop_server.trim().is_empty()
-        || config
-            .workshop_server
-            .trim()
-            .eq_ignore_ascii_case(LEGACY_WORKSHOP_SERVER)
+    let saved = config.workshop_server.trim();
+    if saved.is_empty()
+        || LEGACY_WORKSHOP_SERVERS
+            .iter()
+            .any(|legacy| saved.eq_ignore_ascii_case(legacy))
     {
         config.workshop_server = default_workshop_server();
     }
@@ -516,7 +523,7 @@ mod tests {
         );
         assert_eq!(
             default_workshop_server_from(None, None),
-            "raknet;workshop.blockfield.pro:25566"
+            "raknet;workshop.blockfield.pro:25567"
         );
     }
 
@@ -712,13 +719,14 @@ mod tests {
         for legacy in [
             "workshop.blockfield.pro:25565",
             "  WORKSHOP.Blockfield.PRO:25565 ",
+            "raknet;workshop.blockfield.pro:25566",
         ] {
             assert_eq!(load(legacy), default_workshop_server());
         }
         for custom in [
             "workshop.blockfield.pro:25570",
             "workshop.blockfield.pro",
-            "raknet;workshop.blockfield.pro:25566",
+            "raknet;workshop.blockfield.pro:25568",
             "other.example:25565",
         ] {
             assert_eq!(load(custom), custom);
