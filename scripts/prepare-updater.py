@@ -75,17 +75,48 @@ def prepare_native(directory, version):
     )
 
 
+def _parse_semver(version):
+    # Semver §11 precedence: numeric MAJOR.MINOR.PATCH, then prerelease
+    # (a version without prerelease outranks one with it); build metadata
+    # after "+" is ignored.
+    text = str(version).strip()
+    if text[:1] == "v":
+        text = text[1:]
+    text = text.split("+", 1)[0]
+    core_text, sep, pre_text = text.partition("-")
+    core = []
+    for part in core_text.split("."):
+        core.append(int(part) if part.isdigit() else 0)
+    while len(core) < 3:
+        core.append(0)
+    prerelease = None
+    if sep and pre_text:
+        prerelease = []
+        for identifier in pre_text.split("."):
+            if identifier.isdigit():
+                prerelease.append((0, int(identifier), ""))
+            else:
+                prerelease.append((1, 0, identifier))
+    return tuple(core), prerelease
+
+
 def _version_key(version):
-    # Numeric per dotted part, so 1.0.20 > 1.0.9 (plain string compare is wrong).
-    key = []
-    for part in str(version).split("."):
-        digits = ""
-        for char in part:
-            if not char.isdigit():
-                break
-            digits += char
-        key.append((int(digits) if digits else 0, part[len(digits) :]))
-    return key
+    # Release (no prerelease) sorts above its prereleases: 1.0.20 > 1.0.20-rc.1.
+    core, prerelease = _parse_semver(version)
+    if prerelease is None:
+        return (core, 1, [])
+    return (core, 0, prerelease)
+
+
+def download_error_is_missing(log):
+    # Only a missing channel release/asset means "nothing published yet".
+    # Any other download failure must fail the job, never upload blind.
+    lowered = str(log).lower()
+    return (
+        "404" in lowered
+        or "release not found" in lowered
+        or "no assets match" in lowered
+    )
 
 
 def native_manifest_newer(current_path, version):
@@ -101,9 +132,11 @@ def native_manifest_newer(current_path, version):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 4 and sys.argv[1] == "native":
-        prepare_native(Path(sys.argv[2]), sys.argv[3])
-    elif len(sys.argv) == 5 and sys.argv[1:3] == ["native", "newer-than"]:
+    if len(sys.argv) == 5 and sys.argv[1:3] == ["native", "newer-than"]:
         sys.exit(0 if native_manifest_newer(Path(sys.argv[3]), sys.argv[4]) else 1)
+    elif len(sys.argv) == 4 and sys.argv[1:3] == ["native", "download-is-missing"]:
+        sys.exit(0 if download_error_is_missing(sys.argv[3]) else 1)
+    elif len(sys.argv) == 4 and sys.argv[1] == "native":
+        prepare_native(Path(sys.argv[2]), sys.argv[3])
     else:
         prepare(Path(sys.argv[1]), sys.argv[2])

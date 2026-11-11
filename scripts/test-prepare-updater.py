@@ -219,6 +219,56 @@ class NativeManifestNewerTests(unittest.TestCase):
         broken.write_text("not json")
         self.assertTrue(updater.native_manifest_newer(broken, "1.0.20"))
 
+    def test_stable_beats_its_prerelease(self):
+        # Semver §11: 1.0.20-rc.1 < 1.0.20, so the stable release publishes.
+        self.assertTrue(
+            updater.native_manifest_newer(self.write_published("1.0.20-rc.1"), "1.0.20")
+        )
+        self.assertFalse(
+            updater.native_manifest_newer(self.write_published("1.0.20"), "1.0.20-rc.1")
+        )
+
+    def test_prerelease_identifiers_ordered(self):
+        newer = lambda pub, new: updater.native_manifest_newer(
+            self.write_published(pub), new
+        )
+        self.assertTrue(newer("1.0.20-alpha", "1.0.20-alpha.1"))
+        self.assertTrue(newer("1.0.20-alpha.1", "1.0.20-beta"))
+        self.assertTrue(newer("1.0.20-beta.2", "1.0.20-beta.11"))
+        self.assertTrue(newer("1.0.20-beta.11", "1.0.20-rc.1"))
+        self.assertFalse(newer("1.0.20-rc.1", "1.0.20-rc.1"))
+        # Numeric identifiers rank below alphanumeric ones.
+        self.assertTrue(newer("1.0.20-1", "1.0.20-alpha"))
+        # Build metadata does not affect precedence.
+        self.assertFalse(
+            updater.native_manifest_newer(
+                self.write_published("1.0.20"), "1.0.20+build.1"
+            )
+        )
+
+
+class DownloadErrorIsMissingTests(unittest.TestCase):
+    def test_missing_channel_or_asset(self):
+        self.assertTrue(updater.download_error_is_missing("HTTP 404: not found"))
+        self.assertTrue(
+            updater.download_error_is_missing("release not found: native-channel")
+        )
+        self.assertTrue(
+            updater.download_error_is_missing(
+                "no assets match the pattern 'latest-native.json'"
+            )
+        )
+
+    def test_other_failures_are_not_missing(self):
+        for log in (
+            "HTTP 500: internal server error",
+            "network is unreachable",
+            "Bad credentials",
+            "",
+        ):
+            with self.subTest(log=log):
+                self.assertFalse(updater.download_error_is_missing(log))
+
 
 if __name__ == "__main__":
     unittest.main()
