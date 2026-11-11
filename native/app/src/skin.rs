@@ -31,15 +31,25 @@ fn texture_bytes(path: &str) -> Result<Option<Vec<u8>>, String> {
     }
     // Reject by size before reading: the preview syncs on the event-loop
     // thread, so a huge file must never be fully loaded to be refused.
-    // Only regular files: opening a FIFO or device blocks this thread, and
-    // their metadata length (often 0) says nothing about what a read returns.
-    let meta =
-        std::fs::metadata(path).map_err(|error| format!("Не удалось прочитать файл: {error}"))?;
+    // Check the opened handle, not the path, so the file cannot be swapped for a
+    // FIFO between check and open. Linux opens non-blocking (O_NONBLOCK), so even a
+    // FIFO with no writer returns at once; regular files ignore the flag.
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(0o4000);
+    }
+    let file = options
+        .open(path)
+        .map_err(|error| format!("Не удалось прочитать файл: {error}"))?;
+    let meta = file
+        .metadata()
+        .map_err(|error| format!("Не удалось прочитать файл: {error}"))?;
     if !meta.is_file() || meta.len() > MAX_TEXTURE_BYTES {
         return Err("Файл должен быть PNG не больше 1 МБ".into());
     }
-    let file =
-        std::fs::File::open(path).map_err(|error| format!("Не удалось прочитать файл: {error}"))?;
     // take() bounds the read itself, so a file that grows past the
     // metadata check still cannot exhaust memory on this thread.
     let bytes =
@@ -295,9 +305,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let fifo = dir.join("skin.png");
         let _ = std::fs::remove_file(&fifo);
-        let status = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
         assert!(status.success());
-        // Returns instead of blocking on open: a FIFO is not a regular file.
+        // Returns instead of blocking: opened non-blocking, then refused as not a regular file.
         assert!(texture_bytes(fifo.to_str().unwrap()).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
