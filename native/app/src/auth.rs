@@ -347,7 +347,7 @@ pub fn show_login_expired(app: &AppWindow) {
         username
     };
     show_login(app, "login", false, &kept);
-    app.set_login_error("Сессия истекла. Войдите снова.".into());
+    app.set_login_error("Сессия истекла — войдите снова.".into());
 }
 
 /// Decide the entry screen after startup, mirroring App.tsx: logged-out (or
