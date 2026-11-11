@@ -163,6 +163,20 @@ impl LauncherConfig {
         if server.is_empty() {
             return Err("Укажите адрес мастерской в настройках выбранного профиля.".into());
         }
+        if game_server.trim().is_empty() {
+            // Offline (manifest unreachable, no same-profile cache): no Game
+            // host to validate against, so only the built-in default is
+            // trusted without a network request. A custom address could point
+            // at the Game and would land the player there.
+            server_host(server)?;
+            if server == default_workshop_server() {
+                return Ok(Some(server.to_owned()));
+            }
+            return Err(
+                "Нет сети: для нестандартного адреса мастерской подключитесь к сети или верните адрес по умолчанию."
+                    .into(),
+            );
+        }
         if server_host(server)? == server_host(game_server)? {
             return Err(
                 "Мастерской нужен отдельный адрес: смена порта игрового адреса не меняет профиль."
@@ -769,6 +783,39 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some("raknet;game.example:25566")
+        );
+    }
+
+    #[test]
+    fn workshop_offline_trusts_only_the_builtin_default() {
+        let mut config = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            ..LauncherConfig::default()
+        };
+        // No Game host known (manifest unreachable, no same-profile cache):
+        // the built-in default resolves locally with no network request.
+        config.workshop_server = default_workshop_server();
+        assert_eq!(
+            config.target("").unwrap().as_deref(),
+            Some(default_workshop_server().as_str())
+        );
+        // A custom address offline must go online or restore the default.
+        config.workshop_server = "raknet;custom.example:25567".into();
+        let err = config.target("").unwrap_err();
+        assert!(
+            err.contains("сети") && err.contains("по умолчанию"),
+            "{err}"
+        );
+        // A cached Game host for the same profile keeps the distinct check.
+        config.workshop_server = "raknet;game.example:25566".into();
+        assert!(config.target("raknet;game.example:25566").is_err());
+        config.workshop_server = "raknet;workshop.example:25567".into();
+        assert_eq!(
+            config
+                .target("raknet;game.example:25566")
+                .unwrap()
+                .as_deref(),
+            Some("raknet;workshop.example:25567")
         );
     }
 
