@@ -17,7 +17,7 @@
 
 use super::install::pack_phase_complete;
 use super::java::{resolved_java_path, system_java_available};
-use super::pack_check::{installed_pack, pack_base_url};
+use super::pack_check::{installed_pack, pack_base_url_for};
 use crate::rooms::PendingRoom;
 use crate::{EventSink, GameIdentity, LauncherAppState, LauncherEvent, PackState};
 use launcher_core::config::{ClientProfile, LauncherConfig};
@@ -87,11 +87,15 @@ pub fn stale_pack_message(installed_hash: &str, meta: &PackMeta) -> Option<Strin
     })
 }
 
-async fn fresh_pack_state() -> Result<PackState, String> {
-    let base = pack_base_url()?;
+async fn fresh_pack_state(profile: ClientProfile) -> Result<PackState, String> {
+    let base = pack_base_url_for(profile)?;
     let info = launcher_net::pack::fetch_launcher_info(&base).await?;
     let meta = launcher_net::pack::fetch_pack_meta(&info.pack).await?;
-    Ok(PackState { info, meta })
+    Ok(PackState {
+        profile,
+        info,
+        meta,
+    })
 }
 
 /// Blocking pack hash check, designed for `spawn_blocking`: a corrupt pack
@@ -183,7 +187,7 @@ pub async fn launch_game(
     // the update screen instead. An unreachable manifest is fail-open (offline
     // launch keeps working); a positive mismatch fails closed.
     let pack = if !launcher_core::dev::freeze_pack() {
-        match fresh_pack_state().await {
+        match fresh_pack_state(config.active_profile).await {
             Ok(fresh) => {
                 let installed_hash = installed_pack(&PathBuf::from(&config.game_dir)).0;
                 if let Some(stale) = stale_pack_message(&installed_hash, &fresh.meta) {
@@ -276,7 +280,7 @@ pub(crate) async fn launch_with_identity(
     let game_server = match &pack {
         Some(pack) => pack.info.server.clone(),
         None if config.active_profile == ClientProfile::Workshop => {
-            launcher_net::pack::fetch_launcher_info(&pack_base_url()?)
+            launcher_net::pack::fetch_launcher_info(&pack_base_url_for(ClientProfile::Workshop)?)
                 .await?
                 .server
         }
@@ -285,6 +289,31 @@ pub(crate) async fn launch_with_identity(
     let quick_play = config.target(&game_server)?;
     // Dev build: another server, or none at all so the game opens on the title screen.
     let quick_play = launcher_core::dev::server_override().unwrap_or(quick_play);
+    // TCP fallback (proxy#74 U3): the proxy routes TCP 25565 logins to the Game.
+    // A remembered RakNet failure (<24 h) skips the probe; otherwise one
+    // unconnected ping decides whether the RakNet path is usable from here.
+    let mut quick_play = quick_play;
+    let mut via_tcp_fallback = false;
+    if let Some(target) = quick_play.clone() {
+        let fallback_state = launcher_net::tcp_fallback::FallbackState::load(&state.app_data_dir);
+        let now = launcher_net::tcp_fallback::now_secs();
+        let resolved = launcher_net::tcp_fallback::resolve_target(&target, &fallback_state, now);
+        if resolved != target {
+            quick_play = Some(resolved);
+            via_tcp_fallback = true;
+        } else if let Some((host, port)) = launcher_net::tcp_fallback::raknet_endpoint(&target) {
+            if !launcher_net::tcp_fallback::raknet_reachable(&host, port) {
+                log::warn!("RakNet path to {host}:{port} unreachable, using TCP fallback");
+                let mut updated = fallback_state;
+                updated.record(&host, now);
+                if let Err(error) = updated.save(&state.app_data_dir, now) {
+                    log::warn!("Cannot persist TCP fallback state: {error}");
+                }
+                quick_play = launcher_net::tcp_fallback::tcp_target_for(&target).or(quick_play);
+                via_tcp_fallback = true;
+            }
+        }
+    }
 
     log::info!(
         "Launching game: java={java}, ram={ram_mb}MB, dir={game_dir}, user={}",
@@ -365,7 +394,16 @@ pub(crate) async fn launch_with_identity(
             );
         }
     }
-    emit_status(&state.events, "launch", "Запуск игры", false);
+    emit_status(
+        &state.events,
+        "launch",
+        if via_tcp_fallback {
+            "Запуск игры: вход по TCP"
+        } else {
+            "Запуск игры"
+        },
+        false,
+    );
     let log_dir = game_dir_path.join("logs");
     std::fs::create_dir_all(&log_dir).map_err(|e| format!("Cannot create log directory: {e}"))?;
     let output = std::fs::File::create(log_dir.join("launcher-game.log"))

@@ -7,6 +7,7 @@
 
 use super::java::java_runtime_ready;
 use crate::{LauncherAppState, PackState, VersionCheckResult};
+use launcher_core::config::ClientProfile;
 use launcher_net::pack::PackMeta;
 use std::path::{Path, PathBuf};
 
@@ -24,14 +25,51 @@ pub fn installed_pack(game_dir: &Path) -> (String, String) {
 
 /// Base URL of the hosted packwiz pack (directory containing pack.toml and launcher.json).
 pub fn pack_base_url() -> Result<String, String> {
-    let url = std::env::var("VITE_BLOCKFIELD_PACK_URL")
-        .ok()
+    pack_base_url_for(ClientProfile::Game)
+}
+
+/// The Workshop profile installs a separate pack (second URL) into its own game
+/// directory with the same marker + file hash check; the game profile keeps the
+/// original URL and behavior unchanged.
+pub fn pack_base_url_for(profile: ClientProfile) -> Result<String, String> {
+    match profile {
+        ClientProfile::Game => select_pack_base_url(
+            "VITE_BLOCKFIELD_PACK_URL",
+            std::env::var("VITE_BLOCKFIELD_PACK_URL").ok().as_deref(),
+            option_env!("VITE_BLOCKFIELD_PACK_URL"),
+        ),
+        ClientProfile::Workshop => select_pack_base_url(
+            "VITE_BLOCKFIELD_WORKSHOP_PACK_URL",
+            std::env::var("VITE_BLOCKFIELD_WORKSHOP_PACK_URL")
+                .ok()
+                .as_deref(),
+            option_env!("VITE_BLOCKFIELD_WORKSHOP_PACK_URL"),
+        ),
+    }
+}
+
+/// A pack checked for one profile must never install into the other profile's
+/// game directory: refuse the cached state after a profile switch.
+pub fn require_pack_profile(pack: &PackState, profile: ClientProfile) -> Result<(), String> {
+    if pack.profile != profile {
+        return Err("Профиль изменился. Повторите проверку.".to_string());
+    }
+    Ok(())
+}
+
+/// Pure URL selection + validation so unit tests pin both profiles without env mutation.
+pub fn select_pack_base_url(
+    var: &str,
+    runtime: Option<&str>,
+    compiled: Option<&str>,
+) -> Result<String, String> {
+    let url = runtime
         .filter(|v| !v.trim().is_empty())
-        .or_else(|| option_env!("VITE_BLOCKFIELD_PACK_URL").map(String::from))
-        .ok_or_else(|| "VITE_BLOCKFIELD_PACK_URL is required".to_string())?;
+        .or(compiled)
+        .ok_or_else(|| format!("{var} is required"))?;
     let url = url.trim().trim_end_matches('/').to_string();
     if !url.starts_with("https://") && !(cfg!(debug_assertions) && url.starts_with("http://")) {
-        return Err("VITE_BLOCKFIELD_PACK_URL must use https".to_string());
+        return Err(format!("{var} must use https"));
     }
     Ok(url)
 }
@@ -40,7 +78,8 @@ pub async fn check_modpack_version(
     state: &LauncherAppState,
     loader_ok: impl FnOnce(&Path, &PackMeta) -> bool,
 ) -> Result<VersionCheckResult, String> {
-    let base = pack_base_url()?;
+    let profile = state.config.read().await.active_profile;
+    let base = pack_base_url_for(profile)?;
     let info = launcher_net::pack::fetch_launcher_info(&base).await?;
     let meta = launcher_net::pack::fetch_pack_meta(&info.pack).await?;
 
@@ -88,7 +127,11 @@ pub async fn check_modpack_version(
         java_ok,
         loader_ok,
     };
-    *state.pack.write().await = Some(PackState { info, meta });
+    *state.pack.write().await = Some(PackState {
+        profile,
+        info,
+        meta,
+    });
     Ok(result)
 }
 
@@ -204,5 +247,88 @@ mod tests {
         assert_eq!(err, "VITE_BLOCKFIELD_PACK_URL is required");
         assert!(state.pack.blocking_read().is_none());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn workshop_profile_installs_from_second_pack_url() {
+        let game = "https://blockfield.pro/pack/";
+        let workshop = "https://blockfield.pro/workshop-pack";
+        assert_eq!(
+            select_pack_base_url("VITE_BLOCKFIELD_PACK_URL", Some(game), Some(workshop)).unwrap(),
+            "https://blockfield.pro/pack",
+        );
+        assert_eq!(
+            select_pack_base_url(
+                "VITE_BLOCKFIELD_WORKSHOP_PACK_URL",
+                Some(workshop),
+                Some(game),
+            )
+            .unwrap(),
+            "https://blockfield.pro/workshop-pack",
+        );
+        // Empty runtime falls back to the compiled value, as before.
+        assert_eq!(
+            select_pack_base_url(
+                "VITE_BLOCKFIELD_WORKSHOP_PACK_URL",
+                Some("  "),
+                Some(workshop),
+            )
+            .unwrap(),
+            "https://blockfield.pro/workshop-pack",
+        );
+    }
+
+    #[test]
+    fn pack_url_names_the_missing_profile_var() {
+        assert_eq!(
+            select_pack_base_url("VITE_BLOCKFIELD_WORKSHOP_PACK_URL", None, None).unwrap_err(),
+            "VITE_BLOCKFIELD_WORKSHOP_PACK_URL is required",
+        );
+        assert_eq!(
+            select_pack_base_url("VITE_BLOCKFIELD_PACK_URL", None, None).unwrap_err(),
+            "VITE_BLOCKFIELD_PACK_URL is required",
+        );
+    }
+
+    #[test]
+    fn cached_pack_refuses_the_other_profile() {
+        use launcher_net::pack::{LauncherInfo, PackMeta};
+        fn pack_for(profile: ClientProfile) -> PackState {
+            PackState {
+                profile,
+                info: LauncherInfo {
+                    pack: String::new(),
+                    server: String::new(),
+                    installer: launcher_net::pack::Artifact {
+                        url: String::new(),
+                        sha256: String::new(),
+                    },
+                    bootstrap: launcher_net::pack::Artifact {
+                        url: String::new(),
+                        sha256: String::new(),
+                    },
+                    java: Default::default(),
+                    skins: None,
+                },
+                meta: PackMeta {
+                    version: "1.0".into(),
+                    index_hash: "hash".into(),
+                    minecraft: "1.21.1".into(),
+                    loader: None,
+                },
+            }
+        }
+        require_pack_profile(&pack_for(ClientProfile::Game), ClientProfile::Game).unwrap();
+        require_pack_profile(&pack_for(ClientProfile::Workshop), ClientProfile::Workshop).unwrap();
+        assert_eq!(
+            require_pack_profile(&pack_for(ClientProfile::Game), ClientProfile::Workshop)
+                .unwrap_err(),
+            "Профиль изменился. Повторите проверку.",
+        );
+        assert_eq!(
+            require_pack_profile(&pack_for(ClientProfile::Workshop), ClientProfile::Game)
+                .unwrap_err(),
+            "Профиль изменился. Повторите проверку.",
+        );
     }
 }

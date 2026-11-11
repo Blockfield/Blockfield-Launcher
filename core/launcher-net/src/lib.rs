@@ -7,3 +7,4 @@ pub mod minecraft;
 pub mod pack;
 pub mod skins;
 pub mod status;
+pub mod tcp_fallback;

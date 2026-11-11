@@ -9,7 +9,7 @@
 //! of steps are exactly as in `commands.rs`.
 
 use super::java::{java_runtime_ready, resolved_java_path, system_java_available};
-use super::pack_check::{installed_pack, INSTALLED_VERSION_FILE};
+use super::pack_check::{installed_pack, require_pack_profile, INSTALLED_VERSION_FILE};
 use crate::{DownloadMirrorPayload, EventSink, LauncherAppState, LauncherEvent};
 use launcher_core::config::ClientProfile;
 use launcher_net::download::Downloader;
@@ -78,6 +78,7 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         .clone()
         .ok_or_else(|| "No pack info cached – call check_modpack_version first".to_string())?;
     let mut config = state.config.read().await.validated_active()?;
+    require_pack_profile(&pack, config.active_profile)?;
     let game_dir = PathBuf::from(&config.game_dir);
     std::fs::create_dir_all(&game_dir).map_err(|e| format!("Failed to create game dir: {e}"))?;
     let _tracking = launcher_net::installed_files::begin(&state.app_data_dir, &game_dir)?;
@@ -562,6 +563,7 @@ pub async fn verify_files(
         }
         config.validated_active()?
     };
+    require_pack_profile(&pack, config.active_profile)?;
     let game_dir = PathBuf::from(&config.game_dir);
     let java = resolved_java_path(&config);
     std::fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
