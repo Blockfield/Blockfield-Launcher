@@ -19,6 +19,10 @@ pub fn sink(app: &AppWindow) -> EventSink {
 
 pub fn apply(app: &AppWindow, event: LauncherEvent) {
     let mut data = app.get_main_data();
+    // Tauri MainScreen.tsx pending-room effect re-runs on every readiness
+    // dep change; arm the one-shot retry below for the events that change
+    // readiness on this thread (the rest retry at their own set_main_data).
+    let mut retry = false;
     match event {
         LauncherEvent::Status(status) => data.launch_status = status.message.into(),
         LauncherEvent::GameStatus(status) => {
@@ -34,6 +38,7 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
                 data.launch_status = "".into();
                 data.progress = -1;
             }
+            retry = true;
         }
         LauncherEvent::DownloadProgress(progress) => {
             let (done, total) = match progress.unit {
@@ -47,12 +52,10 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
         }
         LauncherEvent::RoomPending => {
             data.pending_room = true;
-            // Tauri-style pending-invite auto-join (MainScreen.tsx effect):
-            // join now when the main screen is in a state where a manual
-            // join would proceed; otherwise leave the flag for the banner.
-            if let Some(id) = auto_join_target(app) {
-                app.invoke_join(id);
-            }
+            // A new invite re-arms the one-shot (Tauri `handledRoom.current =
+            // null` on `room://pending` in src/app/components/MainScreen.tsx).
+            *handled().lock().unwrap() = None;
+            retry = true;
         }
         LauncherEvent::AccountExpired => {
             // Tauri answers `account://expired` with the login screen; the
@@ -65,6 +68,40 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
         }
     }
     app.set_main_data(data);
+    if retry {
+        retry_pending_join(app);
+    }
+}
+
+/// Tauri `MainScreen.tsx` pending-room effect
+/// (`src/app/components/MainScreen.tsx`): re-run the auto-join whenever
+/// readiness may have changed (invite arrival, pack check done, launch idle,
+/// profile back to Game, maintenance or game phase change). One-shot per
+/// invite like Tauri's `handledRoom` ref: an invite that already joined never
+/// refires until the next RoomPending event, so a failed launch does not
+/// redeploy on every server poll.
+pub fn retry_pending_join(app: &AppWindow) {
+    let Some(id) = auto_join_target(app) else {
+        return;
+    };
+    let mut handled = handled().lock().unwrap();
+    if handled.as_deref() == Some(id.as_str()) {
+        return;
+    }
+    *handled = Some(id.to_string());
+    app.invoke_join(id);
+}
+
+/// A join was attempted (manual or auto): consume the one-shot so later state
+/// changes do not rejoin the same invite; the next RoomPending event re-arms.
+pub(crate) fn note_join(id: &str) {
+    *handled().lock().unwrap() = Some(id.to_owned());
+}
+
+fn handled() -> &'static std::sync::Mutex<Option<String>> {
+    static HANDLED: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+        std::sync::OnceLock::new();
+    HANDLED.get_or_init(|| std::sync::Mutex::new(None))
 }
 
 /// Tauri `MainScreen.tsx` auto-join guards: game profile, no maintenance
@@ -106,8 +143,29 @@ mod tests {
     use super::*;
     use std::{cell::RefCell, rc::Rc};
 
+    fn set_pending(id: Option<&str>) {
+        *crate::main_ops::shared_pending().0.lock().unwrap() = id.map(str::to_owned);
+    }
+
+    fn reset_invite_state() {
+        set_pending(None);
+        *super::handled().lock().unwrap() = None;
+    }
+
+    fn ready_idle(app: &AppWindow) {
+        let mut data = app.get_main_data();
+        data.phase = "idle".into();
+        data.checked = true;
+        data.checking = false;
+        data.launching = false;
+        data.maintenance = "".into();
+        app.set_main_data(data);
+        app.set_workshop(false);
+    }
+
     #[test]
     fn pending_invite_auto_joins_when_main_is_ready() {
+        let _serial = crate::main_ops::test_serial();
         i_slint_backend_testing::init_no_event_loop();
         let app = crate::AppWindow::new().unwrap();
         let joined = Rc::new(RefCell::new(Vec::<String>::new()));
@@ -116,6 +174,7 @@ mod tests {
         let set_pending = |id: Option<&str>| {
             *crate::main_ops::shared_pending().0.lock().unwrap() = id.map(str::to_owned);
         };
+        reset_invite_state();
         let mut data = app.get_main_data();
         data.phase = "idle".into();
         data.checked = true;
@@ -171,7 +230,119 @@ mod tests {
         set_pending(None);
         apply(&app, LauncherEvent::RoomPending);
         assert_eq!(joined.borrow().len(), 3);
-        set_pending(None);
+        reset_invite_state();
+    }
+
+    #[test]
+    fn pending_invite_retries_when_blocking_state_clears() {
+        // Tauri MainScreen.tsx pending-room effect: an invite that arrives
+        // while the launcher is not ready joins once the blocking state
+        // clears, without a second RoomPending event.
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        let joined = Rc::new(RefCell::new(Vec::<String>::new()));
+        let recorded = joined.clone();
+        app.on_join(move |id| recorded.borrow_mut().push(id.to_string()));
+        reset_invite_state();
+        ready_idle(&app);
+        // Invite arrives mid-check: the banner flag sets, no join yet.
+        let mut data = app.get_main_data();
+        data.checking = true;
+        data.checked = false;
+        app.set_main_data(data);
+        set_pending(Some("room-7"));
+        apply(&app, LauncherEvent::RoomPending);
+        assert!(app.get_main_data().pending_room);
+        assert!(joined.borrow().is_empty());
+        // Pack check completes: the same invite joins with no new event.
+        let mut data = app.get_main_data();
+        data.checking = false;
+        data.checked = true;
+        app.set_main_data(data);
+        super::retry_pending_join(&app);
+        assert_eq!(*joined.borrow(), ["room-7"]);
+        // One-shot per invite (Tauri `handledRoom`): further state changes
+        // do not rejoin the same invite.
+        super::retry_pending_join(&app);
+        assert_eq!(joined.borrow().len(), 1);
+        // A launch-busy invite waits for idle.
+        set_pending(Some("room-8"));
+        let mut data = app.get_main_data();
+        data.launching = true;
+        app.set_main_data(data);
+        super::retry_pending_join(&app);
+        assert_eq!(joined.borrow().len(), 1);
+        let mut data = app.get_main_data();
+        data.launching = false;
+        app.set_main_data(data);
+        super::retry_pending_join(&app);
+        assert_eq!(*joined.borrow(), ["room-7", "room-8"]);
+        // Workshop profile waits until back on Game.
+        set_pending(Some("room-9"));
+        app.set_workshop(true);
+        super::retry_pending_join(&app);
+        assert_eq!(joined.borrow().len(), 2);
+        app.set_workshop(false);
+        super::retry_pending_join(&app);
+        assert_eq!(*joined.borrow(), ["room-7", "room-8", "room-9"]);
+        reset_invite_state();
+    }
+
+    #[test]
+    fn game_status_idle_retries_a_waiting_invite() {
+        // Readiness arriving via the game-status event (game exits to idle)
+        // retries the same way.
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        let joined = Rc::new(RefCell::new(Vec::<String>::new()));
+        let recorded = joined.clone();
+        app.on_join(move |id| recorded.borrow_mut().push(id.to_string()));
+        reset_invite_state();
+        ready_idle(&app);
+        let mut data = app.get_main_data();
+        data.phase = "finishing".into();
+        app.set_main_data(data);
+        set_pending(Some("room-3"));
+        apply(&app, LauncherEvent::RoomPending);
+        assert!(joined.borrow().is_empty());
+        apply(
+            &app,
+            LauncherEvent::GameStatus(launcher_core::game::GameStatus {
+                phase: launcher_core::game::GamePhase::Idle,
+                revision: 1,
+            }),
+        );
+        assert_eq!(*joined.borrow(), ["room-3"]);
+        reset_invite_state();
+    }
+
+    #[test]
+    fn workshop_flip_wires_into_the_pending_retry() {
+        // main.slint `changed workshop` fires the retry-join callback, so a
+        // profile flip back to Game retries without any core event.
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        app.set_show_main(true);
+        app.show().unwrap();
+        slint::platform::update_timers_and_animations();
+        let fired = Rc::new(RefCell::new(0));
+        let counted = fired.clone();
+        app.on_retry_join(move || *counted.borrow_mut() += 1);
+        app.invoke_retry_join();
+        assert_eq!(*fired.borrow(), 1);
+        app.set_workshop(true);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(*fired.borrow(), 2);
+        app.set_workshop(true);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(*fired.borrow(), 2);
+        app.set_workshop(false);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(*fired.borrow(), 3);
+        reset_invite_state();
     }
     #[test]
     fn progress_handles_unknown_totals_overflow_and_completion() {

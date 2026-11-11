@@ -73,6 +73,10 @@ export component MainScreen inherits Rectangle {
     callback deploy();
     callback verify();
     callback join(string);
+    // Fired when the profile flips back to Game (and only then matters):
+    // a pending invite must be retried once readiness may have cleared.
+    callback retry-join();
+    changed workshop => { root.retry-join(); }
     private property <bool> game-busy: root.data.phase != "idle";
     private property <bool> disabled: !root.data.checked || root.data.checking || root.data.launching || root.game-busy || root.data.profile-changing || root.data.profile-blocked;
     private property <bool> room-disabled: root.data.launching || (root.data.phase != "running" && (root.data.checking || !root.data.checked || root.game-busy));

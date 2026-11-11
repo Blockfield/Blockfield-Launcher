@@ -278,6 +278,9 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
                     Err(error) => data.check_error = error.into(),
                 }
                 app.set_main_data(data);
+                // Pack check done: a waiting invite retries now (Tauri
+                // MainScreen.tsx pending-room effect).
+                crate::bridge::retry_pending_join(&app);
             });
         });
         // Never-ending loops start once per process; re-logins only re-run
@@ -411,6 +414,9 @@ fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
         app.set_rooms(ModelRc::default());
         app.set_room_names(ModelRc::default());
         app.set_main_data(data);
+        // Maintenance cleared (or still unknown): a waiting invite retries
+        // now (Tauri MainScreen.tsx pending-room effect).
+        crate::bridge::retry_pending_join(app);
         return;
     };
     data.online = status.online;
@@ -520,6 +526,9 @@ fn apply_server(app: &AppWindow, status: Result<ServerStatus, String>) {
     app.set_rooms(ModelRc::new(VecModel::from(rooms)));
     app.set_server_label(format!("IP · {}:{}", status.host, status.port).into());
     app.set_main_data(data);
+    // Server refresh may have cleared maintenance: a waiting invite retries
+    // now (Tauri MainScreen.tsx pending-room effect).
+    crate::bridge::retry_pending_join(app);
 }
 
 #[cfg(test)]
