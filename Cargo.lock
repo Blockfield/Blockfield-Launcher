@@ -2306,6 +2306,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "url",
  "zip",
 ]
 
@@ -2341,6 +2342,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "url",
  "zip",
 ]
 
