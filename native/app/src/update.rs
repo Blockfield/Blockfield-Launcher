@@ -313,6 +313,10 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
 struct LauncherPending {
     busy: Arc<AtomicBool>,
     release: Arc<std::sync::Mutex<Option<self_update::Release>>>,
+    /// `current_exe()` captured before the atomic replace: after Linux swaps
+    /// the binary, `current_exe()` resolves to the deleted inode, so restart
+    /// must use this path.
+    installed_exe: Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
 }
 
 /// Tauri `checkLauncherUpdate`: checking → available/current/error. DEV builds
@@ -425,6 +429,9 @@ fn on_launcher_install(
     app.set_launcher_update_data(data);
     let weak = weak.clone();
     let pending = pending.clone();
+    // Capture before the atomic replace: after Linux swaps the binary,
+    // `current_exe()` points at the deleted inode.
+    let exe_before = std::env::current_exe().ok();
     handle.spawn(async move {
         let progress = weak.clone();
         let stage_weak = weak.clone();
@@ -486,6 +493,7 @@ fn on_launcher_install(
                     set_panel_phase(&mut data, "installed");
                     data.installed = true;
                     *pending.release.lock().unwrap() = None;
+                    *pending.installed_exe.lock().unwrap() = exe_before;
                 }
                 Err(error) => {
                     data.phase = "error".into();
@@ -504,7 +512,6 @@ fn on_launcher_restart(
     state: &Arc<LauncherAppState>,
     pending: &LauncherPending,
 ) {
-    let _ = pending;
     let Some(app) = weak.upgrade() else { return };
     {
         let data = app.get_launcher_update_data();
@@ -523,7 +530,13 @@ fn on_launcher_restart(
     data.phase = "restarting".into();
     data.error = "".into();
     app.set_launcher_update_data(data);
-    match self_update::restart_launcher() {
+    // Restart the pre-replace path captured at install time: after the
+    // atomic replace `current_exe()` is the deleted inode.
+    let restart = match pending.installed_exe.lock().unwrap().clone() {
+        Some(executable) => self_update::restart_launcher_with(&executable),
+        None => self_update::restart_launcher(),
+    };
+    match restart {
         Ok(()) => std::process::exit(0),
         Err(error) => {
             let mut data = app.get_launcher_update_data();
@@ -949,7 +962,15 @@ pub mod self_update {
             std::str::from_utf8(&text).map_err(|_| "Invalid update signature".to_string())?;
         let signature = minisign_verify::Signature::decode(text)
             .map_err(|e| format!("Invalid update signature: {e}"))?;
-        let public_key = minisign_verify::PublicKey::from_base64(pubkey_base64)
+        // UPDATE_PUBKEY (and tauri.conf.json `plugins.updater.pubkey`) is
+        // outer-base64(minisign public-key text): decode it first, then parse
+        // the text form.
+        let key_text = base64::engine::general_purpose::STANDARD
+            .decode(pubkey_base64.trim())
+            .map_err(|e| format!("Invalid pinned update key: {e}"))?;
+        let key_text =
+            std::str::from_utf8(&key_text).map_err(|_| "Invalid pinned update key".to_string())?;
+        let public_key = minisign_verify::PublicKey::decode(key_text)
             .map_err(|e| format!("Invalid pinned update key: {e}"))?;
         public_key
             .verify(data, &signature, true)
@@ -984,15 +1005,35 @@ pub mod self_update {
     }
 
     /// Restart into the freshly installed binary (Tauri `relaunch`).
-    pub fn restart_launcher() -> Result<(), String> {
-        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-        launcher_core::host_env::command(&executable)
+    /// `captured` is `current_exe()` taken before the atomic replace;
+    /// `current` is `current_exe()` now. Prefers the capture; strips the
+    /// Linux ` (deleted)` suffix when falling back.
+    pub fn resolve_restart_path(captured: Option<&Path>, current: &Path) -> std::path::PathBuf {
+        if let Some(captured) = captured {
+            return captured.to_path_buf();
+        }
+        let current = current.to_string_lossy();
+        if let Some(stripped) = current.strip_suffix(" (deleted)") {
+            return std::path::PathBuf::from(stripped);
+        }
+        std::path::PathBuf::from(current.as_ref())
+    }
+
+    /// Restart the given binary (pre-replace path after an atomic install).
+    pub fn restart_launcher_with(executable: &Path) -> Result<(), String> {
+        launcher_core::host_env::command(executable)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
             .map_err(|e| format!("Не удалось перезапустить лаунчер: {e}"))?;
         Ok(())
+    }
+
+    /// Restart into the freshly installed binary (Tauri `relaunch`).
+    pub fn restart_launcher() -> Result<(), String> {
+        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        restart_launcher_with(&resolve_restart_path(None, &executable))
     }
 
     /// Install verified bytes for this OS. Linux only: see below.
@@ -1009,28 +1050,43 @@ pub mod self_update {
     /// replace and its own rollback (same division as the Tauri updater).
     #[cfg(target_os = "windows")]
     pub fn install_package(package: &[u8], _executable: &Path) -> Result<(), String> {
-        // OLE compound magic = MSI; anything else we ship for Windows is the
-        // NSIS setup exe.
-        let msi = package.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]);
-        let staged = std::env::temp_dir().join(if msi {
+        let msi = is_windows_msi(package);
+        let staged = std::env::temp_dir().join(windows_staged_filename(msi));
+        std::fs::write(&staged, package).map_err(|e| e.to_string())?;
+        // Tauri updater behaviour: the OS installer owns completion. Launch
+        // it and exit this (still-old) process instead of reporting
+        // "installed" before the installer result is known.
+        windows_installer_command(&staged, msi)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        std::process::exit(0);
+    }
+
+    /// OLE compound magic = MSI; anything else we ship for Windows is the
+    /// NSIS setup exe.
+    #[cfg(any(target_os = "windows", test))]
+    fn is_windows_msi(package: &[u8]) -> bool {
+        package.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])
+    }
+
+    #[cfg(any(target_os = "windows", test))]
+    fn windows_staged_filename(msi: bool) -> &'static str {
+        if msi {
             "blockfield-launcher-update.msi"
         } else {
             "blockfield-launcher-update.exe"
-        });
-        std::fs::write(&staged, package).map_err(|e| e.to_string())?;
-        if msi {
-            std::process::Command::new("msiexec")
-                .arg("/i")
-                .arg(&staged)
-                .arg("/passive")
-                .spawn()
-                .map_err(|e| e.to_string())?;
-        } else {
-            std::process::Command::new(&staged)
-                .spawn()
-                .map_err(|e| e.to_string())?;
         }
-        Ok(())
+    }
+
+    #[cfg(any(target_os = "windows", test))]
+    fn windows_installer_command(staged: &Path, msi: bool) -> std::process::Command {
+        if msi {
+            let mut command = std::process::Command::new("msiexec");
+            command.arg("/i").arg(staged).arg("/passive");
+            command
+        } else {
+            std::process::Command::new(staged)
+        }
     }
 
     /// Restore the `.previous` backup over the executable (Linux; the backup
@@ -1193,11 +1249,13 @@ pub mod self_update {
         use super::*;
         use base64::Engine as _;
 
-        // Throwaway test key (NOT the pinned release key):
+        // Throwaway test key (NOT the pinned release key) in the exact
+        // production encoding — outer-base64(minisign text), like
+        // tauri.conf.json `plugins.updater.pubkey`. The inner second line is
         // b64("Ed" || 0123456789abcdef || ed25519 pubkey), minted for these
         // tests with openssl; the signatures below are its genuine legacy
         // ("Ed") signatures over TEST_DATA.
-        const TEST_PUBKEY: &str = "RWQBI0VniavN7zOdRyTctD15z4hm3C2jrAydqrMq709gZvHgGbeAlS01";
+        const TEST_PUBKEY_PRODUCTION: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDAxMjM0NTY3ODlBQkNERUYKUldRQkkwVm5pYXZON3pPZFJ5VGN0RDE1ejRobTNDMmpyQXlkcXJNcTcwOWdadkhnR2JlQWxTMDEK";
         const TEST_DATA: &[u8] = b"native self-update test payload v1";
         // outer-base64(minisign text), trusted comment carries version:9.9.9.
         const TEST_SIG_VERSIONED: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHRlc3Qga2V5LCBkbyBub3QgdHJ1c3QKUldRQkkwVm5pYXZONzdkK0VrYTA1R1R4RFY1dXJIWjZQbEc4M3lEYU1ITzRRWGhVVHB1eERzbkhUMDBubmtqanlmdUk0NUtOTm5tK0RBSlgrVHloTGVrYlJBWE4wa0ZaMkFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMDAwMDAwCWZpbGU6dGVzdC1wYXlsb2FkCXZlcnNpb246OS45LjkKWnpHTm5ZVUplL1N6V1poV0NTVE9xdE1YRUNnZzNjV3JSQmZaWTkyTkJlcTJJNTk2RkVXZTJnL0VQSms5RS83SzlLUThwbituSVNoUC9zRGJjTm9TRFE9PQ==";
@@ -1205,7 +1263,7 @@ pub mod self_update {
         const TEST_SIG_UNVERSIONED: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHRlc3Qga2V5LCBkbyBub3QgdHJ1c3QKUldRQkkwVm5pYXZONzdkK0VrYTA1R1R4RFY1dXJIWjZQbEc4M3lEYU1ITzRRWGhVVHB1eERzbkhUMDBubmtqanlmdUk0NUtOTm5tK0RBSlgrVHloTGVrYlJBWE4wa0ZaMkFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMDAwMDAwCWZpbGU6dGVzdC1wYXlsb2FkClJaMTdaMDE2eDhKZm8rKzhQVlJycmgwZ1hmM25DdzlJWVBiVHI4Z3F2RHZnTTc2c2JVOVlqSVoreWZWVTlTSUZVekZRU2JXRnVWWGZMWGNsY2ljK0J3PT0=";
 
         fn check(sig: &str, announced: &str) -> Result<(), String> {
-            verify_signature_with_key(TEST_DATA, sig, announced, TEST_PUBKEY)
+            verify_signature_with_key(TEST_DATA, sig, announced, TEST_PUBKEY_PRODUCTION)
         }
 
         #[test]
@@ -1217,8 +1275,13 @@ pub mod self_update {
             let mut tampered = TEST_DATA.to_vec();
             tampered[0] ^= 1;
             assert!(
-                verify_signature_with_key(&tampered, TEST_SIG_VERSIONED, "9.9.9", TEST_PUBKEY)
-                    .is_err()
+                verify_signature_with_key(
+                    &tampered,
+                    TEST_SIG_VERSIONED,
+                    "9.9.9",
+                    TEST_PUBKEY_PRODUCTION
+                )
+                .is_err()
             );
             // Not base64 at all, and base64 that is not a minisign text.
             assert!(check("!!!", "9.9.9").is_err());
@@ -1235,7 +1298,7 @@ pub mod self_update {
                     TEST_DATA,
                     TEST_SIG_VERSIONED,
                     "9.9.9",
-                    "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3",
+                    "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IE9USEVSS0VZClJXUWY2TFJDR0E5aTUzbWxZZWNPNEl6VDUxVEdQcHZXdWNOU0NoMUNCTTBRVGFMbjczWTdHRk8zCg==",
                 )
                 .is_err()
             );
@@ -1248,6 +1311,78 @@ pub mod self_update {
             assert!(check(TEST_SIG_VERSIONED, "9.9.8").is_err());
             // No version field: nothing to pin (Tauri default behaviour).
             assert!(check(TEST_SIG_UNVERSIONED, "9.9.8").is_ok());
+        }
+
+        #[test]
+        fn production_pubkey_format_verifies_a_genuine_signature() {
+            // The pinned production key is outer-base64(minisign text), not a
+            // raw binary-key encoding: a genuine signature made by the test
+            // key must verify through that exact encoding.
+            assert!(
+                verify_signature_with_key(
+                    TEST_DATA,
+                    TEST_SIG_VERSIONED,
+                    "9.9.9",
+                    TEST_PUBKEY_PRODUCTION
+                )
+                .is_ok()
+            );
+            // The shipped production constant parses the same way (different
+            // key, so the test payload itself must not verify).
+            assert!(verify_signature(TEST_DATA, TEST_SIG_VERSIONED, "9.9.9").is_err());
+        }
+
+        #[test]
+        fn restart_uses_the_pre_replace_executable_path() {
+            // After the atomic replace, `current_exe()` is the deleted inode:
+            // restart must use the path captured before replacing.
+            let captured = Path::new("/opt/blockfield/blockfield-launcher");
+            let deleted = Path::new("/opt/blockfield/blockfield-launcher (deleted)");
+            assert_eq!(
+                resolve_restart_path(Some(captured), deleted),
+                captured.to_path_buf()
+            );
+            // Without a capture, fall back to the live path (stripping the
+            // Linux deleted suffix).
+            assert_eq!(
+                resolve_restart_path(None, deleted),
+                Path::new("/opt/blockfield/blockfield-launcher").to_path_buf()
+            );
+            assert_eq!(resolve_restart_path(None, captured), captured.to_path_buf());
+        }
+
+        #[test]
+        fn windows_installer_hands_off_to_the_os_installer() {
+            // The launcher never reports "installed" itself on Windows: the
+            // OS installer owns completion (Tauri updater behaviour), so the
+            // staged MSI goes through msiexec and anything else runs directly.
+            assert!(is_windows_msi(&[
+                0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00
+            ]));
+            assert!(!is_windows_msi(b"MZ fake setup exe"));
+            assert_eq!(
+                windows_staged_filename(true),
+                "blockfield-launcher-update.msi"
+            );
+            assert_eq!(
+                windows_staged_filename(false),
+                "blockfield-launcher-update.exe"
+            );
+            let staged = Path::new("/tmp/blockfield-launcher-update.msi");
+            let command = windows_installer_command(staged, true);
+            assert_eq!(command.get_program(), "msiexec");
+            let args: Vec<_> = command.get_args().collect();
+            assert_eq!(args.len(), 3);
+            let setup = Path::new("/tmp/blockfield-launcher-update.exe");
+            let command = windows_installer_command(setup, false);
+            assert_eq!(command.get_program(), setup.as_os_str());
+            // A launch failure surfaces as an error, never as "installed".
+            assert!(
+                std::process::Command::new("/nonexistent/blockfield-installer")
+                    .spawn()
+                    .map_err(|e| e.to_string())
+                    .is_err()
+            );
         }
 
         #[test]
