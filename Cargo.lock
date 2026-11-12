@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "blockfield-launcher"
-version = "1.0.26"
+version = "1.0.27"
 dependencies = [
  "ar",
  "base64 0.23.1",

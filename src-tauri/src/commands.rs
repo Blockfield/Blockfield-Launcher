@@ -364,6 +364,45 @@ fn offline_pack_for_launch(cached: Option<PackState>, active: ClientProfile) -> 
     cached.filter(|pack| pack.profile == active)
 }
 
+/// Game-leg address for the Workshop launch guard in `target()`: the Game
+/// pack manifest's server. Fail-open to "unknown" (empty): with no Game host
+/// known, `target()` trusts only the built-in default Workshop address.
+async fn game_leg_server() -> String {
+    let base = match pack_base_url_for(ClientProfile::Game) {
+        Ok(base) => base,
+        Err(error) => {
+            log::warn!("launch: Game pack URL unknown, Workshop guard has no Game host: {error}");
+            return String::new();
+        }
+    };
+    match pack::fetch_launcher_info(&base).await {
+        Ok(info) => info.server,
+        Err(error) => {
+            log::warn!(
+                "launch: Game manifest unreachable, Workshop guard has no Game host: {error}"
+            );
+            String::new()
+        }
+    }
+}
+
+/// Cross-check input for `LauncherConfig::target()` at launch: the Game leg
+/// address, never the active pack's own server. The Workshop pack carries its
+/// own server on the Workshop host by design, so feeding the active pack in
+/// refuses every online Workshop launch (#57); the guard's real purpose is a
+/// Game-leg comparison (a Game port change must not silently retarget the
+/// Workshop profile).
+fn launch_cross_check_server(
+    profile: ClientProfile,
+    pack_server: Option<&str>,
+    game_leg_server: &str,
+) -> String {
+    match profile {
+        ClientProfile::Game => pack_server.unwrap_or_default().to_owned(),
+        ClientProfile::Workshop => game_leg_server.to_owned(),
+    }
+}
+
 /// TCP fallback is the Game profile's proxy route only: a custom/dev RakNet
 /// target must never remap (its TCP port may serve another server), and a
 /// Workshop target never falls back at all.
@@ -716,18 +755,41 @@ async fn ensure_jar(
         return Ok(());
     }
     let partial = crate::download::partial_path(&jar);
-    let mut downloaded = 0;
-    state
-        .downloader
-        .download_one(&artifact.url, &partial, name, 0, 1, 1, &mut downloaded, 0)
-        .await
-        .map_err(|e| format!("{name} download failed: {e}"))?;
-    let actual = Downloader::sha256_file(&partial).map_err(|e| e.to_string())?;
-    if !actual.eq_ignore_ascii_case(&artifact.sha256) {
+    let mut last_error = String::new();
+    // The pack host is a single uplink; launcher.json carries a GitHub
+    // fallback (`source`) for exactly this case. A partial from one host is
+    // never resumed from the other: their byte ranges may differ.
+    for url in artifact.sources() {
         let _ = std::fs::remove_file(&partial);
-        return Err(format!("{name} SHA-256 mismatch"));
+        let mut downloaded = 0;
+        let result = state
+            .downloader
+            .download_one(url, &partial, name, 0, 1, 1, &mut downloaded, 0)
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|()| {
+                Downloader::sha256_file(&partial)
+                    .map_err(|e| e.to_string())
+                    .and_then(|actual| {
+                        actual
+                            .eq_ignore_ascii_case(&artifact.sha256)
+                            .then_some(())
+                            .ok_or_else(|| format!("{name} SHA-256 mismatch"))
+                    })
+            });
+        match result {
+            Ok(()) => {
+                return crate::download::activate_partial(&partial, &jar)
+                    .map_err(|e| e.to_string());
+            }
+            Err(error) => {
+                log::warn!("[ensure_jar] {name} from {url} failed: {error}");
+                last_error = error;
+            }
+        }
     }
-    crate::download::activate_partial(&partial, &jar).map_err(|e| e.to_string())
+    let _ = std::fs::remove_file(&partial);
+    Err(format!("{name} download failed: {last_error}"))
 }
 
 /// "(12/137) Downloaded X" → (12, 137)
@@ -1039,13 +1101,23 @@ pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), S
 pub async fn server_status(state: State<'_, LauncherAppState>) -> Result<ServerStatus, String> {
     let config = state.config.read().await.clone();
     let base = pack_base_url_for(config.active_profile)?;
-    let game_target = match state.pack.read().await.as_ref() {
-        Some(pack) => pack.info.server.clone(),
-        None => pack::fetch_launcher_info(&base).await?.server,
+    // The Workshop pack's own server is its host by design, so the
+    // Game-host cross-check in target() would refuse the probe as soon as
+    // the pack cache refreshes (card flips to unavailable, #155). Status
+    // is a read-only probe of the configured address; the cross-check
+    // stays a launch-time guard.
+    let target = match config.active_profile {
+        ClientProfile::Workshop => config.workshop_probe_target()?,
+        ClientProfile::Game => {
+            let game_target = match state.pack.read().await.as_ref() {
+                Some(pack) => pack.info.server.clone(),
+                None => pack::fetch_launcher_info(&base).await?.server,
+            };
+            config
+                .target(&game_target)?
+                .ok_or("Адрес игрового сервера не настроен.")?
+        }
     };
-    let target = config
-        .target(&game_target)?
-        .ok_or("Адрес игрового сервера не настроен.")?;
     let (host, port) = crate::status::split_host_port(&target);
     let ping_host = host.clone();
     let (status, (region_code, location_name), rooms) = tokio::join!(
@@ -1244,13 +1316,21 @@ pub async fn launch_game(
                 .or_else(|| option_env!("BLOCKFIELD_MINECRAFT_VERSION").map(String::from))
                 .unwrap_or_else(|| "1.21.1".to_string())
         });
-    // Offline Workshop launch (manifest unreachable, no same-profile cache)
-    // needs no network request: with no Game host known, target() trusts
-    // only the built-in default Workshop address.
-    let game_server = pack
-        .as_ref()
-        .map(|pack| pack.info.server.clone())
-        .unwrap_or_default();
+    // The launch guard in target() compares against the GAME leg address, not
+    // the active pack's server: the Workshop pack carries its own server on
+    // the Workshop host by design, so feeding it in refuses every online
+    // Workshop launch (#57).
+    let game_leg = match config.active_profile {
+        ClientProfile::Game => String::new(),
+        // One small manifest fetch; unreachable = unknown Game host, and
+        // target() then trusts only the built-in default Workshop address.
+        ClientProfile::Workshop => game_leg_server().await,
+    };
+    let game_server = launch_cross_check_server(
+        config.active_profile,
+        pack.as_ref().map(|pack| pack.info.server.as_str()),
+        &game_leg,
+    );
     let quick_play = config.target(&game_server)?;
     // Dev build: another server, or none at all so the game opens on the title screen.
     let dev_override = crate::dev::server_override();
@@ -2265,10 +2345,12 @@ mod tests {
                 installer: crate::pack::Artifact {
                     url: "https://example.com/i.jar".into(),
                     sha256: "a".into(),
+                    source: None,
                 },
                 bootstrap: crate::pack::Artifact {
                     url: "https://example.com/b.jar".into(),
                     sha256: "b".into(),
+                    source: None,
                 },
                 java: std::collections::HashMap::new(),
             },
@@ -2307,6 +2389,72 @@ mod tests {
         assert!(offline_pack_for_launch(None, ClientProfile::Game).is_none());
     }
 
+    #[test]
+    fn online_workshop_launch_checks_the_game_leg_not_the_packs_own_server() {
+        // #57 fail-before: launch_game fed the ACTIVE pack's server into
+        // target(), and the Workshop pack manifest carries its own server on
+        // the Workshop host by design, so every online Workshop launch
+        // errored with «Мастерской нужен отдельный адрес…».
+        let workshop_pack_server = "raknet;workshop.blockfield.pro:25567";
+        let game_leg_server = "raknet;play.blockfield.pro:25566";
+        let config = crate::config::LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: workshop_pack_server.into(),
+            ..crate::config::LauncherConfig::default()
+        };
+        // Old wiring reproduced: the exact launch error.
+        assert_eq!(
+            config.target(workshop_pack_server).unwrap_err(),
+            "Мастерской нужен отдельный адрес: смена порта игрового адреса не меняет профиль."
+        );
+        // Fixed wiring: the guard sees the Game leg, and the produced launch
+        // target is the configured Workshop address in raknet;host:port form.
+        let cross_check = launch_cross_check_server(
+            ClientProfile::Workshop,
+            Some(workshop_pack_server),
+            game_leg_server,
+        );
+        assert_eq!(cross_check, game_leg_server);
+        let target = config.target(&cross_check).unwrap();
+        assert_eq!(target.as_deref(), Some(workshop_pack_server));
+        // The target reaches the game verbatim as a single quick-play arg.
+        let root =
+            std::env::temp_dir().join(format!("blockfield_ws57_args_{}", std::process::id()));
+        let version = "1.21.1";
+        let dir = root.join("versions").join(version);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{version}.json")),
+            r#"{"mainClass":"net.minecraft.client.main.Main","libraries":[],"arguments":{"game":[],"jvm":[]}}"#).unwrap();
+        let identity = GameIdentity {
+            username: "WorkshopTest".into(),
+            uuid: "00000000000000000000000000000000".into(),
+            access_token: "test".into(),
+        };
+        let args = crate::minecraft::build_launch_args(
+            &root,
+            1024,
+            version,
+            None,
+            &identity,
+            target.as_deref(),
+        )
+        .unwrap();
+        assert_eq!(
+            &args[args.len() - 2..],
+            &["--quickPlayMultiplayer", workshop_pack_server]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+        // The guard still fires for the genuine case: a Game leg on the
+        // Workshop host means a Game port change would silently retarget.
+        assert!(config
+            .target("raknet;workshop.blockfield.pro:25566")
+            .is_err());
+        // Game profile wiring unchanged: the active pack server is the leg.
+        assert_eq!(
+            launch_cross_check_server(ClientProfile::Game, Some(game_leg_server), ""),
+            game_leg_server
+        );
+    }
     #[test]
     fn tcp_fallback_never_applies_to_the_workshop_profile() {
         let game_server = "raknet;play.example:25566";

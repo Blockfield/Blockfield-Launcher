@@ -185,6 +185,21 @@ impl LauncherConfig {
         }
         Ok(Some(server.to_owned()))
     }
+
+    /// Status-card probe target for the Workshop profile: the configured
+    /// Workshop address, format-checked. Unlike `target()` there is no
+    /// Game-host cross-check — the Workshop pack's own server is this host
+    /// by design, so reusing that guard here refuses the probe as soon as
+    /// the pack cache refreshes and the card flips to unavailable (#155).
+    /// The cross-check stays a launch-time guard in `target()`.
+    pub fn workshop_probe_target(&self) -> Result<String, String> {
+        let server = self.workshop_server.trim();
+        if server.is_empty() {
+            return Err("Укажите адрес мастерской в настройках выбранного профиля.".into());
+        }
+        server_host(server)?;
+        Ok(server.to_owned())
+    }
 }
 
 fn default_workshop_server() -> String {
@@ -837,6 +852,30 @@ mod tests {
         };
         let result = config.target("");
         assert!(result.is_err(), "override trusted offline: {result:?}");
+    }
+
+    #[test]
+    fn workshop_status_probe_accepts_the_workshop_packs_own_server() {
+        // launcher#155: server_status feeds the ACTIVE pack's server into
+        // target(). Once the cache holds the Workshop pack, that address is
+        // this host by design — the status probe resolves it while the
+        // launch-time Game-host cross-check in target() stays intact.
+        let config = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            ..LauncherConfig::default()
+        };
+        let workshop_pack_server = "raknet;workshop.blockfield.pro:25567";
+        assert!(config.target(workshop_pack_server).is_err());
+        assert_eq!(
+            config.workshop_probe_target().unwrap(),
+            config.workshop_server.trim()
+        );
+        // An unset or malformed Workshop address still refuses the probe.
+        let mut config = config;
+        config.workshop_server = "  ".into();
+        assert!(config.workshop_probe_target().is_err());
+        config.workshop_server = "not a host!!".into();
+        assert!(config.workshop_probe_target().is_err());
     }
 
     #[test]

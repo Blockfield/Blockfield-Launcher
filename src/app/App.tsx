@@ -212,6 +212,15 @@ export default function App() {
     if (next === 'update') setUpdatesVisited(true)
     setScreen(next)
   }
+  // Main screen routing to Updates: Play intent arms auto-launch after the
+  // sync (room invites), while ОБНОВИТЬ only syncs (launcher#156) — then the
+  // button becomes ИГРАТЬ.
+  const goUpdate = (autoLaunch: boolean) => {
+    if (profileBlocked) return
+    setUpdateRequest((value) => value + 1)
+    if (autoLaunch) setAutoLaunchRequest((value) => value + 1)
+    navigate('update')
+  }
 
   const i18n = useMemo(() => ({ lang: 'ru' as const, t: translate }), [])
 
@@ -374,12 +383,8 @@ export default function App() {
               profileBlocked={profileBlocked}
               profileError={profileError}
               onSelectProfile={canWorkshop ? (next) => void selectProfile(next) : undefined}
-              onPlay={() => {
-                if (profileBlocked) return
-                setUpdateRequest((value) => value + 1)
-                setAutoLaunchRequest((value) => value + 1)
-                navigate('update')
-              }}
+              onPlay={() => goUpdate(true)}
+              onUpdate={() => goUpdate(false)}
             />
           )}
           {updatesVisited && (
