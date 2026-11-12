@@ -83,6 +83,7 @@ export function ProfileSelect({
 
 export function MainScreen({
   onPlay,
+  onUpdate,
   profile = 'game',
   profileChanging = false,
   profileBlocked = false,
@@ -90,6 +91,8 @@ export function MainScreen({
   onSelectProfile,
 }: {
   onPlay: () => void
+  /** Update-only routing to the Updates tab: syncs without arming auto-launch. */
+  onUpdate: () => void
   profile?: 'game' | 'workshop'
   profileChanging?: boolean
   profileBlocked?: boolean
@@ -115,67 +118,83 @@ export function MainScreen({
   const [pendingRoom, setPendingRoom] = useState<string | null>(null)
   const [serverStatus, setServerStatus] = useState<ServerStatusData | null>(null)
 
-  const handleDeploy = useCallback(async () => {
-    // Don't allow deploy until version check completes
-    if (!versionInfo || checking || launching || gameBusy || profileChanging || profileBlocked)
-      return
-    // Update needed OR Java not ready OR Fabric not installed → go to update screen
-    if (versionInfo.needsUpdate || !versionInfo.javaOk || !versionInfo.loaderOk) {
-      onPlay()
-      return
-    }
-    // Confirmed up to date AND Java OK AND Fabric installed → launch
-    if (isTauri()) {
-      setLaunching(true)
-      setLaunchError(null)
-      setLaunchStatus(t('main.launching'))
-      setLaunchProgress(null)
-      let unlistenStatus: UnlistenFn | null = null
-      let unlistenProgress: UnlistenFn | null = null
-      try {
-        unlistenStatus = await listenLauncherStatus((status) => {
-          setLaunchStatus(status.message)
-        })
-        unlistenProgress = await listenDownloadProgress((p: DownloadProgress) => {
-          if (p.totalBytesAll > 0) {
-            setLaunchProgress(Math.min(100, (p.totalBytesDownloaded / p.totalBytesAll) * 100))
-          } else {
-            setLaunchProgress(null)
+  const handleDeploy = useCallback(
+    async (intent: 'update' | 'play') => {
+      // Don't allow deploy until version check completes
+      if (!versionInfo || checking || launching || gameBusy || profileChanging || profileBlocked)
+        return
+      // Update needed OR Java not ready OR Fabric not installed → go to update screen
+      if (versionInfo.needsUpdate || !versionInfo.javaOk || !versionInfo.loaderOk) {
+        // launcher#156: the ОБНОВИТЬ button syncs only — it must not arm
+        // auto-launch. Play intent (room invites) still launches after sync.
+        if (intent === 'play') onPlay()
+        else onUpdate()
+        return
+      }
+      // Confirmed up to date AND Java OK AND Fabric installed → launch
+      if (isTauri()) {
+        setLaunching(true)
+        setLaunchError(null)
+        setLaunchStatus(t('main.launching'))
+        setLaunchProgress(null)
+        let unlistenStatus: UnlistenFn | null = null
+        let unlistenProgress: UnlistenFn | null = null
+        try {
+          unlistenStatus = await listenLauncherStatus((status) => {
+            setLaunchStatus(status.message)
+          })
+          unlistenProgress = await listenDownloadProgress((p: DownloadProgress) => {
+            if (p.totalBytesAll > 0) {
+              setLaunchProgress(Math.min(100, (p.totalBytesDownloaded / p.totalBytesAll) * 100))
+            } else {
+              setLaunchProgress(null)
+            }
+            if (p.filePath) setLaunchStatus(p.filePath)
+          })
+          const { autoUpdate } = await invoke<LauncherConfig>('load_settings')
+          if (autoUpdate) {
+            setLaunchStatus(t('main.checking'))
+            const fresh = await checkModpack(true)
+            // The pack may have changed since the tab's version check; install instead of launching stale files.
+            if (fresh.needsUpdate || !fresh.javaOk || !fresh.loaderOk) {
+              onPlay()
+              return
+            }
           }
-          if (p.filePath) setLaunchStatus(p.filePath)
-        })
-        const { autoUpdate } = await invoke<LauncherConfig>('load_settings')
-        if (autoUpdate) {
-          setLaunchStatus(t('main.checking'))
-          const fresh = await checkModpack(true)
-          // The pack may have changed since the tab's version check; install instead of launching stale files.
-          if (fresh.needsUpdate || !fresh.javaOk || !fresh.loaderOk) {
+          await launchGame()
+          setLaunchStatus(t('main.gameStarted'))
+        } catch (e) {
+          console.error('Launch failed:', e)
+          // The backend re-checks the manifest at launch: a pack that went stale
+          // since the tab's check, or failed its file check, routes to the
+          // update screen, which installs/repairs it itself before joining —
+          // no manual step. The update screen's auto-launch is one-shot, so a
+          // heal that keeps failing ends in a visible error, not a retry loop.
+          if (String(e).includes('PACK_STALE') || String(e).includes('PACK_REPAIR')) {
             onPlay()
             return
           }
+          setLaunchError(String(e))
+          setLaunchStatus('')
+        } finally {
+          unlistenStatus?.()
+          unlistenProgress?.()
+          setLaunching(false)
         }
-        await launchGame()
-        setLaunchStatus(t('main.gameStarted'))
-      } catch (e) {
-        console.error('Launch failed:', e)
-        // The backend re-checks the manifest at launch: a pack that went stale
-        // since the tab's check, or failed its file check, routes to the
-        // update screen, which installs/repairs it itself before joining —
-        // no manual step. The update screen's auto-launch is one-shot, so a
-        // heal that keeps failing ends in a visible error, not a retry loop.
-        if (String(e).includes('PACK_STALE') || String(e).includes('PACK_REPAIR')) {
-          onPlay()
-          return
-        }
-        setLaunchError(String(e))
-        setLaunchStatus('')
-      } finally {
-        unlistenStatus?.()
-        unlistenProgress?.()
-        setLaunching(false)
       }
-    }
-  }, [versionInfo, checking, launching, gameBusy, profileChanging, profileBlocked, onPlay, t])
+    },
+    [
+      versionInfo,
+      checking,
+      launching,
+      gameBusy,
+      profileChanging,
+      profileBlocked,
+      onPlay,
+      onUpdate,
+      t,
+    ],
+  )
 
   const handleJoin = useCallback(
     async (id: string) => {
@@ -191,7 +210,7 @@ export function MainScreen({
               ? 'После подготовки игра подключится к лобби.'
               : 'После подготовки игра подключится к выбранному матчу.',
           )
-          await handleDeploy()
+          await handleDeploy('play')
         }
       } catch (error) {
         setRoomMessage(`Не удалось принять приглашение. ${String(error)}`)
@@ -451,7 +470,9 @@ export function MainScreen({
             <div className="flex flex-wrap items-center justify-between gap-5">
               <div className="flex flex-wrap min-w-0 items-center gap-4">
                 <DeployButton
-                  onPlay={handleDeploy}
+                  onPlay={() => {
+                    void handleDeploy('update')
+                  }}
                   disabled={
                     !isChecked ||
                     checking ||

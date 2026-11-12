@@ -1039,13 +1039,23 @@ pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), S
 pub async fn server_status(state: State<'_, LauncherAppState>) -> Result<ServerStatus, String> {
     let config = state.config.read().await.clone();
     let base = pack_base_url_for(config.active_profile)?;
-    let game_target = match state.pack.read().await.as_ref() {
-        Some(pack) => pack.info.server.clone(),
-        None => pack::fetch_launcher_info(&base).await?.server,
+    // The Workshop pack's own server is its host by design, so the
+    // Game-host cross-check in target() would refuse the probe as soon as
+    // the pack cache refreshes (card flips to unavailable, #155). Status
+    // is a read-only probe of the configured address; the cross-check
+    // stays a launch-time guard.
+    let target = match config.active_profile {
+        ClientProfile::Workshop => config.workshop_probe_target()?,
+        ClientProfile::Game => {
+            let game_target = match state.pack.read().await.as_ref() {
+                Some(pack) => pack.info.server.clone(),
+                None => pack::fetch_launcher_info(&base).await?.server,
+            };
+            config
+                .target(&game_target)?
+                .ok_or("Адрес игрового сервера не настроен.")?
+        }
     };
-    let target = config
-        .target(&game_target)?
-        .ok_or("Адрес игрового сервера не настроен.")?;
     let (host, port) = crate::status::split_host_port(&target);
     let ping_host = host.clone();
     let (status, (region_code, location_name), rooms) = tokio::join!(
