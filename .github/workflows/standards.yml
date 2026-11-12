@@ -121,6 +121,10 @@ jobs:
       - name: Check Rust, frontend and production configuration
         if: steps.same.outputs.tested != 'true'
         run: just check
+      # The release tag run fails on unsynced versions; catch it before the tag.
+      - name: Check launcher versions are in sync
+        if: steps.same.outputs.tested != 'true'
+        run: just version-check
       # Records the exact tree this green run tested, so a main push that
       # merges an already-tested tree can skip the verify steps above.
       # One matrix leg uploads: artifact names are unique per run, and the
