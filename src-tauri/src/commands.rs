@@ -357,6 +357,27 @@ async fn fresh_pack_state(profile: ClientProfile) -> Result<PackState, String> {
     })
 }
 
+/// Offline fallback after a failed manifest fetch: a cached pack checked for
+/// the other profile must not verify the current game dir (a valid offline
+/// install would be refused with PACK_REPAIR); use the uncached path instead.
+fn offline_pack_for_launch(cached: Option<PackState>, active: ClientProfile) -> Option<PackState> {
+    cached.filter(|pack| pack.profile == active)
+}
+
+/// TCP fallback is the Game profile's proxy route only: a custom/dev RakNet
+/// target must never remap (its TCP port may serve another server), and a
+/// Workshop target never falls back at all.
+fn tcp_fallback_allowed(
+    profile: ClientProfile,
+    target: &str,
+    game_server: &str,
+    from_dev_override: bool,
+) -> bool {
+    !from_dev_override
+        && profile == ClientProfile::Game
+        && crate::tcp_fallback::is_proxy_target(target, game_server)
+}
+
 #[tauri::command]
 pub async fn check_modpack_version(
     state: State<'_, LauncherAppState>,
@@ -541,7 +562,7 @@ pub async fn download_modpack(
         // pack is never touched, like the installer itself.
         let frozen = crate::dev::freeze_pack();
         let repaired = if frozen {
-            Vec::new()
+            (Vec::<String>::new(), Vec::<String>::new())
         } else {
             let (repair_data, repair_dir) = (state.app_data_dir.clone(), game_dir.clone());
             tokio::task::spawn_blocking(move || {
@@ -550,6 +571,14 @@ pub async fn download_modpack(
             .await
             .map_err(|e| format!("Pack repair task failed: {e}"))?
         };
+        let (repaired, repair_failed) = repaired;
+        if !repair_failed.is_empty() {
+            log::error!(
+                "[download_modpack] pack repair could not remove {} files: {}",
+                repair_failed.len(),
+                repair_failed.join(", ")
+            );
+        }
         if !repaired.is_empty() {
             // The dropped entries leave the launch check; without the marker an
             // interrupted install cannot pass as a complete pack.
@@ -1144,7 +1173,7 @@ pub async fn launch_game(
             }
             Err(error) => {
                 log::warn!("launch: pack manifest unreachable, using cached state: {error}");
-                pack
+                offline_pack_for_launch(pack, config.active_profile)
             }
         }
     } else {
@@ -1215,40 +1244,51 @@ pub async fn launch_game(
                 .or_else(|| option_env!("BLOCKFIELD_MINECRAFT_VERSION").map(String::from))
                 .unwrap_or_else(|| "1.21.1".to_string())
         });
-    let game_server = match &pack {
-        Some(pack) => pack.info.server.clone(),
-        None if config.active_profile == ClientProfile::Workshop => {
-            pack::fetch_launcher_info(&pack_base_url_for(ClientProfile::Workshop)?)
-                .await?
-                .server
-        }
-        None => String::new(),
-    };
+    // Offline Workshop launch (manifest unreachable, no same-profile cache)
+    // needs no network request: with no Game host known, target() trusts
+    // only the built-in default Workshop address.
+    let game_server = pack
+        .as_ref()
+        .map(|pack| pack.info.server.clone())
+        .unwrap_or_default();
     let quick_play = config.target(&game_server)?;
     // Dev build: another server, or none at all so the game opens on the title screen.
-    let quick_play = crate::dev::server_override().unwrap_or(quick_play);
+    let dev_override = crate::dev::server_override();
+    let from_dev_override = dev_override.is_some();
+    let quick_play = dev_override.unwrap_or(quick_play);
     // TCP fallback (proxy#74 U3): the proxy routes TCP 25565 logins to the Game.
     // A remembered RakNet failure (<24 h) skips the probe; otherwise one
     // unconnected ping decides whether the RakNet path is usable from here.
     let mut quick_play = quick_play;
     let mut via_tcp_fallback = false;
     if let Some(target) = quick_play.clone() {
-        let fallback_state = crate::tcp_fallback::FallbackState::load(&state.app_data_dir);
-        let now = crate::tcp_fallback::now_secs();
-        let resolved = crate::tcp_fallback::resolve_target(&target, &fallback_state, now);
-        if resolved != target {
-            quick_play = Some(resolved);
-            via_tcp_fallback = true;
-        } else if let Some((host, port)) = crate::tcp_fallback::raknet_endpoint(&target) {
-            if !crate::tcp_fallback::raknet_reachable(&host, port) {
-                log::warn!("RakNet path to {host}:{port} unreachable, using TCP fallback");
-                let mut updated = fallback_state;
-                updated.record(&host, now);
-                if let Err(error) = updated.save(&state.app_data_dir, now) {
-                    log::warn!("Cannot persist TCP fallback state: {error}");
-                }
-                quick_play = crate::tcp_fallback::tcp_target_for(&target).or(quick_play);
+        // TCP fallback is the proxy's own route only (the pack's game host
+        // on the Game profile, never a developer-override target): a custom
+        // RakNet target must never remap, its TCP port may serve another
+        // server, and Workshop never falls back.
+        if tcp_fallback_allowed(
+            config.active_profile,
+            &target,
+            &game_server,
+            from_dev_override,
+        ) {
+            let fallback_state = crate::tcp_fallback::FallbackState::load(&state.app_data_dir);
+            let now = crate::tcp_fallback::now_secs();
+            let resolved = crate::tcp_fallback::resolve_target(&target, &fallback_state, now);
+            if resolved != target {
+                quick_play = Some(resolved);
                 via_tcp_fallback = true;
+            } else if let Some((host, port)) = crate::tcp_fallback::raknet_endpoint(&target) {
+                if !crate::tcp_fallback::raknet_reachable(&host, port) {
+                    log::warn!("RakNet path to {host}:{port} unreachable, using TCP fallback");
+                    let mut updated = fallback_state;
+                    updated.record(&host, now);
+                    if let Err(error) = updated.save(&state.app_data_dir, now) {
+                        log::warn!("Cannot persist TCP fallback state: {error}");
+                    }
+                    quick_play = crate::tcp_fallback::tcp_target_for(&target).or(quick_play);
+                    via_tcp_fallback = true;
+                }
             }
         }
     }
@@ -1473,7 +1513,7 @@ fn select_pack_base_url(
 ) -> Result<String, String> {
     let url = runtime
         .filter(|v| !v.trim().is_empty())
-        .or(compiled)
+        .or(compiled.filter(|v| !v.trim().is_empty()))
         .ok_or_else(|| format!("{var} is required"))?;
     let url = url.trim().trim_end_matches('/').to_string();
     if !url.starts_with("https://") && !(cfg!(debug_assertions) && url.starts_with("http://")) {
@@ -2194,6 +2234,13 @@ mod tests {
             .unwrap(),
             "https://blockfield.pro/workshop-pack",
         );
+        // A baked-but-empty value counts as missing, so an unset repo var
+        // keeps naming the variable instead of failing the https check.
+        assert_eq!(
+            select_pack_base_url("VITE_BLOCKFIELD_WORKSHOP_PACK_URL", None, Some("  "))
+                .unwrap_err(),
+            "VITE_BLOCKFIELD_WORKSHOP_PACK_URL is required",
+        );
     }
 
     #[test]
@@ -2232,6 +2279,81 @@ mod tests {
                 loader: None,
             },
         }
+    }
+
+    #[test]
+    fn offline_launch_drops_a_cached_pack_of_the_other_profile() {
+        assert!(
+            offline_pack_for_launch(Some(test_pack(ClientProfile::Game)), ClientProfile::Game)
+                .is_some()
+        );
+        assert!(offline_pack_for_launch(
+            Some(test_pack(ClientProfile::Workshop)),
+            ClientProfile::Workshop
+        )
+        .is_some());
+        // Switched profile after the check + lost manifest: the Game pack's
+        // index hash must not verify the Workshop dir (PACK_REPAIR). Uncached.
+        assert!(offline_pack_for_launch(
+            Some(test_pack(ClientProfile::Game)),
+            ClientProfile::Workshop
+        )
+        .is_none());
+        assert!(offline_pack_for_launch(
+            Some(test_pack(ClientProfile::Workshop)),
+            ClientProfile::Game
+        )
+        .is_none());
+        assert!(offline_pack_for_launch(None, ClientProfile::Game).is_none());
+    }
+
+    #[test]
+    fn tcp_fallback_never_applies_to_the_workshop_profile() {
+        let game_server = "raknet;play.example:25566";
+        let target = "raknet;play.example:25566";
+        // The proxy's own route remaps on the Game profile.
+        assert!(tcp_fallback_allowed(
+            ClientProfile::Game,
+            target,
+            game_server,
+            false
+        ));
+        // The same host match must never remap for Workshop: its TCP port
+        // may serve a different destination.
+        assert!(!tcp_fallback_allowed(
+            ClientProfile::Workshop,
+            target,
+            game_server,
+            false
+        ));
+        // A custom/dev target never remaps either.
+        assert!(!tcp_fallback_allowed(
+            ClientProfile::Game,
+            "raknet;custom.example:25566",
+            game_server,
+            false
+        ));
+    }
+
+    #[test]
+    fn tcp_fallback_skipped_for_developer_override_target() {
+        // Pack server :25568, dev override :25566 on the same host: the
+        // proxy-host check alone passes, but the override's TCP 25565 may
+        // serve a different server, so fallback must be skipped.
+        let game_server = "raknet;play.example:25568";
+        let target = "raknet;play.example:25566";
+        assert!(tcp_fallback_allowed(
+            ClientProfile::Game,
+            target,
+            game_server,
+            false
+        ));
+        assert!(!tcp_fallback_allowed(
+            ClientProfile::Game,
+            target,
+            game_server,
+            true
+        ));
     }
 
     #[test]

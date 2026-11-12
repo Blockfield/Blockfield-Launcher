@@ -176,6 +176,7 @@ jobs:
       - run: just config-check
         env:
           VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
+          VITE_BLOCKFIELD_WORKSHOP_PACK_URL: ${{ vars.VITE_BLOCKFIELD_WORKSHOP_PACK_URL }}
       - name: Patch linuxdeploy GTK plugin for Wayland compatibility and metadata
         if: runner.os == 'Linux'
         run: scripts/patch-linuxdeploy.sh
@@ -186,6 +187,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
+          VITE_BLOCKFIELD_WORKSHOP_PACK_URL: ${{ vars.VITE_BLOCKFIELD_WORKSHOP_PACK_URL }}
           VITE_BRAND: ${{ vars.VITE_BRAND || 'BLOCKFIELD' }}
           VITE_BRAND_SUBTITLE: ${{ vars.VITE_BRAND_SUBTITLE || 'КОМАНДНЫЕ БОИ' }}
           VITE_CHROME_TITLE: ${{ vars.VITE_CHROME_TITLE || 'BLOCKFIELD LAUNCHER' }}

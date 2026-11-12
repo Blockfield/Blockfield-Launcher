@@ -391,6 +391,7 @@ export default function App() {
           {screen === 'settings' && (
             <SettingsScreen
               username={account?.username ?? ''}
+              playerUuid={account?.uuid ?? ''}
               canWorkshop={canWorkshop}
               profile={profile}
               profileBlocked={profileBlocked}

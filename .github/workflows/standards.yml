@@ -19,6 +19,7 @@ on:
 permissions:
   contents: read
   pull-requests: read # PR runs read base metadata only; no secrets are used
+  actions: read # same-tree lookup reads earlier runs and their artifacts
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   # PR pushes cancel superseded runs; pushes to main queue behind the running
@@ -41,23 +42,51 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Main pushes usually merge a tree a green PR run already tested; the
+      # verify steps below are skipped only then.
+      - name: Check for green run of the same tree
+        id: same
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree=$(git rev-parse "HEAD^{tree}")
+          tested=false
+          for sha in $(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/standards.yml/runs?status=success&per_page=30" --jq '.workflow_runs[] | select(.event == "push") | .head_sha'); do
+            t=$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${sha}" --jq '.tree.sha')
+            if [ "$t" = "$tree" ]; then tested=true; break; fi
+          done
+          if [ "$tested" != true ]; then
+            for id in $(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/standards.yml/runs?event=pull_request&branch=next&status=success&per_page=20" --jq ".workflow_runs[] | select(.head_repository.full_name == \"${GITHUB_REPOSITORY}\") | .id" || true); do
+              if gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/artifacts?per_page=100" --jq '.artifacts[].name' 2>/dev/null | grep -qx "tested-tree-${tree}"; then tested=true; break; fi
+            done
+          fi
+          echo "Same tree $tree already tested: $tested."
+          echo "tested=$tested" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.same.outputs.tested != 'true'
         with:
           # Python 3.12 security releases have no Windows builds in setup-python.
           python-version: ${{ runner.os == 'Linux' && '3.12.15' || '3.14.8' }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.same.outputs.tested != 'true'
         with:
           node-version: '24.21.0'
       - name: Cache pinned project tools
+        if: steps.same.outputs.tested != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .cache/quality
             .dev/jdk
           key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
-      - run: python -I -X utf8 scripts/toolchain.py --ci
-      - run: rustup component add --toolchain 1.99.0 rustfmt clippy
+      - if: steps.same.outputs.tested != 'true'
+        run: python -I -X utf8 scripts/toolchain.py --ci
+      - if: steps.same.outputs.tested != 'true'
+        run: rustup component add --toolchain 1.99.0 rustfmt clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.same.outputs.tested != 'true'
         with:
           key: >-
             ${{ runner.os == 'Linux' && 'standards-ubuntu2404' || 'portable-windows' }}
@@ -66,7 +95,7 @@ jobs:
             src-tauri -> src-tauri/target
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Cache apt .deb archives
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.same.outputs.tested != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/apt-archives
@@ -74,17 +103,41 @@ jobs:
           restore-keys: |
             apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Install Tauri system dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.same.outputs.tested != 'true'
         timeout-minutes: 10
         run: scripts/install-tauri-deps.sh libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - name: Locate pnpm store
+        if: steps.same.outputs.tested != 'true'
         id: pnpm-store-1
         shell: bash
         run: echo "path=$(python -I -X utf8 scripts/quality.py run pnpm store path --silent)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.same.outputs.tested != 'true'
         with:
           path: ${{ steps.pnpm-store-1.outputs.path }}
           key: pnpm-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
-      - run: just setup
+      - if: steps.same.outputs.tested != 'true'
+        run: just setup
       - name: Check Rust, frontend and production configuration
+        if: steps.same.outputs.tested != 'true'
         run: just check
+      # Records the exact tree this green run tested, so a main push that
+      # merges an already-tested tree can skip the verify steps above.
+      # One matrix leg uploads: artifact names are unique per run, and the
+      # lookup only accepts a run whose every leg succeeded.
+      - name: Record tested tree
+        id: tree
+        if: runner.os == 'Linux' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+        shell: bash
+        run: |
+          tree=$(git rev-parse "HEAD^{tree}")
+          echo "$tree" > tested-tree.txt
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+      - name: Upload tested tree
+        if: runner.os == 'Linux' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tested-tree-${{ steps.tree.outputs.tree }}
+          path: tested-tree.txt
+          retention-days: 7
+          if-no-files-found: error
