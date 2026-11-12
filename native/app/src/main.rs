@@ -305,7 +305,11 @@ mod probe_env_tests {
     #[test]
     fn forced_software_gl_env_detected() {
         // launcher#59 u-bench env: probe must see software despite a real GPU.
-        with_vars(Some("1"), Some("llvmpipe"), || assert!(gl_forced_software()));
+        with_vars(
+            Some("1"),
+            Some("llvmpipe"),
+            || assert!(gl_forced_software()),
+        );
         with_vars(None, Some("swrast"), || assert!(gl_forced_software()));
         with_vars(Some("true"), None, || assert!(gl_forced_software()));
         with_vars(None, Some("radeonsi"), || assert!(!gl_forced_software()));
