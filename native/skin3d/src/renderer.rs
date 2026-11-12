@@ -82,6 +82,46 @@ pub fn software_adapter_only() -> bool {
     adapter.get_info().device_type == wgpu::DeviceType::Cpu
 }
 
+/// True when a GL renderer description identifies a software rasterizer
+/// (llvmpipe, softpipe, swrast, "Software Rasterizer", GDI Generic/Microsoft
+/// Basic Render). Case-insensitive substring match; anything else is not
+/// software, including the empty/unknown string.
+pub fn is_software_gl_renderer(description: &str) -> bool {
+    let description = description.to_lowercase();
+    [
+        "llvmpipe",
+        "softpipe",
+        "swrast",
+        "software rasterizer",
+        "gdi generic",
+        "microsoft basic render",
+    ]
+    .iter()
+    .any(|marker| description.contains(marker))
+}
+
+/// True when the GL stack Slint renders through is a software rasterizer,
+/// read from a real GL context (`GL_RENDERER`), not env vars: covers
+/// GPU-less machines where no `LIBGL_ALWAYS_SOFTWARE`/`GALLIUM_DRIVER` is
+/// set (llvmpipe without env). No GL adapter (no EGL/GLX/WGL) means unknown,
+/// not software, so the caller keeps its other signals. Drops the probe
+/// objects before returning.
+pub fn gl_software_rasterizer() -> bool {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::GL,
+        ..Default::default()
+    });
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    })) else {
+        return false;
+    };
+    let info = adapter.get_info();
+    is_software_gl_renderer(&format!("{} {}", info.name, info.driver_info))
+}
+
 /// No window, surface, timer, worker or redraw loop. Each call submits one frame
 /// and waits (at most 10 seconds) for GPU readback. Drop releases its GPU objects.
 pub struct Renderer {
@@ -610,6 +650,38 @@ fn colour_attachment(view: &wgpu::TextureView) -> wgpu::RenderPassColorAttachmen
             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
             store: wgpu::StoreOp::Store,
         },
+    }
+}
+
+#[cfg(test)]
+mod gl_tests {
+    use super::*;
+
+    #[test]
+    fn software_gl_renderer_markers() {
+        // launcher#59: GPU-less default path (no env vars) reports these.
+        for description in [
+            "llvmpipe (LLVM 19.1.7, 256 bits)",
+            "Gallium 0.4 on softpipe",
+            "Software Rasterizer",
+            "GDI Generic",
+            "Microsoft Basic Render Driver",
+        ] {
+            assert!(is_software_gl_renderer(description), "{description}");
+            assert!(
+                is_software_gl_renderer(&description.to_uppercase()),
+                "{description} matches case-insensitively"
+            );
+        }
+        for description in [
+            "AMD Radeon Graphics (RADV GFX1036)",
+            "NVIDIA GeForce RTX 4060/PCIe/SSE2",
+            "Intel(R) UHD Graphics 770",
+            "Apple M1",
+            "",
+        ] {
+            assert!(!is_software_gl_renderer(description), "{description}");
+        }
     }
 }
 

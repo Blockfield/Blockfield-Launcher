@@ -1668,6 +1668,18 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "glow"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5e5ea60d70410161c8bf5da3fdfeaa1c72ed2c15f8bbb9d19fe3a4fad085f08"
+dependencies = [
+ "js-sys",
+ "slotmap",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "glow"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "263218b0ba2b0715c3370fb04674f5f8aa331594b521c94ff0a8e4a8472d1386"
@@ -2230,7 +2242,7 @@ dependencies = [
  "cfg_aliases",
  "clru",
  "const-field-offset",
- "glow",
+ "glow 0.18.0",
  "glutin",
  "i-slint-common",
  "i-slint-core",
@@ -2688,6 +2700,17 @@ dependencies = [
  "bitflags 2.13.2",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "khronos-egl"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
+dependencies = [
+ "libc",
+ "libloading",
+ "pkg-config",
 ]
 
 [[package]]
@@ -6020,6 +6043,7 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.21",
  "wgpu-core-deps-apple 28.0.0",
+ "wgpu-core-deps-emscripten",
  "wgpu-core-deps-windows-linux-android 28.0.0",
  "wgpu-hal 28.0.1",
  "wgpu-types 28.0.0",
@@ -6077,6 +6101,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wgpu-core-deps-emscripten"
+version = "28.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34b251c331f84feac147de3c4aa3aa45112622a95dd7ee1b74384fa0458dbd79"
+dependencies = [
+ "wgpu-hal 28.0.1",
+]
+
+[[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "28.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6110,14 +6143,19 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "core-graphics-types 0.2.0",
+ "glow 0.16.0",
+ "glutin_wgl_sys",
  "gpu-allocator",
  "gpu-descriptor",
  "hashbrown 0.16.1",
+ "js-sys",
+ "khronos-egl",
  "libc",
  "libloading",
  "log",
  "metal",
  "naga 28.0.0",
+ "ndk-sys",
  "objc",
  "once_cell",
  "ordered-float",
@@ -6130,6 +6168,8 @@ dependencies = [
  "renderdoc-sys",
  "smallvec",
  "thiserror 2.0.21",
+ "wasm-bindgen",
+ "web-sys",
  "wgpu-types 28.0.0",
  "windows",
  "windows-core",

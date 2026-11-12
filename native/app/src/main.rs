@@ -51,6 +51,7 @@ fn probe_renderer() -> Result<bool, Box<dyn std::error::Error>> {
 /// Vulkan-adapter probe cannot see this — a real GPU stays visible to
 /// Vulkan while GL is software — but Skia GL would still raster on the CPU
 /// behind a per-frame texture upload, so prefer Skia's CPU raster directly.
+/// Env only; the GL-context probe below covers the same case without env.
 fn gl_forced_software() -> bool {
     matches!(
         std::env::var("LIBGL_ALWAYS_SOFTWARE").as_deref(),
@@ -65,7 +66,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(1).as_deref() == Some("--renderer-probe") {
         println!(
             "{}",
-            if skin3d::software_adapter_only() || gl_forced_software() {
+            // Cheapest signals first; the GL-context probe only runs when
+            // neither env nor the Vulkan adapters already said software.
+            if skin3d::software_adapter_only()
+                || gl_forced_software()
+                || skin3d::gl_software_rasterizer()
+            {
                 "software"
             } else {
                 "hardware"
