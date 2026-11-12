@@ -167,3 +167,21 @@ visible animation, rather than a browser suspended by the CI desktop. These flag
 are not included in normal app builds or environment. macOS XPC matching uses
 process names only; reading arbitrary process command lines exposed a psutil C
 extension SystemError on a transient unrelated process.
+
+## Quick host A/B (Linux, Xvfb)
+
+`quick_ab.py` runs the same main-screen comparison on the build host under an
+owned Xvfb (never the owner's display): cold start, whole-tree RSS idle/peak,
+CPU idle, binary size, PSS (gate metric). Tauri must be the capture build from
+`../capture/build.sh` (or its host equivalent: fixture frontend, release
+src-tauri, zoom ACL); readiness is the config-file `capture-ready:` protocol.
+Slint is the release `native/app` build with `--state main`. Example:
+
+```sh
+python3 scripts/bench/quick_ab.py --out /tmp/bench/ab \
+  --tauri /path/to/blockfield-launcher --slint /path/to/blockfield-native \
+  --xvfb /path/to/Xvfb --repeats 3 --duration 15 --warmup 5
+```
+
+Writes `ab.json` (pooled medians + savings) and `report.md` (table + gate
+reading). Headless llvmpipe numbers are not real-GPU data.
