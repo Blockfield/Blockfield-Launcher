@@ -46,11 +46,26 @@ fn probe_renderer() -> Result<bool, Box<dyn std::error::Error>> {
     }
 }
 
+/// True when the OpenGL stack Slint renders through is forced onto a CPU
+/// rasterizer (headless llvmpipe benchmarks, GPU-less CI). The
+/// Vulkan-adapter probe cannot see this — a real GPU stays visible to
+/// Vulkan while GL is software — but Skia GL would still raster on the CPU
+/// behind a per-frame texture upload, so prefer Skia's CPU raster directly.
+fn gl_forced_software() -> bool {
+    matches!(
+        std::env::var("LIBGL_ALWAYS_SOFTWARE").as_deref(),
+        Ok("1") | Ok("true")
+    ) || matches!(
+        std::env::var("GALLIUM_DRIVER").as_deref(),
+        Ok("llvmpipe") | Ok("swrast") | Ok("softpipe")
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(1).as_deref() == Some("--renderer-probe") {
         println!(
             "{}",
-            if skin3d::software_adapter_only() {
+            if skin3d::software_adapter_only() || gl_forced_software() {
                 "software"
             } else {
                 "hardware"
@@ -253,4 +268,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     result?;
     Ok(())
+}
+
+#[cfg(test)]
+mod probe_env_tests {
+    use super::gl_forced_software;
+
+    // SAFETY: single-threaded body — no other test reads these two vars, so
+    // save/set/restore around each assertion is race-free.
+    fn with_vars(libgl: Option<&str>, gallium: Option<&str>, check: impl FnOnce()) {
+        let old_libgl = std::env::var("LIBGL_ALWAYS_SOFTWARE").ok();
+        let old_gallium = std::env::var("GALLIUM_DRIVER").ok();
+        unsafe {
+            match libgl {
+                Some(value) => std::env::set_var("LIBGL_ALWAYS_SOFTWARE", value),
+                None => std::env::remove_var("LIBGL_ALWAYS_SOFTWARE"),
+            }
+            match gallium {
+                Some(value) => std::env::set_var("GALLIUM_DRIVER", value),
+                None => std::env::remove_var("GALLIUM_DRIVER"),
+            }
+        }
+        check();
+        unsafe {
+            match old_libgl {
+                Some(value) => std::env::set_var("LIBGL_ALWAYS_SOFTWARE", value),
+                None => std::env::remove_var("LIBGL_ALWAYS_SOFTWARE"),
+            }
+            match old_gallium {
+                Some(value) => std::env::set_var("GALLIUM_DRIVER", value),
+                None => std::env::remove_var("GALLIUM_DRIVER"),
+            }
+        }
+    }
+
+    #[test]
+    fn forced_software_gl_env_detected() {
+        // launcher#59 u-bench env: probe must see software despite a real GPU.
+        with_vars(Some("1"), Some("llvmpipe"), || assert!(gl_forced_software()));
+        with_vars(None, Some("swrast"), || assert!(gl_forced_software()));
+        with_vars(Some("true"), None, || assert!(gl_forced_software()));
+        with_vars(None, Some("radeonsi"), || assert!(!gl_forced_software()));
+        with_vars(None, None, || assert!(!gl_forced_software()));
+    }
 }
