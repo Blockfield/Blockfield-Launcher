@@ -21,6 +21,15 @@ slint::slint! {
     }
 }
 
+slint::slint! {
+    import { StatusDot } from "../ui/controls.slint";
+    export component PulseProbe inherits Window {
+        width: 100px; height: 100px;
+        out property <float> dot-opacity: dot.opacity;
+        dot := StatusDot { pulse: true; }
+    }
+}
+
 #[test]
 fn controls_input_contract() {
     i_slint_backend_testing::init_no_event_loop();
@@ -82,5 +91,30 @@ fn controls_input_contract() {
         app.get_activations(),
         3,
         "disable cancels pending Space activation"
+    );
+}
+
+#[test]
+fn pulse_steps_down_at_thirty_fps() {
+    // launcher#59: the 30 fps stepped triangle must actually advance and fade
+    // (fail-before: integer division froze it at full opacity).
+    i_slint_backend_testing::init_no_event_loop();
+    let app = PulseProbe::new().unwrap();
+    app.show().unwrap();
+    slint::platform::update_timers_and_animations();
+    assert!(
+        (app.get_dot_opacity() - 1.0).abs() < 0.001,
+        "pulse starts bright"
+    );
+    for _ in 0..100 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(33));
+        slint::platform::update_timers_and_animations();
+        if app.get_dot_opacity() < 0.75 {
+            return;
+        }
+    }
+    panic!(
+        "pulse never faded after 100 steps, opacity={}",
+        app.get_dot_opacity()
     );
 }

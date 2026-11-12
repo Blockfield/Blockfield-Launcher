@@ -17,7 +17,7 @@ glam = "0.33"
 image = { version = "0.25", default-features = false, features = ["png"] }
 pollster = "0.4"
 slint = { version = "~1.18", optional = true, default-features = false, features = ["std", "backend-winit", "renderer-skia-opengl", "renderer-software", "compat-1-2", "unstable-winit-030"] }
-wgpu = { version = "28.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "dx12", "wgsl"] }
+wgpu = { version = "28.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "dx12", "gles", "wgsl"] }
 
 [[example]]
 name = "render-frames"

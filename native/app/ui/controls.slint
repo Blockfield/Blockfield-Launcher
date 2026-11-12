@@ -121,7 +121,10 @@ export global WindowActivity { in-out property <bool> live: true; }
 export component StatusDot inherits Rectangle {
     in property <color> tint: Tokens.success;
     in property <bool> pulse: false;
-    private property <bool> dim: false;
+    // 30 fps stepped triangle over a 2 s cycle: the same slow breathe as the
+    // old 60 fps eased fade, but one repaint per step instead of per frame.
+    // `phase` only advances while visible; hidden windows hold full opacity.
+    private property <float> phase: 0;
     private property <bool> running: root.pulse && WindowActivity.live;
     width: 6px;
     height: 6px;
@@ -129,16 +132,12 @@ export component StatusDot inherits Rectangle {
     background: root.tint;
     drop-shadow-blur: 6px;
     drop-shadow-color: root.tint.with-alpha(0.702);
-    opacity: root.running && root.dim ? 0.5 : 1;
-    animate opacity { duration: root.running ? Tokens.pulse-half : 0ms; easing: Tokens.pulse-easing; }
-    init => {
-        // Evaluate the lazy opacity binding before starting its first animation.
-        if root.opacity == 1 { root.dim = root.running; }
-    }
-    changed running => { root.dim = root.running; }
+    opacity: !root.running ? 1 : (root.phase < 0.5 ? 1 - root.phase : root.phase);
+    changed running => { root.phase = 0; }
     Timer {
-        interval: Tokens.pulse-half;
+        interval: 33ms;
         running: root.running;
-        triggered => { root.dim = !root.dim; }
+        // Float division: `33 / 2000` would be integer zero and freeze the pulse.
+        triggered => { root.phase = Math.mod(root.phase + 33 / 2000.0, 1); }
     }
 }

@@ -26,6 +26,9 @@ impl Activity {
 
     pub fn live(&self, app: &AppWindow) -> bool {
         // Re-poll on events and preview requests: X11 may not emit Occluded on minimize.
+        // No focus gate: an unfocused window is still visible (Tauri keeps its
+        // pulse too), and headless Xvfb harnesses never report focus, so a
+        // focus gate would freeze Layer-2 captures and fake bench numbers.
         let minimized = app
             .window()
             .with_winit_window(|window| window.is_minimized())
