@@ -755,18 +755,41 @@ async fn ensure_jar(
         return Ok(());
     }
     let partial = crate::download::partial_path(&jar);
-    let mut downloaded = 0;
-    state
-        .downloader
-        .download_one(&artifact.url, &partial, name, 0, 1, 1, &mut downloaded, 0)
-        .await
-        .map_err(|e| format!("{name} download failed: {e}"))?;
-    let actual = Downloader::sha256_file(&partial).map_err(|e| e.to_string())?;
-    if !actual.eq_ignore_ascii_case(&artifact.sha256) {
+    let mut last_error = String::new();
+    // The pack host is a single uplink; launcher.json carries a GitHub
+    // fallback (`source`) for exactly this case. A partial from one host is
+    // never resumed from the other: their byte ranges may differ.
+    for url in artifact.sources() {
         let _ = std::fs::remove_file(&partial);
-        return Err(format!("{name} SHA-256 mismatch"));
+        let mut downloaded = 0;
+        let result = state
+            .downloader
+            .download_one(url, &partial, name, 0, 1, 1, &mut downloaded, 0)
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|()| {
+                Downloader::sha256_file(&partial)
+                    .map_err(|e| e.to_string())
+                    .and_then(|actual| {
+                        actual
+                            .eq_ignore_ascii_case(&artifact.sha256)
+                            .then_some(())
+                            .ok_or_else(|| format!("{name} SHA-256 mismatch"))
+                    })
+            });
+        match result {
+            Ok(()) => {
+                return crate::download::activate_partial(&partial, &jar)
+                    .map_err(|e| e.to_string());
+            }
+            Err(error) => {
+                log::warn!("[ensure_jar] {name} from {url} failed: {error}");
+                last_error = error;
+            }
+        }
     }
-    crate::download::activate_partial(&partial, &jar).map_err(|e| e.to_string())
+    let _ = std::fs::remove_file(&partial);
+    Err(format!("{name} download failed: {last_error}"))
 }
 
 /// "(12/137) Downloaded X" → (12, 137)
@@ -2322,10 +2345,12 @@ mod tests {
                 installer: crate::pack::Artifact {
                     url: "https://example.com/i.jar".into(),
                     sha256: "a".into(),
+                    source: None,
                 },
                 bootstrap: crate::pack::Artifact {
                     url: "https://example.com/b.jar".into(),
                     sha256: "b".into(),
+                    source: None,
                 },
                 java: std::collections::HashMap::new(),
             },

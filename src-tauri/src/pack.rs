@@ -19,6 +19,22 @@ pub struct JavaInfo {
 pub struct Artifact {
     pub url: String,
     pub sha256: String,
+    /// Fallback download URL (GitHub release asset); used when `url` fails.
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+impl Artifact {
+    /// Primary URL first, then the fallback when it differs and is non-empty.
+    pub fn sources(&self) -> Vec<&str> {
+        let mut out = vec![self.url.as_str()];
+        if let Some(source) = self.source.as_deref().filter(|s| !s.trim().is_empty()) {
+            if source != self.url {
+                out.push(source);
+            }
+        }
+        out
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -163,5 +179,66 @@ mod tests {
     #[test]
     fn platform_key_is_stable() {
         assert!(platform_key().contains('-'));
+    }
+
+    fn artifact(url: &str, source: Option<&str>) -> Artifact {
+        Artifact {
+            url: url.into(),
+            sha256: "0".repeat(64),
+            source: source.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn artifact_sources_prefers_pack_host_then_github_fallback() {
+        assert_eq!(
+            artifact("https://blockfield.pro/a.jar", None).sources(),
+            ["https://blockfield.pro/a.jar"]
+        );
+        assert_eq!(
+            artifact(
+                "https://blockfield.pro/packwiz-installer.jar",
+                Some("https://github.com/Blockfield/blockfield-client/releases/download/x/packwiz-installer.jar"),
+            )
+            .sources(),
+            [
+                "https://blockfield.pro/packwiz-installer.jar",
+                "https://github.com/Blockfield/blockfield-client/releases/download/x/packwiz-installer.jar",
+            ]
+        );
+        // Empty or duplicate fallbacks add no second attempt.
+        assert_eq!(
+            artifact("https://blockfield.pro/a.jar", Some("  ")).sources(),
+            ["https://blockfield.pro/a.jar"]
+        );
+        assert_eq!(
+            artifact(
+                "https://blockfield.pro/a.jar",
+                Some("https://blockfield.pro/a.jar"),
+            )
+            .sources(),
+            ["https://blockfield.pro/a.jar"]
+        );
+    }
+
+    #[test]
+    fn launcher_info_parses_live_shape_with_and_without_source() {
+        let with: LauncherInfo = serde_json::from_str(
+            r#"{"pack":"https://blockfield.pro/pack.toml","server":"raknet;play.blockfield.pro:25566",
+                "installer":{"url":"https://blockfield.pro/packwiz-installer.jar","sha256":"a",
+                "source":"https://github.com/Blockfield/blockfield-client/releases/download/i/packwiz-installer.jar"},
+                "bootstrap":{"url":"https://blockfield.pro/packwiz-installer-bootstrap.jar","sha256":"b",
+                "source":"https://github.com/packwiz/packwiz-installer-bootstrap/releases/download/v0.0.3/packwiz-installer-bootstrap.jar"},
+                "java":{}}"#,
+        )
+        .unwrap();
+        assert_eq!(with.installer.sources().len(), 2);
+        let without: LauncherInfo = serde_json::from_str(
+            r#"{"pack":"https://blockfield.pro/pack.toml","server":"x",
+                "installer":{"url":"https://blockfield.pro/a.jar","sha256":"a"},
+                "bootstrap":{"url":"https://blockfield.pro/b.jar","sha256":"b"},"java":{}}"#,
+        )
+        .unwrap();
+        assert_eq!(without.bootstrap.sources().len(), 1);
     }
 }
