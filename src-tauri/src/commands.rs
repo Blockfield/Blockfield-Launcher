@@ -716,18 +716,41 @@ async fn ensure_jar(
         return Ok(());
     }
     let partial = crate::download::partial_path(&jar);
-    let mut downloaded = 0;
-    state
-        .downloader
-        .download_one(&artifact.url, &partial, name, 0, 1, 1, &mut downloaded, 0)
-        .await
-        .map_err(|e| format!("{name} download failed: {e}"))?;
-    let actual = Downloader::sha256_file(&partial).map_err(|e| e.to_string())?;
-    if !actual.eq_ignore_ascii_case(&artifact.sha256) {
+    let mut last_error = String::new();
+    // The pack host is a single uplink; launcher.json carries a GitHub
+    // fallback (`source`) for exactly this case. A partial from one host is
+    // never resumed from the other: their byte ranges may differ.
+    for url in artifact.sources() {
         let _ = std::fs::remove_file(&partial);
-        return Err(format!("{name} SHA-256 mismatch"));
+        let mut downloaded = 0;
+        let result = state
+            .downloader
+            .download_one(url, &partial, name, 0, 1, 1, &mut downloaded, 0)
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|()| {
+                Downloader::sha256_file(&partial)
+                    .map_err(|e| e.to_string())
+                    .and_then(|actual| {
+                        actual
+                            .eq_ignore_ascii_case(&artifact.sha256)
+                            .then_some(())
+                            .ok_or_else(|| format!("{name} SHA-256 mismatch"))
+                    })
+            });
+        match result {
+            Ok(()) => {
+                return crate::download::activate_partial(&partial, &jar)
+                    .map_err(|e| e.to_string());
+            }
+            Err(error) => {
+                log::warn!("[ensure_jar] {name} from {url} failed: {error}");
+                last_error = error;
+            }
+        }
     }
-    crate::download::activate_partial(&partial, &jar).map_err(|e| e.to_string())
+    let _ = std::fs::remove_file(&partial);
+    Err(format!("{name} download failed: {last_error}"))
 }
 
 /// "(12/137) Downloaded X" → (12, 137)
@@ -1039,13 +1062,23 @@ pub async fn cancel_download(state: State<'_, LauncherAppState>) -> Result<(), S
 pub async fn server_status(state: State<'_, LauncherAppState>) -> Result<ServerStatus, String> {
     let config = state.config.read().await.clone();
     let base = pack_base_url_for(config.active_profile)?;
-    let game_target = match state.pack.read().await.as_ref() {
-        Some(pack) => pack.info.server.clone(),
-        None => pack::fetch_launcher_info(&base).await?.server,
+    // The Workshop pack's own server is its host by design, so the
+    // Game-host cross-check in target() would refuse the probe as soon as
+    // the pack cache refreshes (card flips to unavailable, #155). Status
+    // is a read-only probe of the configured address; the cross-check
+    // stays a launch-time guard.
+    let target = match config.active_profile {
+        ClientProfile::Workshop => config.workshop_probe_target()?,
+        ClientProfile::Game => {
+            let game_target = match state.pack.read().await.as_ref() {
+                Some(pack) => pack.info.server.clone(),
+                None => pack::fetch_launcher_info(&base).await?.server,
+            };
+            config
+                .target(&game_target)?
+                .ok_or("Адрес игрового сервера не настроен.")?
+        }
     };
-    let target = config
-        .target(&game_target)?
-        .ok_or("Адрес игрового сервера не настроен.")?;
     let (host, port) = crate::status::split_host_port(&target);
     let ping_host = host.clone();
     let (status, (region_code, location_name), rooms) = tokio::join!(
@@ -2265,10 +2298,12 @@ mod tests {
                 installer: crate::pack::Artifact {
                     url: "https://example.com/i.jar".into(),
                     sha256: "a".into(),
+                    source: None,
                 },
                 bootstrap: crate::pack::Artifact {
                     url: "https://example.com/b.jar".into(),
                     sha256: "b".into(),
+                    source: None,
                 },
                 java: std::collections::HashMap::new(),
             },

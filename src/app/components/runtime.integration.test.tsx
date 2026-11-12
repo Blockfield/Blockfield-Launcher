@@ -313,14 +313,28 @@ it('hides profile select from ordinary or unloaded users and displays it only wh
 
   // 1. Unauthorized / unloaded user has no onSelectProfile callback
   await act(async () => {
-    root!.render(<MainScreen onPlay={() => {}} profile="game" onSelectProfile={undefined} />)
+    root!.render(
+      <MainScreen
+        onPlay={() => {}}
+        onUpdate={() => {}}
+        profile="game"
+        onSelectProfile={undefined}
+      />,
+    )
   })
   expect(container.querySelector('#client-profile')).toBeNull()
   expect(container.textContent).not.toContain('Профиль')
 
   // 2. Authorized user receives onSelectProfile callback
   await act(async () => {
-    root!.render(<MainScreen onPlay={() => {}} profile="game" onSelectProfile={onSelectProfile} />)
+    root!.render(
+      <MainScreen
+        onPlay={() => {}}
+        onUpdate={() => {}}
+        profile="game"
+        onSelectProfile={onSelectProfile}
+      />,
+    )
   })
   const select = container.querySelector('#client-profile')
   expect(select).not.toBeNull()
