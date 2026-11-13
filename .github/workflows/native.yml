@@ -58,6 +58,18 @@ jobs:
             native-e2e-ubuntu-24.04
           workspaces: |
             native/app -> native/app/target
+      # Clippy compiles the same crates as the legs, so it needs their
+      # system build libraries (fontconfig for yeslogic-fontconfig-sys).
+      - name: Cache apt .deb archives
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/apt-archives
+          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-tauri-deps.sh', '.github/workflows/native.yml') }}
+          restore-keys: |
+            apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Linux build libraries
+        timeout-minutes: 8
+        run: scripts/install-tauri-deps.sh libfontconfig-dev libxkbcommon-x11-0
       - name: Format check
         timeout-minutes: 3
         run: |
