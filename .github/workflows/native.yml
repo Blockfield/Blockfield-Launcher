@@ -34,8 +34,57 @@ env:
   SLINT_EMIT_DEBUG_INFO: 1
 
 jobs:
+  # Seconds-long gate before the 26-minute 3-OS matrix: a fmt/clippy failure
+  # fails this one Linux job instead of inside every OS leg.
+  lint:
+    name: lint (ubuntu)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: 1.99.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: native-lint-ubuntu-24.04
+          restore-keys: |
+            native-e2e-ubuntu-24.04
+          workspaces: |
+            native/app -> native/app/target
+      # Clippy compiles the same crates as the legs, so it needs their
+      # system build libraries (fontconfig for yeslogic-fontconfig-sys).
+      - name: Cache apt .deb archives
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/apt-archives
+          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-tauri-deps.sh', '.github/workflows/native.yml') }}
+          restore-keys: |
+            apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Linux build libraries
+        timeout-minutes: 8
+        run: scripts/install-tauri-deps.sh libfontconfig-dev libxkbcommon-x11-0
+      - name: Format check
+        timeout-minutes: 3
+        run: |
+          cd native/app
+          cargo fmt --all -- --check
+      # Release profile for clippy (shipped binary keeps thin LTO): the same
+      # flags the matrix legs ran, on one runner.
+      - name: Clippy
+        timeout-minutes: 25
+        run: |
+          cd native/app
+          cargo clippy --locked --release --all-targets -- -D warnings
   e2e:
     name: e2e (${{ matrix.name }})
+    needs: [lint]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 50
     strategy:
@@ -81,18 +130,8 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 8
         run: scripts/install-tauri-deps.sh xvfb mesa-vulkan-drivers libgl1 libfontconfig-dev libxkbcommon-x11-0
-      - name: Format check
-        timeout-minutes: 3
-        run: |
-          cd native/app
-          cargo fmt --all -- --check
-      # Release profile for clippy/build (shipped binary keeps thin LTO);
-      # tests use ci-test (release opts, no LTO) so linking stays fast.
-      - name: Clippy
-        timeout-minutes: 25
-        run: |
-          cd native/app
-          cargo clippy --locked --release --all-targets -- -D warnings
+      # Format and clippy gate the matrix via the lint job above; the legs
+      # start at Layer 1.
       # Layer 1: headless testing-tree scenarios, no display needed.
       - name: Tests (Layer 1)
         timeout-minutes: 30
