@@ -1146,12 +1146,12 @@ type StatsQuery = std::collections::BTreeMap<String, String>;
 
 #[tauri::command]
 pub async fn stats_leaderboard(query: StatsQuery) -> Result<Option<serde_json::Value>, String> {
-    crate::status::fetch_stats(&pack_base_url()?, "leaderboard", &query).await
+    crate::status::fetch_stats(crate::status::STATS_API_URL, "leaderboard", &query).await
 }
 
 #[tauri::command]
 pub async fn stats_seasons() -> Result<Option<serde_json::Value>, String> {
-    crate::status::fetch_stats(&pack_base_url()?, "seasons", &StatsQuery::new()).await
+    crate::status::fetch_stats(crate::status::STATS_API_URL, "seasons", &StatsQuery::new()).await
 }
 
 #[tauri::command]
@@ -1159,7 +1159,12 @@ pub async fn stats_player(
     uuid: String,
     query: StatsQuery,
 ) -> Result<Option<serde_json::Value>, String> {
-    crate::status::fetch_stats(&pack_base_url()?, &format!("players/{uuid}"), &query).await
+    crate::status::fetch_stats(
+        crate::status::STATS_API_URL,
+        &format!("players/{uuid}"),
+        &query,
+    )
+    .await
 }
 
 #[tauri::command]

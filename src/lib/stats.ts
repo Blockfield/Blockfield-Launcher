@@ -100,7 +100,7 @@ export type StatsRequest =
   | { kind: 'player'; uuid: string; query: StatsQuery }
 
 /**
- * `data === null` without `error` means the API answered 404 (unknown player / no seasons).
+ * `data === null` without `error` means the API answered 404 for an unknown player.
  * `stale` marks cached data shown because the latest request failed.
  */
 export interface StatsResult<T> {
