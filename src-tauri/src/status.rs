@@ -405,8 +405,8 @@ fn valid_stats_path(path: &str) -> bool {
     }
 }
 
-/// Public control-plane instance; stats reads there are anonymous (CP docs/PUBLIC.md).
-pub const STATS_API_URL: &str = "https://api.blockfield.pro";
+/// Public control-plane reads; stats are anonymous under `/public/*` (CP SPEC §4).
+pub const STATS_API_URL: &str = "https://cp.blockfield.pro";
 
 /// Stats are read from the control-plane API, independent of the game server. Only an
 /// unknown player is `Ok(None)`; every other non-2xx, including a route 404, is an error.
@@ -426,7 +426,7 @@ pub async fn fetch_stats(
         .timeout(STATS_TIMEOUT)
         .build()
         .map_err(|e| e.to_string())?
-        .get(format!("{base}/v2/stats/{path}"))
+        .get(format!("{base}/public/{path}"))
         .query(query)
         .send()
         .await
@@ -594,26 +594,10 @@ mod tests {
         assert!(rooms_response(&json).is_none());
     }
 
-    #[tokio::test]
-    async fn stats_map_control_plane_statuses() {
+    async fn serve_stats(
+        responses: Vec<(String, String, String)>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let player = "players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe";
-        let responses: [(&str, &str, &str); 6] = [
-            (
-                "200 OK",
-                "leaderboard",
-                r#"{"schemaVersion":1,"page":1,"players":[]}"#,
-            ),
-            ("404 Not Found", player, r#"{"error":"player_not_found"}"#),
-            ("404 Not Found", "seasons", r#"{"error":"not_found"}"#),
-            (
-                "401 Unauthorized",
-                "leaderboard",
-                r#"{"error":"unauthorized"}"#,
-            ),
-            ("503 Service Unavailable", "seasons", "<html>busy</html>"),
-            ("200 OK", "seasons", "not json"),
-        ];
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
@@ -627,7 +611,7 @@ mod tests {
                     request.extend_from_slice(&chunk[..read]);
                 }
                 let line = String::from_utf8_lossy(&request);
-                assert!(line.starts_with(&format!("GET /v2/stats/{path}")), "{line}");
+                assert!(line.starts_with(&format!("GET /public/{path}")), "{line}");
                 let head = format!(
                     "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()
@@ -636,27 +620,104 @@ mod tests {
                 socket.write_all(body.as_bytes()).await.unwrap();
             }
         });
+        (base, server)
+    }
+
+    #[tokio::test]
+    async fn stats_leaderboard_uses_public_route() {
+        let (base, server) = serve_stats(vec![
+            (
+                "200 OK".to_string(),
+                "leaderboard".to_string(),
+                r#"{"schemaVersion":1,"page":1,"limit":25,"total":0,"players":[]}"#.to_string(),
+            ),
+            (
+                "401 Unauthorized".to_string(),
+                "leaderboard".to_string(),
+                r#"{"error":"unauthorized"}"#.to_string(),
+            ),
+        ])
+        .await;
         let query = std::collections::BTreeMap::from([("season".to_string(), "s2".to_string())]);
+        let board = fetch_stats(&base, "leaderboard", &query)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(board["schemaVersion"], 1);
+        assert_eq!(board["total"], 0);
+        assert_eq!(
+            fetch_stats(&base, "leaderboard", &std::collections::BTreeMap::new()).await,
+            Err("Stats API: 401 Unauthorized (unauthorized)".to_string())
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stats_seasons_use_public_route() {
+        let (base, server) = serve_stats(vec![
+            (
+                "200 OK".to_string(),
+                "seasons".to_string(),
+                r#"{"schemaVersion":1,"current":"s3","seasons":[]}"#.to_string(),
+            ),
+            (
+                "404 Not Found".to_string(),
+                "seasons".to_string(),
+                r#"{"error":"not_found"}"#.to_string(),
+            ),
+            (
+                "200 OK".to_string(),
+                "seasons".to_string(),
+                "not json".to_string(),
+            ),
+        ])
+        .await;
         let none = std::collections::BTreeMap::new();
-        let board = fetch_stats(&base, "leaderboard", &query).await.unwrap();
-        assert_eq!(board.unwrap()["schemaVersion"], 1);
-        assert_eq!(fetch_stats(&base, player, &query).await, Ok(None));
+        let seasons = fetch_stats(&base, "seasons", &none).await.unwrap().unwrap();
+        assert_eq!(seasons["current"], "s3");
         assert_eq!(
             fetch_stats(&base, "seasons", &none).await,
             Err("Stats API: 404 Not Found (not_found)".to_string())
-        );
-        assert_eq!(
-            fetch_stats(&base, "leaderboard", &none).await,
-            Err("Stats API: 401 Unauthorized (unauthorized)".to_string())
-        );
-        assert_eq!(
-            fetch_stats(&base, "seasons", &none).await,
-            Err("Stats API: 503 Service Unavailable".to_string())
         );
         assert!(fetch_stats(&base, "seasons", &none)
             .await
             .unwrap_err()
             .starts_with("Invalid stats response"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stats_player_uses_public_route() {
+        let player = "players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe";
+        let (base, server) = serve_stats(vec![
+            (
+                "200 OK".to_string(),
+                player.to_string(),
+                r#"{"schemaVersion":1,"profile":{"uuid":"f3e1b9a6-2270-3dee-8782-b7cdd8519efe","name":"Steve","lastSeen":1},"totals":null,"classes":[],"campaigns":{"completed":0,"wins":null},"history":[],"mmr":null,"ratingHistory":[]}"#.to_string(),
+            ),
+            (
+                "404 Not Found".to_string(),
+                player.to_string(),
+                r#"{"error":"player_not_found"}"#.to_string(),
+            ),
+            (
+                "503 Service Unavailable".to_string(),
+                player.to_string(),
+                "<html>busy</html>".to_string(),
+            ),
+        ])
+        .await;
+        let query = std::collections::BTreeMap::from([("season".to_string(), "s2".to_string())]);
+        let profile = fetch_stats(&base, player, &query).await.unwrap().unwrap();
+        assert_eq!(
+            profile["profile"]["name"],
+            serde_json::Value::String("Steve".to_string())
+        );
+        assert_eq!(fetch_stats(&base, player, &query).await, Ok(None));
+        assert_eq!(
+            fetch_stats(&base, player, &std::collections::BTreeMap::new()).await,
+            Err("Stats API: 503 Service Unavailable".to_string())
+        );
         server.await.unwrap();
     }
 
