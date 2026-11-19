@@ -163,7 +163,7 @@ Unit tests are not evidence of live RakNet handshakes, DNS or production deploym
 | Static pack/content host | `Blockfield/blockfield-client`     | `pack.toml`, `index.toml`, `launcher.json`, `content.json`                    |
 | Accounts                 | Drasl at `skins.blockfield.pro`    | Yggdrasil sessions, account API, skins and capes                              |
 | Site API                 | `Blockfield/blockfield-site`       | `/api/rooms` and web accounts                                                 |
-| Stats API                | Control plane `cp.blockfield.pro`  | Anonymous `/public/*`: seasons, leaderboard, player profiles                 |
+| Stats API                | Control plane `cp.blockfield.pro`  | Anonymous `/public/*`: seasons, leaderboard, player profiles                  |
 | Login and routing        | `Blockfield/blockfield-proxy`      | Drasl session verification, backend routing and login forwarding              |
 | Game bridge              | `Blockfield/blockfield-mod`        | Client authentication, room requests, presence and server SLP snapshot        |
 | Launcher update feed     | Releases in this public repository | Signed bundles and `latest.json`                                              |
