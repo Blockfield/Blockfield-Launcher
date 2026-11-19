@@ -37,8 +37,8 @@ Linux installation without root uses `scripts/install-linux.sh`.
 The August 2026 migration replaced the old Rust API/Filament CMS installation flow with packwiz.
 Those retired services remain documented in [historical notes](legacy/README.md); current accounts
 and room APIs are provided by Drasl and blockfield-site. Statistics (seasons, leaderboard, player
-profiles) are read anonymously from the public control-plane instance at `https://api.blockfield.pro`
-(`/v2/stats/*`); an unknown player is a 404 with `{"error":"player_not_found"}`, and any other
+profiles) are read anonymously from the public control-plane instance at `https://cp.blockfield.pro`
+(`/public/*`); an unknown player is a 404 with `{"error":"player_not_found"}`, and any other
 non-2xx answer is shown as an error.
 
 The launcher checks the installed pack on startup; **Settings → Check at startup** also enables
@@ -163,7 +163,7 @@ Unit tests are not evidence of live RakNet handshakes, DNS or production deploym
 | Static pack/content host | `Blockfield/blockfield-client`     | `pack.toml`, `index.toml`, `launcher.json`, `content.json`                    |
 | Accounts                 | Drasl at `skins.blockfield.pro`    | Yggdrasil sessions, account API, skins and capes                              |
 | Site API                 | `Blockfield/blockfield-site`       | `/api/rooms` and web accounts                                                 |
-| Stats API                | Control plane `api.blockfield.pro` | Anonymous `/v2/stats/*`: seasons, leaderboard, player profiles                |
+| Stats API                | Control plane `cp.blockfield.pro`  | Anonymous `/public/*`: seasons, leaderboard, player profiles                 |
 | Login and routing        | `Blockfield/blockfield-proxy`      | Drasl session verification, backend routing and login forwarding              |
 | Game bridge              | `Blockfield/blockfield-mod`        | Client authentication, room requests, presence and server SLP snapshot        |
 | Launcher update feed     | Releases in this public repository | Signed bundles and `latest.json`                                              |
