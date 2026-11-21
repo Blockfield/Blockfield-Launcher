@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 /// Один id для дока/таскбара: совпадает с WindowBranding.APP_ID в моде.
 pub const APP_ID: &str = "blockfield";
 pub const APP_NAME: &str = "Blockfield";
-/// Совпадает с WindowsBranding.APP_USER_MODEL_ID в моде.
+/// Совпадает с WindowBranding.APP_USER_MODEL_ID в моде. Резервирует имя группы окна на
+/// Windows через -Dblockfield.aumid: нативного шима пока нет (см. комментарий у константы
+/// в моде), поэтому сегодня реально брендируют иконка и заголовок, а имя группы остаётся
+/// за javaw.exe.
 pub const WINDOWS_AUMID: &str = "com.blockfield.Blockfield";
 
 pub const DESKTOP_FILE_NAME: &str = "blockfield.desktop";
