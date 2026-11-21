@@ -77,11 +77,14 @@ fn icon_bytes(size: u32) -> &'static [u8] {
 }
 
 fn desktop_path(home: &Path) -> PathBuf {
-    home.join(".local/share/applications").join(DESKTOP_FILE_NAME)
+    home.join(".local/share/applications")
+        .join(DESKTOP_FILE_NAME)
 }
 
 fn icon_path(home: &Path, size: u32) -> PathBuf {
-    home.join(format!(".local/share/icons/hicolor/{size}x{size}/apps/{ICON_NAME}.png"))
+    home.join(format!(
+        ".local/share/icons/hicolor/{size}x{size}/apps/{ICON_NAME}.png"
+    ))
 }
 
 /// Идемпотентно: пишет только изменившееся, возвращает true если что-то записал.
