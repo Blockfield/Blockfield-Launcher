@@ -383,6 +383,13 @@ pub fn build_launch_args(
         args.push(expand_placeholders(&arg, &vars)?);
     }
 
+    // Брендинг дока/таскбара после ванильных аргументов, чтобы наши значения побеждали
+    // (-Xdock:name/icon у Mojang уже есть под macOS).
+    args.extend(crate::branding::game_jvm_args(
+        std::env::consts::OS,
+        game_dir,
+    ));
+
     args.push(main_class.to_string());
 
     let mut game_args = collect_arguments(&vanilla_json, "game");

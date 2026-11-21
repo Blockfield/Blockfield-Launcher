@@ -1,4 +1,5 @@
 mod account;
+mod branding;
 mod commands;
 mod config;
 mod dev;
@@ -33,6 +34,15 @@ pub fn run() {
         } else {
             1
         });
+    }
+    // Linux-пакеты не вызывают нас при удалении, но ручной
+    // `blockfield-launcher --uninstall-cleanup` убирает брендинг игры из $HOME.
+    #[cfg(target_os = "linux")]
+    if std::env::args().nth(1).as_deref() == Some("--uninstall-cleanup") {
+        let ok = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .is_some_and(|home| branding::remove_linux_branding_at(&home).is_ok());
+        std::process::exit(i32::from(!ok));
     }
     // Pre-load .env so env vars are available for plugin configuration below.
     // (setup() will load again and log the result; the second load is a no-op

@@ -1406,6 +1406,10 @@ pub async fn launch_game(
     if let Err(error) = seed_game_options(&game_dir_path) {
         log::warn!("Cannot write default game options: {error}");
     }
+    // Иконка для -Xdock и .desktop/иконки Linux; ошибка брендинга игру не останавливает.
+    if let Err(error) = crate::branding::ensure_game_branding(&game_dir_path) {
+        log::warn!("Cannot install game branding: {error}");
+    }
 
     emit_status(&app_handle, "launch", "Подготовка запуска", false);
     let args = crate::minecraft::build_launch_args(
