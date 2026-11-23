@@ -162,6 +162,7 @@ pub fn run() {
             commands::stats_seasons,
             commands::stats_player,
             commands::open_url,
+            commands::open_player_profile,
             commands::dev_status,
             skins::upload_skin,
             skins::preview_skin,
