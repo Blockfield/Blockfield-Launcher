@@ -1179,17 +1179,31 @@ pub fn open_url(url: String) -> Result<(), String> {
     if !url.starts_with("https://") || url.contains(char::is_whitespace) {
         return Err(format!("Refusing to open {url}"));
     }
+    spawn_open(&url)
+}
+
+/// Leaderboard rows open exactly the site player page — no other URL shape passes this command.
+#[tauri::command]
+pub fn open_player_profile(uuid: String) -> Result<(), String> {
+    let uuid = uuid.to_lowercase();
+    if !crate::status::valid_player_uuid(&uuid) {
+        return Err(format!("Refusing to open profile for {uuid}"));
+    }
+    spawn_open(&format!("https://blockfield.pro/players/{uuid}"))
+}
+
+fn spawn_open(url: &str) -> Result<(), String> {
     #[cfg(windows)]
     let mut command = {
         // Empty title argument: `start` treats a lone quoted argument as the window title.
         let mut command = crate::host_env::command("cmd.exe");
-        command.args(["/D", "/S", "/C", "start", "", url.as_str()]);
+        command.args(["/D", "/S", "/C", "start", "", url]);
         command
     };
     #[cfg(not(windows))]
     let mut command = {
         let mut command = crate::host_env::command("xdg-open");
-        command.arg(&url);
+        command.arg(url);
         command
     };
     command
