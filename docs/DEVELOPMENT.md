@@ -258,6 +258,8 @@ Actions caches are scoped per ref, so a tag run cannot read caches saved by earl
 
 Updater archives are signed with the existing Tauri key. The hosted pack provides Java 21 downloads for Windows and Linux. The launcher selects, downloads, verifies and configures its runtime automatically; no manual Java installation or path selection is required.
 
+Versions follow the game: the minor (`1.1.0`) moves only for a major launcher update such as a new section or a redesign; fixes, dependency updates and small features are patches (`1.0.<n>`).
+
 Before releasing, update `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together, then run `pnpm version:check`. The signing secrets (`TAURI_PRIVATE_KEY`, `TAURI_KEY_PASSWORD`) and build variables remain in the existing GitHub environment named `dev`; its deployment policy must permit `main` and `launcher-v*` tags only. Tag builds also verify that the commit belongs to `main`. Publishing uses this repository’s `GITHUB_TOKEN`; no cross-repository token is needed.
 
 ## Rollback of a bad launcher update
