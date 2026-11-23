@@ -7,7 +7,9 @@ import {
   formatMmr,
   formatMmrRange,
   formatScore,
+  isPlayerUuid,
   loadStats,
+  playerProfileUrl,
 } from './stats'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
@@ -65,6 +67,30 @@ describe('loadStats', () => {
       uuid: 'f3e1b9a6-2270-3dee-8782-b7cdd8519efe',
       query: {},
     })
+  })
+})
+
+describe('playerProfileUrl', () => {
+  const uuid = 'F3E1B9A6-2270-3DEE-8782-B7CDD8519EFE'
+
+  it('builds the site player URL with a lowercased uuid', () => {
+    expect(playerProfileUrl('https://blockfield.pro', uuid)).toBe(
+      'https://blockfield.pro/players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe',
+    )
+  })
+
+  it('rejects anything that is not a dashed uuid', () => {
+    for (const bad of [
+      '',
+      'NetherG',
+      'f3e1b9a6_2270_3dee_8782_b7cdd8519efe',
+      `${uuid}-x`,
+      'https://blockfield.pro/players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe',
+    ]) {
+      expect(playerProfileUrl('https://blockfield.pro', bad)).toBeNull()
+      expect(isPlayerUuid(bad)).toBe(false)
+    }
+    expect(isPlayerUuid(uuid)).toBe(true)
   })
 })
 

@@ -391,16 +391,19 @@ pub async fn fetch_rooms(base: &str) -> Option<RoomsResponse> {
 const STATS_TIMEOUT: Duration = Duration::from_secs(5);
 const STATS_QUERY_KEYS: [&str; 6] = ["mode", "period", "season", "sort", "limit", "page"];
 
+/// Lowercase dashed UUID, the only player identifier the public site and stats API take.
+pub fn valid_player_uuid(uuid: &str) -> bool {
+    uuid.len() == 36
+        && uuid.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => matches!(b, b'0'..=b'9' | b'a'..=b'f'),
+        })
+}
+
 /// Only the public read endpoints; the player segment must be a lowercase dashed UUID.
 fn valid_stats_path(path: &str) -> bool {
     match path.strip_prefix("players/") {
-        Some(uuid) => {
-            uuid.len() == 36
-                && uuid.bytes().enumerate().all(|(i, b)| match i {
-                    8 | 13 | 18 | 23 => b == b'-',
-                    _ => matches!(b, b'0'..=b'9' | b'a'..=b'f'),
-                })
-        }
+        Some(uuid) => valid_player_uuid(uuid),
         None => matches!(path, "leaderboard" | "seasons"),
     }
 }
@@ -502,6 +505,21 @@ fn room_snapshot(value: &serde_json::Value) -> Option<Vec<GameRoom>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_dashed_lowercase_uuids_open_player_pages() {
+        assert!(valid_player_uuid("f3e1b9a6-2270-3dee-8782-b7cdd8519efe"));
+        for bad in [
+            "",
+            "NetherG",
+            "F3E1B9A6-2270-3DEE-8782-B7CDD8519EFE",
+            "f3e1b9a6_2270_3dee_8782_b7cdd8519efe",
+            "f3e1b9a622703dee8782b7cdd8519efe",
+            "https://blockfield.pro/players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe",
+        ] {
+            assert!(!valid_player_uuid(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn stale_and_malformed_rooms_are_unavailable() {

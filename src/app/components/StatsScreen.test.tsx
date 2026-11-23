@@ -108,6 +108,13 @@ describe('StatsView', () => {
     expect(html).toContain('4 / 1')
   })
 
+  it('makes every leaderboard row a profile button named by the player', () => {
+    const other = '00000000-0000-0000-0000-000000000001'
+    const html = render({ board: fresh(board([row(other, 'Other'), row(ME, 'NetherG')])) })
+    expect(html).toContain('>Other</span></button>')
+    expect(html).toContain('>NetherG</span></button>')
+  })
+
   it('offers seasons only when the API lists them', () => {
     expect(render({})).not.toContain('Сезон 1')
     const html = render({
