@@ -225,13 +225,17 @@ export function StatsView({
                           <td className="text-left">
                             <button
                               type="button"
+                              aria-label={`Профиль ${row.name} на сайте`}
+                              title={`Профиль ${row.name} на сайте`}
                               onClick={() => {
                                 void openPlayerProfile(row.uuid)
                               }}
-                              className="flex min-w-0 max-w-full cursor-pointer items-center gap-2 rounded-sm text-neutral-100 transition-colors hover:text-[#F5A524] hover:underline hover:underline-offset-4 focus-visible:outline-2 focus-visible:outline-[#F5A524]"
+                              className="group flex min-w-0 max-w-full cursor-pointer items-center gap-2 rounded-sm text-[12px] font-normal leading-normal text-neutral-100 transition-colors hover:text-[#F5A524] focus-visible:outline-2 focus-visible:outline-[#F5A524]"
                             >
                               <PlayerHead username={row.name} />
-                              <span className="truncate">{row.name}</span>
+                              <span className="truncate py-0.5 group-hover:underline underline-offset-4">
+                                {row.name}
+                              </span>
                             </button>
                           </td>
                           <td>{formatMmr(row.mmr)}</td>

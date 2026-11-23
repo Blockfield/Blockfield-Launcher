@@ -181,12 +181,9 @@ export const displayRank = (
 
 const PLAYER_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
-/** Dashed UUID (case-insensitive); the site player page only takes this shape. */
-export const isPlayerUuid = (value: string) => PLAYER_UUID_RE.test(value.toLowerCase())
-
 /** Site player page for a leaderboard row, or `null` when the uuid is not a dashed UUID. */
 export function playerProfileUrl(base: string, uuid: string): string | null {
   const id = uuid.toLowerCase()
-  if (!isPlayerUuid(id)) return null
+  if (!PLAYER_UUID_RE.test(id)) return null
   return `${base.replace(/\/$/, '')}/players/${id}`
 }

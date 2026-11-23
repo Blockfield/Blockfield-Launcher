@@ -7,7 +7,6 @@ import {
   formatMmr,
   formatMmrRange,
   formatScore,
-  isPlayerUuid,
   loadStats,
   playerProfileUrl,
 } from './stats'
@@ -88,9 +87,7 @@ describe('playerProfileUrl', () => {
       'https://blockfield.pro/players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe',
     ]) {
       expect(playerProfileUrl('https://blockfield.pro', bad)).toBeNull()
-      expect(isPlayerUuid(bad)).toBe(false)
     }
-    expect(isPlayerUuid(uuid)).toBe(true)
   })
 })
 

@@ -1,7 +1,18 @@
+// @vitest-environment jsdom
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { StatsView } from './StatsScreen'
 import type { Leaderboard, PlayerStats, StatsResult, StatsRow } from '../../lib/stats'
+
+const { openPlayerProfile } = vi.hoisted(() => ({ openPlayerProfile: vi.fn() }))
+vi.mock('../../lib/api', () => ({ openPlayerProfile }))
+
+afterEach(() => {
+  openPlayerProfile.mockReset()
+  vi.unstubAllGlobals()
+})
 
 const ME = 'f3e1b9a6-2270-3dee-8782-b7cdd8519efe'
 
@@ -108,11 +119,45 @@ describe('StatsView', () => {
     expect(html).toContain('4 / 1')
   })
 
-  it('makes every leaderboard row a profile button named by the player', () => {
+  it('makes every leaderboard row a profile button that opens that player on the site', async () => {
     const other = '00000000-0000-0000-0000-000000000001'
     const html = render({ board: fresh(board([row(other, 'Other'), row(ME, 'NetherG')])) })
-    expect(html).toContain('>Other</span></button>')
-    expect(html).toContain('>NetherG</span></button>')
+    expect(html).toContain('aria-label="Профиль Other на сайте"')
+    expect(html).toContain('title="Профиль Other на сайте"')
+    expect(html).toContain('aria-label="Профиль NetherG на сайте"')
+    expect(html).toContain('title="Профиль NetherG на сайте"')
+
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    try {
+      await act(async () => {
+        root.render(
+          <StatsView
+            uuid={ME}
+            filters={{ mode: '', period: 'all', sort: 'score', page: 1 }}
+            onFilters={() => {}}
+            onRefresh={() => {}}
+            board={fresh(board([row(other, 'Other'), row(ME, 'NetherG')]))}
+            self={null}
+            seasons={null}
+          />,
+        )
+      })
+      const button = container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Профиль Other на сайте"]',
+      )
+      expect(button).not.toBeNull()
+      await act(async () => {
+        button!.click()
+      })
+      expect(openPlayerProfile).toHaveBeenCalledTimes(1)
+      expect(openPlayerProfile).toHaveBeenCalledWith(other)
+    } finally {
+      await act(async () => root.unmount())
+      container.remove()
+    }
   })
 
   it('offers seasons only when the API lists them', () => {
