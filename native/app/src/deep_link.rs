@@ -269,7 +269,10 @@ mod tests {
         std::fs::write(&icon, b"png").unwrap();
 
         let entry = desktop_entry(&exe.to_string_lossy());
-        assert!(entry.contains(&format!("Icon={}\n", icon.to_string_lossy())));
+        assert!(entry.contains(&format!(
+            "Icon={}\n",
+            escape_desktop_value(&icon.to_string_lossy())
+        )));
         assert!(entry.contains("StartupWMClass=blockfield-native\n"));
 
         let packaged = dir.path().join("blockfield-native.desktop");
