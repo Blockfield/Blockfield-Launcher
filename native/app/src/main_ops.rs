@@ -291,7 +291,10 @@ pub async fn check(state: &LauncherAppState, verify: bool) -> Result<VersionChec
 }
 
 /// `verify_files` reports healed runtime paths via `Ok`; only `Err` fails verification.
-fn handle_verify_result(repaired: Result<Vec<String>, String>, game_dir: &Path) -> Result<(), String> {
+fn handle_verify_result(
+    repaired: Result<Vec<String>, String>,
+    game_dir: &Path,
+) -> Result<(), String> {
     let repaired = repaired?;
     if !repaired.is_empty() {
         eprintln!(
@@ -401,7 +404,10 @@ mod tests {
         );
         // Absolute paths lose the game-dir prefix so logs keep no home dir.
         assert_eq!(
-            super::format_repaired(&game_dir, &["/tmp/game-profile/libraries/a.jar".to_string()]),
+            super::format_repaired(
+                &game_dir,
+                &["/tmp/game-profile/libraries/a.jar".to_string()]
+            ),
             "libraries/a.jar"
         );
         assert_eq!(
