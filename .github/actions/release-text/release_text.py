@@ -486,7 +486,10 @@ def _commit_at_or_before(repository, moment, gaps, *, empty_ok=False):
             )
         )
     except Exception as exc:
-        gaps.append(f"изменения сервера не собраны ({describe(exc)})")
+        warn(f"server pin failed: {describe(exc)}")
+        gaps.append(
+            "изменения сервера не собраны (нет доступа к серверному репозиторию)"
+        )
         return None
     if not found:
         if empty_ok:
@@ -525,7 +528,10 @@ def server_pin(previous_release, gaps, repository=SERVER_REPOSITORY, until=None)
                 return None
         prs = merged_prs(repository, base, head, gaps, PIN_PR_BODY_CHARS)
     except Exception as exc:
-        gaps.append(f"изменения сервера не собраны ({describe(exc)})")
+        warn(f"server pin failed: {describe(exc)}")
+        gaps.append(
+            "изменения сервера не собраны (нет доступа к серверному репозиторию)"
+        )
         return None
     if not prs:
         return None
@@ -638,7 +644,10 @@ def launcher_server_pin(previous_release, gaps, repository=SERVER_REPOSITORY):
             if new is not None:
                 halves.append((repository, None, new))
     except Exception as exc:
-        gaps.append(f"изменения сервера не собраны ({describe(exc)})")
+        warn(f"server pin failed: {describe(exc)}")
+        gaps.append(
+            "изменения сервера не собраны (нет доступа к серверному репозиторию)"
+        )
         return None
     if not halves:
         gaps.append("изменения сервера не собраны: нет серверного релиза до прошлого")
@@ -815,7 +824,7 @@ def collect_facts(a, releases):
         )
         if server:
             facts["pins"].append(server)
-    elif a.kind == "launcher":
+    elif a.kind == "launcher" and server_repo != "none":
         server = launcher_server_pin(
             next(r for r in releases if r["tag_name"] == previous),
             gaps,
@@ -1828,8 +1837,8 @@ def main(argv=None):
     r.add_argument(
         "--server-repository",
         default=SERVER_REPOSITORY,
-        choices=SERVER_REPOSITORIES,
-        help="репозиторий сервера для серверного пина в клиентском и лаунчерном релизе",
+        choices=(*SERVER_REPOSITORIES, "none"),
+        help="репозиторий сервера для серверного пина в клиентском и лаунчерном релизе (none отключает пин)",
     )
     r.add_argument("--repo-root", default=".")
     r.add_argument(

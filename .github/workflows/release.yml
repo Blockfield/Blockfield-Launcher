@@ -462,6 +462,7 @@ jobs:
           mode: release
           version: ${{ github.ref_name }}
           kind: launcher
+          server-repository: none
           out-dir: rn
       - name: Validate updater assets and publish the completed draft
         env:

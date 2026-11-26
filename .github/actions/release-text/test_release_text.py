@@ -1727,6 +1727,40 @@ class LauncherKind(unittest.TestCase):
             "Blockfield/blockfield-dedicated",
         )
 
+    def test_launcher_server_pin_none_and_sanitized_errors(self):
+        out_dir = tempfile.mkdtemp()
+        with mock.patch.object(rt, "run_release") as run_release:
+            rt.main(
+                [
+                    "release",
+                    "--repository",
+                    "Blockfield/Blockfield-Launcher",
+                    "--version",
+                    "launcher-v2.0.0",
+                    "--kind",
+                    "launcher",
+                    "--out-dir",
+                    out_dir,
+                    "--server-repository",
+                    "none",
+                ]
+            )
+        self.assertEqual(run_release.call_args.args[0].server_repository, "none")
+
+        gaps = []
+        with mock.patch.object(
+            rt,
+            "published_releases",
+            side_effect=RuntimeError(
+                "gh api repos/Blockfield/blockfield-dedicated HTTP 404"
+            ),
+        ):
+            pin = rt.launcher_server_pin({"published_at": "2026-09-01T00:00:00Z"}, gaps)
+        self.assertIsNone(pin)
+        self.assertEqual(len(gaps), 1)
+        self.assertNotIn("blockfield-dedicated", gaps[0])
+        self.assertNotIn("gh api", gaps[0])
+
     def write(self, facts):
         path = Path(tempfile.mkdtemp(), "release-notes.md")
         path.write_text(rt.facts_only_notes(facts), encoding="utf-8")
