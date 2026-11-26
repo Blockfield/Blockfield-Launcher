@@ -492,7 +492,7 @@ dependencies = [
 
 [[package]]
 name = "blockfield-native"
-version = "1.0.31"
+version = "2.0.0"
 dependencies = [
  "ar",
  "base64",
