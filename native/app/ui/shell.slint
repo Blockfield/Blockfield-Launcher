@@ -1,0 +1,289 @@
+import { Tokens } from "tokens.slint";
+import { ActionArea, ChromeButton, NavItem, StatusDot } from "controls.slint";
+import { PlayerHead } from "avatars.slint";
+
+export component WindowChrome inherits Rectangle {
+    in property <string> title;
+    in property <bool> dev-build;
+    callback minimize();
+    callback maximize();
+    callback request-close();
+    border-radius: Tokens.radius-md;
+    border-width: 1phx;
+    border-color: Tokens.border;
+    background: Tokens.background;
+    clip: true;
+    titlebar := Rectangle {
+        x: 1phx;
+        y: 1phx;
+        width: parent.width - 2phx;
+        height: Tokens.chrome-height;
+        background: Tokens.chrome;
+        Rectangle { y: parent.height - 1phx; height: 1phx; background: Tokens.secondary; }
+        WindowMoveArea { x: 0px; y: 0px; width: parent.width - 128px; height: parent.height; }
+        Rectangle {
+            x: 12px;
+            y: (parent.height - 1phx - self.height) / 2;
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: Tokens.primary;
+        }
+        title-label := Text {
+            x: 26px;
+            height: Tokens.chrome-height - 1phx;
+            text: root.title;
+            color: Tokens.muted-foreground;
+            font-size: Tokens.text-label;
+            letter-spacing: Tokens.tracking-chrome;
+            vertical-alignment: center;
+        }
+        if root.dev-build: Rectangle {
+            x: title-label.x + title-label.preferred-width + 8px;
+            y: (35px - self.height) / 2;
+            width: dev-text.preferred-width + 16px;
+            height: 20.5px;
+            background: Tokens.primary;
+            dev-text := Text {
+                x: 8px;
+                height: parent.height;
+                text: "DEV · ТЕСТОВАЯ СБОРКА";
+                color: Tokens.background;
+                font-size: Tokens.text-small;
+                font-weight: Tokens.weight-medium;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            x: parent.width - 116px;
+            y: (parent.height - 1phx - self.height) / 2;
+            width: 104px;
+            height: 24px;
+            spacing: 4px;
+            ChromeButton { label: "Свернуть"; icon: @image-url("../assets/icons/minus.svg"); clicked => { root.minimize(); } }
+            ChromeButton { label: "Развернуть / восстановить"; icon: @image-url("../assets/icons/square.svg"); icon-size: 10px; clicked => { root.maximize(); } }
+            ChromeButton { label: "Закрыть"; icon: @image-url("../assets/icons/x.svg"); destructive: true; clicked => { root.request-close(); } }
+        }
+    }
+    Rectangle {
+        x: 1phx;
+        y: 1phx + Tokens.chrome-height;
+        width: parent.width - 2phx;
+        height: parent.height - Tokens.chrome-height - 2phx;
+        clip: true;
+        @children
+    }
+}
+
+export component Shell inherits Rectangle {
+    in property <image> face;
+    in-out property <int> active: 0;
+    in property <string> brand;
+    in property <string> subtitle;
+    in property <string> username;
+    in property <string> role;
+    in property <[string]> nav-labels;
+    in property <string> launcher-label;
+    in property <string> update-label;
+    in property <string> server-label;
+    in property <string> support-label;
+    in property <string> network-label;
+    in property <bool> dev-build;
+    callback navigate(int);
+    callback launcher-update();
+    callback support();
+    background: Tokens.background;
+    header := Rectangle {
+        y: 0px;
+        height: Tokens.header-height;
+        background: Tokens.chrome;
+        Rectangle { y: parent.height - 1phx; height: 1phx; background: Tokens.secondary; }
+        brand-button := ActionArea {
+            x: 20px;
+            y: (parent.height - 1phx - self.height) / 2;
+            width: 36px + Math.max(brand-text.preferred-width, subtitle-text.preferred-width);
+            height: 26px;
+            label: root.brand + " — " + root.nav-labels[0];
+            focus-offset: 4px;
+            clicked => { root.navigate(0); }
+            Image { x: 0px; y: 0px; width: 26px; height: 26px; source: @image-url("../assets/logo.svg"); accessible-role: none; }
+            brand-text := Text {
+                x: 36px;
+                y: 0px;
+                height: 13px;
+                vertical-alignment: center;
+                text: root.brand;
+                font-size: Tokens.text-brand;
+                font-weight: Tokens.weight-medium;
+                color: Tokens.neutral-100;
+                letter-spacing: Tokens.tracking-brand;
+            }
+            subtitle-text := Text {
+                x: 36px;
+                y: 17px;
+                height: 9px;
+                vertical-alignment: center;
+                text: root.subtitle;
+                font-size: Tokens.text-xs;
+                font-weight: Tokens.weight-medium;
+                color: Tokens.secondary-foreground;
+                letter-spacing: Tokens.tracking-subtitle;
+            }
+        }
+        HorizontalLayout {
+            x: brand-button.x + brand-button.width + 24px;
+            y: (parent.height - 1phx - self.height) / 2;
+            height: 36px;
+            spacing: 4px;
+            alignment: start;
+            for item[index] in [@image-url("../assets/icons/gamepad-2.svg"), @image-url("../assets/icons/download.svg"), @image-url("../assets/icons/trophy.svg"), @image-url("../assets/icons/settings.svg")]: NavItem {
+                label: root.nav-labels[index];
+                icon: item;
+                active: root.active == index;
+                clicked => { root.navigate(index); }
+            }
+        }
+        Rectangle {
+            x: parent.width - self.width - 20px;
+            y: (parent.height - 1phx - self.height) / 2;
+            width: 60px + 2phx + Math.max(user-text.preferred-width, role-text.preferred-width);
+            height: 36px;
+            background: Tokens.card;
+            border-width: 1phx;
+            border-color: Tokens.border;
+            PlayerHead {
+                x: 12px + 1phx;
+                y: 6px;
+                face: root.face;
+            }
+            user-text := Text {
+                x: 48px + 1phx;
+                y: 7px;
+                height: 11px;
+                vertical-alignment: center;
+                text: root.username;
+                color: Tokens.neutral-100;
+                font-size: Tokens.text-small;
+                letter-spacing: Tokens.tracking-user;
+            }
+            role-text := Text {
+                x: 48px + 1phx;
+                y: 20px;
+                height: 9px;
+                vertical-alignment: center;
+                text: root.role;
+                color: Tokens.muted-foreground;
+                font-size: Tokens.text-xs;
+                letter-spacing: Tokens.tracking-role;
+            }
+        }
+    }
+    Rectangle {
+        y: Tokens.header-height;
+        width: parent.width;
+        height: parent.height - Tokens.header-height - Tokens.footer-height;
+        clip: true;
+        @children
+    }
+    footer := Rectangle {
+        y: parent.height - Tokens.footer-height;
+        height: Tokens.footer-height;
+        background: Tokens.chrome;
+        Rectangle { x: 0px; y: 0px; height: 1phx; background: Tokens.secondary; }
+        HorizontalLayout {
+            x: 20px;
+            y: (parent.height + 1phx - self.height) / 2;
+            height: 24px;
+            spacing: 12px;
+            alignment: start;
+            version-button := ActionArea {
+                label: "Открыть обновление лаунчера";
+                width: version-row.preferred-width;
+                height: 24px;
+                clicked => { root.launcher-update(); }
+                version-row := HorizontalLayout {
+                    x: 0px; y: 0px; height: 24px;
+                    spacing: 8px;
+                    alignment: start;
+                    if root.dev-build: Text {
+                        text: "DEV";
+                        color: Tokens.primary;
+                        font-weight: Tokens.weight-medium;
+                        font-size: Tokens.base-size;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.launcher-label;
+                        color: version-button.hovered ? Tokens.foreground : Tokens.faint;
+                        font-size: Tokens.base-size;
+                        vertical-alignment: center;
+                        font-weight: Tokens.weight-medium;
+                        letter-spacing: Tokens.tracking-footer;
+                    }
+                    if root.update-label != "": Text {
+                        text: "· " + root.update-label;
+                        color: Tokens.primary;
+                        font-size: Tokens.base-size;
+                        vertical-alignment: center;
+                        font-weight: Tokens.weight-medium;
+                    }
+                }
+            }
+            Rectangle { width: 1px; height: 24px; Rectangle { x: 0px; y: 6px; height: 12px; background: Tokens.secondary; } }
+            Text {
+                text: root.server-label;
+                height: 24px;
+                vertical-alignment: center;
+                color: Tokens.faint;
+                font-size: Tokens.text-label;
+                letter-spacing: Tokens.tracking-footer;
+            }
+        }
+        HorizontalLayout {
+            x: parent.width - self.preferred-width - 20px;
+            y: (parent.height + 1phx - self.height) / 2;
+            height: 15px;
+            spacing: 12px;
+            alignment: start;
+            support-button := ActionArea {
+                label: "Поддержка Blockfield в Discord";
+                width: support-text.preferred-width + 17px;
+                height: 15px;
+                clicked => { root.support(); }
+                Image {
+                    y: 2px;
+                    x: 0px;
+                    width: 11px;
+                    height: 11px;
+                    source: @image-url("../assets/icons/life-buoy.svg");
+                    colorize: support-button.hovered ? Tokens.primary : Tokens.muted-foreground;
+                    animate colorize { duration: Tokens.transition; easing: Tokens.transition-easing; }
+                    accessible-role: none;
+                }
+                support-text := Text {
+                    x: 17px;
+                    height: parent.height;
+                    text: "Discord · " + root.support-label;
+                    color: support-button.hovered ? Tokens.primary : Tokens.muted-foreground;
+                    animate color { duration: Tokens.transition; easing: Tokens.transition-easing; }
+                    font-size: Tokens.text-label;
+                    letter-spacing: Tokens.tracking-footer;
+                    vertical-alignment: center;
+                }
+            }
+            Rectangle { width: 1px; height: 15px; Rectangle { x: 0px; y: 1.5px; height: 12px; background: Tokens.secondary; } }
+            HorizontalLayout {
+                spacing: 6px;
+                Rectangle { width: 6px; height: 15px; StatusDot { x: 0px; y: 4.5px; } }
+                Text {
+                    text: root.network-label;
+                    height: 15px;
+                    vertical-alignment: center;
+                    color: Tokens.faint;
+                    font-size: Tokens.text-label;
+                    letter-spacing: Tokens.tracking-footer;
+                }
+            }
+        }
+    }
+}

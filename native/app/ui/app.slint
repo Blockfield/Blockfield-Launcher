@@ -1,0 +1,326 @@
+import "../assets/fonts/IBMPlexMono-400.ttf";
+import "../assets/fonts/IBMPlexMono-500.ttf";
+import "../assets/fonts/IBMPlexMono-600.ttf";
+import "../assets/fonts/IBMPlexMono-700.ttf";
+import "../assets/fonts/Inter-400.ttf";
+import "../assets/fonts/Inter-500.ttf";
+import "../assets/fonts/Inter-600.ttf";
+import "../assets/fonts/Inter-700.ttf";
+import "../assets/fonts/Inter-800.ttf";
+export { SelectSearch, MainMotion, MainText } from "main-controls.slint";
+export { SettingsForm, SettingsData } from "settings-model.slint";
+export { WindowActivity } from "controls.slint";
+import { MainScreen, MainData } from "main.slint";
+import { Room } from "rooms.slint";
+import { DevData } from "dev.slint";
+import { SettingsForm } from "settings-model.slint";
+import { SettingsScreen } from "settings.slint";
+import { StatsScreen, StatsRow, StatsRating, StatsMatch, StatsFilter } from "stats.slint";
+import { LoginScreen } from "login.slint";
+import { FirstRunScreen } from "firstrun.slint";
+import { UpdateScreen, LauncherUpdatePanel, UpdateData, LauncherUpdateData } from "update.slint";
+import { Tokens } from "tokens.slint";
+import { WindowChrome, Shell } from "shell.slint";
+import { GridBackdrop, TopoBackdrop, CornerTicks, GlowPanel } from "backdrop.slint";
+import { StatusDot } from "controls.slint";
+
+export component AppWindow inherits Window {
+    in property <bool> show-main: false;
+    in property <bool> show-login: false;
+    in property <bool> show-firstrun: false;
+    in property <string> login-mode: "login";
+    in-out property <string> login-username;
+    in-out property <string> login-password;
+    in property <bool> login-set-password: false;
+    in property <bool> login-name-valid: true;
+    in property <bool> login-busy: false;
+    in property <string> login-error;
+    in property <bool> login-can-submit: false;
+    in-out property <string> firstrun-game-dir;
+    in-out property <string> firstrun-java-path;
+    in-out property <int> firstrun-ram: 4;
+    in property <int> firstrun-maxram: 2;
+    in property <[int]> firstrun-presets;
+    in property <bool> firstrun-saving: false;
+    in property <string> firstrun-error;
+    in property <MainData> main-data;
+    in property <[Room]> rooms;
+    in property <[string]> room-names;
+    in-out property <bool> workshop: false;
+    changed workshop => { SettingsForm.profile(root.workshop); }
+    in-out property <int> room-index: 0;
+    in-out property <int> details-view: 0;
+    in-out property <string> room-message;
+    in-out property <int> settings-tab: 3;
+    in property <[string]> settings-tabs;
+    in-out property <string> stats-mode;
+    in-out property <string> stats-period;
+    in-out property <string> stats-sort;
+    in property <[StatsFilter]> stats-modes;
+    in property <[StatsFilter]> stats-periods;
+    in property <[StatsFilter]> stats-sorts;
+    in property <int> stats-board-state;
+    in property <string> stats-board-error;
+    in property <bool> stats-board-stale;
+    in property <string> stats-board-stale-label;
+    in property <[StatsRow]> stats-rows;
+    in property <int> stats-page;
+    in property <int> stats-pages;
+    in property <int> stats-total;
+    in property <bool> stats-has-prev;
+    in property <bool> stats-has-next;
+    in property <int> stats-self-state;
+    in property <string> stats-self-error;
+    in property <bool> stats-self-stale;
+    in property <string> stats-self-stale-label;
+    in property <string> stats-self-uuid;
+    in property <string> stats-self-name;
+    in property <image> stats-self-face;
+    in property <string> stats-self-rank;
+    in property <string> stats-self-rank-code;
+    in property <string> stats-self-mmr;
+    in property <string> stats-self-battles;
+    in property <string> stats-self-kd;
+    in property <string> stats-self-captures;
+    in property <string> stats-self-campaigns;
+    in property <[StatsRating]> stats-rating;
+    in property <[StatsMatch]> stats-matches;
+    callback stats-set-mode(string);
+    callback stats-set-period(string);
+    callback stats-set-sort(string);
+    callback stats-page-delta(int);
+    callback stats-refresh();
+    callback stats-open-site();
+    callback stats-open-player(string);
+    callback stats-shown();
+    in property <string> settings-title;
+    in property <string> settings-subtitle;
+    in property <string> skin-path;
+    in property <string> cape-path;
+    in-out property <bool> slim: false;
+    in property <image> skin-frame;
+    in property <string> skin-error;
+    in property <string> skin-caption;
+    in property <string> skin-message;
+    in property <string> skin-raw-error;
+    in-out property <bool> skin-busy: false;
+    in property <UpdateData> update-data;
+    in property <LauncherUpdateData> launcher-update-data;
+    in property <DevData> dev-data;
+    callback browse-skin();
+    callback browse-cape();
+    callback upload-skin();
+    callback toggle-slim(bool);
+    callback settings-reset();
+    callback settings-save();
+    callback settings-tab-changed(int);
+    callback skin-drag-state(bool);
+    callback skin-drag-by(float, float);
+    callback skin-frame-ready();
+    callback update-retry();
+    callback update-cancel();
+    callback update-launch();
+    callback launcher-check();
+    callback launcher-install();
+    callback launcher-restart();
+    callback download-modpack();
+    callback cancel-download();
+    callback deploy();
+    callback verify();
+    callback join(string);
+    callback retry-join();
+    in property <string> chrome-title;
+    in property <string> brand;
+    in property <string> subtitle;
+    in property <string> username;
+    in property <image> shell-face;
+    in property <string> role;
+    in property <[string]> nav-labels;
+    in property <string> launcher-label;
+    in property <string> update-label;
+    in property <string> server-label;
+    in property <string> support-label;
+    in property <string> network-label;
+    in property <bool> dev-build;
+    in property <bool> show-backdrop: false;
+    in property <bool> show-pulse: false;
+    in-out property <int> active: 0;
+    callback minimize();
+    callback maximize();
+    callback request-close();
+    callback login-submit();
+    callback login-toggle-mode();
+    callback login-logout();
+    callback login-username-edited(string);
+    callback login-password-edited(string);
+    callback login-accept();
+    callback firstrun-browse-dir();
+    callback firstrun-browse-java();
+    callback firstrun-ram-text-edited(string);
+    callback firstrun-continue();
+    callback navigate(int);
+    callback launcher-update();
+    callback support();
+    title: root.chrome-title + (root.dev-build ? " DEV" : "");
+    preferred-width: 1280px;
+    preferred-height: 720px;
+    min-width: 1280px;
+    min-height: 720px;
+    no-frame: true;
+    background: transparent;
+    default-font-family: Tokens.sans;
+    default-font-size: Tokens.base-size;
+    WindowChrome {
+        title: root.chrome-title;
+        dev-build: root.dev-build;
+        minimize => { root.minimize(); }
+        maximize => { root.maximize(); }
+        request-close => { root.request-close(); }
+        if !root.show-login && !root.show-firstrun: Shell {
+            face: root.shell-face;
+            active <=> root.active;
+            brand: root.brand;
+            subtitle: root.subtitle;
+            username: root.username;
+            role: root.role;
+            nav-labels: root.nav-labels;
+            launcher-label: root.launcher-label;
+            update-label: root.update-label;
+            server-label: root.server-label;
+            support-label: root.support-label;
+            network-label: root.network-label;
+            dev-build: root.dev-build;
+            navigate(index) => { root.navigate(index); }
+            launcher-update => { root.launcher-update(); }
+            support => { root.support(); }
+            if root.show-main && root.active == 0: MainScreen {
+                data: root.main-data;
+                rooms: root.rooms;
+                room-names: root.room-names;
+                workshop <=> root.workshop;
+                room-index <=> root.room-index;
+                details-view <=> root.details-view;
+                room-message <=> root.room-message;
+                deploy => { root.deploy(); }
+                verify => { root.verify(); }
+                join(id) => { root.join(id); }
+                retry-join => { root.retry-join(); }
+            }
+            if root.active == 2: StatsScreen {
+                modes: root.stats-modes;
+                periods: root.stats-periods;
+                sorts: root.stats-sorts;
+                mode: root.stats-mode;
+                period: root.stats-period;
+                sort: root.stats-sort;
+                board-state: root.stats-board-state;
+                board-error: root.stats-board-error;
+                board-stale: root.stats-board-stale;
+                board-stale-label: root.stats-board-stale-label;
+                rows: root.stats-rows;
+                page: root.stats-page;
+                pages: root.stats-pages;
+                total: root.stats-total;
+                has-prev: root.stats-has-prev;
+                has-next: root.stats-has-next;
+                self-state: root.stats-self-state;
+                self-error: root.stats-self-error;
+                self-stale: root.stats-self-stale;
+                self-stale-label: root.stats-self-stale-label;
+                self-name: root.stats-self-name;
+                self-face: root.stats-self-face;
+                self-rank: root.stats-self-rank;
+                self-rank-code: root.stats-self-rank-code;
+                self-mmr: root.stats-self-mmr;
+                self-battles: root.stats-self-battles;
+                self-kd: root.stats-self-kd;
+                self-captures: root.stats-self-captures;
+                self-campaigns: root.stats-self-campaigns;
+                rating: root.stats-rating;
+                matches: root.stats-matches;
+                set-mode(id) => { root.stats-set-mode(id); }
+                set-period(id) => { root.stats-set-period(id); }
+                set-sort(id) => { root.stats-set-sort(id); }
+                page-delta(delta) => { root.stats-page-delta(delta); }
+                refresh => { root.stats-refresh(); }
+                open-site => { root.stats-open-site(); }
+                open-player(uuid) => { root.stats-open-player(uuid); }
+            }
+            if root.show-main && root.active == 1: UpdateScreen {
+                data: root.update-data;
+                retry => { root.update-retry(); }
+                cancel => { root.update-cancel(); }
+                launch => { root.update-launch(); }
+            }
+            if root.active == 3: SettingsScreen {                // shortcut: preserve u16's logical-pixel layout until settings adopts CSS zoom metrics.
+                private property <length> legacy-inset: 1px - 1phx;
+                x: self.legacy-inset; y: self.legacy-inset;
+                width: parent.width - 2 * self.legacy-inset; height: parent.height - Tokens.header-height - Tokens.footer-height - 2 * self.legacy-inset;
+                username: root.username;
+                tabs: root.settings-tabs;
+                tab <=> root.settings-tab;
+                title: root.settings-title;
+                subtitle: root.settings-subtitle;
+                skin-path: root.skin-path;
+                cape-path: root.cape-path;
+                slim <=> root.slim;
+                skin-frame: root.skin-frame;
+                skin-error: root.skin-error;
+                caption: root.skin-caption;
+                skin-message: root.skin-message;
+                skin-raw-error: root.skin-raw-error;
+                skin-busy <=> root.skin-busy;
+                launcher-data: root.launcher-update-data;
+                dev-data: root.dev-data;
+                check => { root.launcher-check(); }
+                install => { root.launcher-install(); }
+                restart => { root.launcher-restart(); }
+                browse-skin => { root.browse-skin(); }
+                browse-cape => { root.browse-cape(); }
+                upload => { root.upload-skin(); }
+                toggle-slim(value) => { root.toggle-slim(value); }
+                reset => { root.settings-reset(); }
+                save => { root.settings-save(); }
+                tab-changed(index) => { root.settings-tab-changed(index); }
+                drag-state(active) => { root.skin-drag-state(active); }
+                drag-by(dx, dy) => { root.skin-drag-by(dx, dy); }
+            }
+            if root.show-backdrop: Rectangle {
+                GridBackdrop { intensity: 0.9; }
+                TopoBackdrop {}
+                CornerTicks {}
+                GlowPanel { x: 20px; y: 20px; width: 280px; height: 80px; }
+            }
+            StatusDot { x: 24px; y: 24px; visible: root.show-pulse; pulse: root.show-pulse; }
+        }
+        if root.show-login: LoginScreen {
+            mode: root.login-mode;
+            username <=> root.login-username;
+            password <=> root.login-password;
+            set-password: root.login-set-password;
+            name-valid: root.login-name-valid;
+            busy: root.login-busy;
+            error: root.login-error;
+            can-submit: root.login-can-submit;
+            submit => { root.login-submit(); }
+            toggle-mode => { root.login-toggle-mode(); }
+            logout => { root.login-logout(); }
+            username-edited(text) => { root.login-username-edited(text); }
+            password-edited(text) => { root.login-password-edited(text); }
+            accept => { root.login-accept(); }
+        }
+        if root.show-firstrun: FirstRunScreen {
+            game-dir <=> root.firstrun-game-dir;
+            java-path <=> root.firstrun-java-path;
+            ram <=> root.firstrun-ram;
+            maxram: root.firstrun-maxram;
+            presets: root.firstrun-presets;
+            saving: root.firstrun-saving;
+            error: root.firstrun-error;
+            browse-dir => { root.firstrun-browse-dir(); }
+            browse-java => { root.firstrun-browse-java(); }
+            ram-text-edited(text) => { root.firstrun-ram-text-edited(text); }
+            continue => { root.firstrun-continue(); }
+        }
+    }
+}

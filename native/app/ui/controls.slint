@@ -1,0 +1,143 @@
+import { Tokens } from "tokens.slint";
+
+export component ActionArea inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <string> label;
+    out property <bool> hovered: root.enabled && touch.has-hover;
+    out property <bool> pressed: root.enabled && (touch.pressed || root.keyboard-pressed);
+    in property <length> focus-offset: 0px;
+    private property <bool> keyboard-focus;
+    private property <bool> keyboard-pressed;
+    changed enabled => { if !root.enabled { root.keyboard-pressed = false; } }
+    callback clicked();
+    forward-focus: keys;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    keys := FocusScope {
+        enabled: root.enabled;
+        focus-gained(reason) => { root.keyboard-focus = reason == FocusReason.tab-navigation; }
+        focus-lost(reason) => { root.keyboard-focus = false; root.keyboard-pressed = false; }
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                root.keyboard-focus = true;
+                // HTML buttons activate Enter on keydown, Space on keyup.
+                if event.text == Key.Return { root.clicked(); } else { root.keyboard-pressed = true; }
+                return accept;
+            }
+            return reject;
+        }
+        key-released(event) => {
+            if event.text == Key.Space {
+                let activate = root.keyboard-pressed;
+                root.keyboard-pressed = false;
+                if activate { root.clicked(); }
+                return accept;
+            }
+            return event.text == Key.Return ? accept : reject;
+        }
+        touch := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                    keys.focus();
+                    root.keyboard-focus = false;
+                }
+            }
+            clicked => { root.clicked(); }
+        }
+    }
+    if root.enabled && keys.has-focus && root.keyboard-focus: Rectangle {
+        x: -root.focus-offset - 2px;
+        y: -root.focus-offset - 2px;
+        width: root.width + 2 * root.focus-offset + 4px;
+        height: root.height + 2 * root.focus-offset + 4px;
+        border-width: 2px;
+        border-color: Tokens.primary;
+    }
+    @children
+}
+
+export component ChromeButton inherits ActionArea {
+    in property <image> icon;
+    in property <length> icon-size: 12px;
+    in property <bool> destructive;
+    width: 32px;
+    height: 24px;
+    border-radius: Tokens.radius-sm;
+    background: root.hovered ? (root.destructive ? Tokens.close-hover : Tokens.secondary) : transparent;
+    animate background { duration: Tokens.transition; easing: Tokens.transition-easing; }
+    Image {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.icon-size;
+        height: root.icon-size;
+        source: root.icon;
+        colorize: root.destructive && root.hovered ? white : Tokens.muted-foreground;
+        animate colorize { duration: Tokens.transition; easing: Tokens.transition-easing; }
+        accessible-role: none;
+    }
+}
+
+export component NavItem inherits ActionArea {
+    in property <image> icon;
+    in property <bool> active;
+    private property <color> tint: root.active ? Tokens.foreground : (root.hovered ? Tokens.neutral-200 : Tokens.muted-foreground);
+    width: text.preferred-width + 49px;
+    height: 36px;
+    animate tint { duration: Tokens.transition; easing: Tokens.transition-easing; }
+    Image {
+        x: 14px;
+        y: 11.5px;
+        width: 13px;
+        height: 13px;
+        source: root.icon;
+        colorize: root.tint;
+        accessible-role: none;
+    }
+    text := Text {
+        x: 35px;
+        height: parent.height;
+        text: root.label;
+        color: root.tint;
+        font-size: Tokens.text-label;
+        font-weight: Tokens.weight-medium;
+        letter-spacing: Tokens.tracking-nav;
+        vertical-alignment: center;
+    }
+    if root.active: Rectangle {
+        x: 8px;
+        y: parent.height;
+        width: parent.width - 16px;
+        height: 1px;
+        background: Tokens.primary;
+    }
+}
+
+export global WindowActivity { in-out property <bool> live: true; }
+
+export component StatusDot inherits Rectangle {
+    in property <color> tint: Tokens.success;
+    in property <bool> pulse: false;
+    // 30 fps stepped triangle over a 2 s cycle: the same slow breathe as the
+    // old 60 fps eased fade, but one repaint per step instead of per frame.
+    // `phase` only advances while visible; hidden windows hold full opacity.
+    private property <float> phase: 0;
+    private property <bool> running: root.pulse && WindowActivity.live;
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background: root.tint;
+    drop-shadow-blur: 6px;
+    drop-shadow-color: root.tint.with-alpha(0.702);
+    opacity: !root.running ? 1 : (root.phase < 0.5 ? 1 - root.phase : root.phase);
+    changed running => { root.phase = 0; }
+    Timer {
+        interval: 33ms;
+        running: root.running;
+        // Float division: `33 / 2000` would be integer zero and freeze the pulse.
+        triggered => { root.phase = Math.mod(root.phase + 33 / 2000.0, 1); }
+    }
+}

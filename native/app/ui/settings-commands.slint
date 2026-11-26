@@ -1,0 +1,24 @@
+import { Tokens } from "tokens.slint";
+import { SettingRow } from "settings-fields.slint";
+import { SettingsForm } from "settings-model.slint";
+import { FormInput } from "settings-inputs.slint";
+
+export component SettingsCommands inherits Rectangle {
+    height: 264px;
+    SettingRow {
+        x: 0px; y: 0px; width: parent.width; row-height: 105px;
+        icon: @image-url("../assets/icons/terminal.svg"); label: "ПЕРЕД ЗАПУСКОМ";
+        hint: ["Выполняется перед Minecraft. При", "ошибке запуск игры отменяется."];
+        FormInput { x: 0px; y: 0px; width: parent.width - 284px; label: "ПЕРЕД ЗАПУСКОМ"; multiline: true; placeholder: "Не выполнять команду"; value <=> SettingsForm.data.pre-launch; edited => { SettingsForm.edited(); } }
+    }
+    SettingRow {
+        y: 105px; width: parent.width; row-height: 105px;
+        icon: @image-url("../assets/icons/terminal.svg"); label: "ПОСЛЕ ВЫХОДА ИЗ ИГРЫ";
+        hint: ["Выполняется после завершения", "процесса Minecraft, в том числе при", "сбое. Лаунчер должен оставаться", "открытым."];
+        FormInput { x: 0px; y: 0px; width: parent.width - 284px; label: "ПОСЛЕ ВЫХОДА ИЗ ИГРЫ"; multiline: true; placeholder: "Не выполнять команду"; value <=> SettingsForm.data.post-exit; edited => { SettingsForm.edited(); } }
+    }
+    Text {
+        y: 218px; width: parent.width; height: 36px; font-size: 11px; color: Tokens.secondary-foreground; wrap: word-wrap;
+        text: "Команды выполняются в папке игры через sh (Linux/macOS) или cmd (Windows). Доступны INST_DIR, INST_MC_DIR, INST_JAVA и INST_EXIT_CODE после выхода. Обращение к переменным: $INST_DIR в sh, %INST_DIR% в cmd. Вывод: logs/launcher-hooks.log.";
+    }
+}

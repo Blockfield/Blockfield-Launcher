@@ -64,7 +64,7 @@ pub fn raknet_endpoint(target: &str) -> Option<(String, u16)> {
         return None;
     }
     // Normalized (lowercase, brackets/DNS rules) or rejected, same as connect.
-    let host = crate::config::server_host(&format!("raknet;{rest}")).ok()?;
+    let host = launcher_core::config::server_host(&format!("raknet;{rest}")).ok()?;
     Some((host, port))
 }
 
@@ -89,7 +89,7 @@ pub fn is_proxy_target(target: &str, game_server: &str) -> bool {
         None => return false,
     };
     // Both sides normalized by server_host (lowercase, brackets/DNS rules).
-    match crate::config::server_host(game_server) {
+    match launcher_core::config::server_host(game_server) {
         Ok(proxy) => host == proxy,
         Err(_) => false,
     }

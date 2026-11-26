@@ -352,19 +352,14 @@ version = "1.0.31"
 dependencies = [
  "ar",
  "base64 0.23.1",
- "blockfield-shared",
- "directories",
  "dotenvy",
  "flate2",
- "fs2",
- "futures-util",
+ "launcher-app",
+ "launcher-core",
+ "launcher-net",
  "log",
- "md-5",
- "reqwest",
  "serde",
  "serde_json",
- "sha1",
- "sha2 0.11.0",
  "tar",
  "tauri",
  "tauri-build",
@@ -378,7 +373,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "windows-sys 0.61.2",
- "zip",
 ]
 
 [[package]]
@@ -2298,6 +2292,60 @@ checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
 dependencies = [
  "bitflags 2.13.2",
  "serde",
+]
+
+[[package]]
+name = "launcher-app"
+version = "0.0.0"
+dependencies = [
+ "blockfield-shared",
+ "flate2",
+ "fs2",
+ "launcher-core",
+ "launcher-net",
+ "log",
+ "serde",
+ "serde_json",
+ "tar",
+ "tokio",
+ "url",
+ "zip",
+]
+
+[[package]]
+name = "launcher-core"
+version = "0.0.0"
+dependencies = [
+ "directories",
+ "log",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "url",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "launcher-net"
+version = "0.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "directories",
+ "flate2",
+ "futures-util",
+ "launcher-core",
+ "log",
+ "md-5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+ "zip",
 ]
 
 [[package]]

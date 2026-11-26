@@ -1,0 +1,1245 @@
+use crate::download::Downloader;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
+
+const RECORD: &str = "installed-files.json";
+
+#[derive(Default, Serialize, Deserialize)]
+struct Record {
+    directories: BTreeMap<PathBuf, BTreeMap<String, String>>,
+}
+
+struct Tracking {
+    path: PathBuf,
+    root: PathBuf,
+    record: Record,
+}
+
+// ponytail: one installation at a time, matching LauncherAppState.operation; split if installs become concurrent.
+static ACTIVE: Mutex<Option<Tracking>> = Mutex::new(None);
+
+pub struct Session;
+
+pub fn begin(app_data: &Path, root: &Path) -> Result<Option<Session>, String> {
+    if launcher_core::dev::is_dev_build() {
+        return Ok(None);
+    }
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    if root.parent().is_none() {
+        return Err("Cannot track a filesystem root".into());
+    }
+    let path = app_data.join(RECORD);
+    let mut record = load(&path)?;
+    record.directories.entry(root.clone()).or_default();
+    let mut active = ACTIVE.lock().map_err(|e| e.to_string())?;
+    if active.is_some() {
+        return Err("Another installation is being tracked".into());
+    }
+    *active = Some(Tracking { path, root, record });
+    Ok(Some(Session))
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        let tracking = ACTIVE.lock().unwrap().take();
+        if let Some(tracking) = tracking {
+            if let Err(error) = save(&tracking.path, &tracking.record) {
+                log::error!("Cannot save downloaded-file ownership: {error}");
+            }
+        }
+    }
+}
+
+pub struct Write(Option<(PathBuf, String)>);
+
+impl Write {
+    pub fn new(path: &Path) -> Self {
+        let mut active = ACTIVE.lock().unwrap();
+        let Some(tracking) = active.as_mut() else {
+            return Self(None);
+        };
+        let Some(relative) = relative_file(&tracking.root, path) else {
+            return Self(None);
+        };
+        let files = tracking.record.directories.get_mut(&tracking.root).unwrap();
+        let eligible = match fs::symlink_metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Ok(metadata) if metadata.is_file() && !is_link(&metadata) => {
+                files.get(&relative).is_some_and(|hash| {
+                    Downloader::sha256_file(path).is_ok_and(|value| value == *hash)
+                })
+            }
+            _ => false,
+        };
+        if !eligible {
+            files.remove(&relative);
+        }
+        Self(eligible.then(|| (tracking.root.clone(), relative)))
+    }
+
+    pub fn finish(self) {
+        let Some((root, relative)) = self.0 else {
+            return;
+        };
+        record_file(&root, &relative);
+    }
+}
+
+pub fn write(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    let owned = Write::new(path);
+    fs::write(path, contents)?;
+    owned.finish();
+    Ok(())
+}
+
+pub struct ExternalInstall {
+    root: PathBuf,
+    existing: BTreeSet<String>,
+    updates: BTreeMap<String, Write>,
+}
+
+impl ExternalInstall {
+    pub fn new(root: &Path, scope: &str) -> Result<Self, String> {
+        let root = root.canonicalize().map_err(|e| e.to_string())?;
+        let mut existing = BTreeSet::new();
+        inventory(&root, &root.join(scope), &mut existing)?;
+        let pack_files = pack_files(&root);
+        let tracked: Vec<String> = ACTIVE
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|tracking| tracking.record.directories.get(&root))
+            .map(|files| {
+                files
+                    .keys()
+                    .filter(|path| {
+                        if scope.is_empty() {
+                            path.as_str() == "packwiz.json"
+                                || pack_files.iter().any(|(file, _)| file == *path)
+                        } else {
+                            Path::new(path).starts_with(scope)
+                        }
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let updates = tracked
+            .iter()
+            .map(|relative| (relative.clone(), Write::new(&root.join(relative))))
+            .collect();
+        Ok(Self {
+            root,
+            existing,
+            updates,
+        })
+    }
+
+    pub fn finish(mut self, paths: impl IntoIterator<Item = PathBuf>) {
+        for path in paths {
+            if let Some(relative) = relative_file(&self.root, &path) {
+                if let Some(owned) = self.updates.remove(&relative) {
+                    owned.finish();
+                } else if !self.existing.contains(&relative) {
+                    record_file(&self.root, &relative);
+                }
+            }
+        }
+    }
+
+    pub fn finish_pack(self) {
+        let manifest = self.root.join("packwiz.json");
+        let paths = pack_files(&self.root)
+            .into_iter()
+            .filter_map(|(relative, expected)| {
+                let path = self.root.join(relative);
+                pack_hash_matches(&path, &expected).then_some(path)
+            })
+            .collect::<Vec<_>>();
+        self.finish(paths.into_iter().chain([manifest]));
+    }
+
+    pub fn finish_tree(self, tree: &Path) -> Result<(), String> {
+        let mut files = BTreeSet::new();
+        inventory(&self.root, tree, &mut files)?;
+        let paths = files
+            .iter()
+            .map(|file| self.root.join(file))
+            .collect::<Vec<_>>();
+        self.finish(paths);
+        Ok(())
+    }
+}
+
+fn pack_files(root: &Path) -> Vec<(String, serde_json::Value)> {
+    fs::read(root.join("packwiz.json"))
+        .ok()
+        .and_then(|data| serde_json::from_slice::<serde_json::Value>(&data).ok())
+        .and_then(|json| json["cachedFiles"].as_object().cloned())
+        .map(|files| {
+            files
+                .values()
+                .filter_map(|file| {
+                    let path = file["cachedLocation"]
+                        .as_str()
+                        .filter(|path| valid_relative(path))?;
+                    let expected = if file["linkedFileHash"].is_object() {
+                        &file["linkedFileHash"]
+                    } else {
+                        &file["hash"]
+                    };
+                    Some((path.into(), expected.clone()))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+const PACK_HASH_CACHE: &str = ".blockfield-pack-hash-cache.json";
+
+/// Verified-good pack files, so repeat checks are stats only: relative path
+/// inside the game dir -> (mtime nanos, size) at verification time.
+#[derive(Default, Serialize, Deserialize)]
+struct PackHashCache {
+    dirs: BTreeMap<PathBuf, PackDirCache>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct PackDirCache {
+    packwiz_mtime_ns: u128,
+    files: BTreeMap<String, PackStat>,
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+struct PackStat {
+    mtime_ns: u128,
+    size: u64,
+}
+
+fn file_stat(path: &Path) -> Option<PackStat> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let mtime_ns = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some(PackStat {
+        mtime_ns,
+        size: metadata.len(),
+    })
+}
+
+/// Real hash check of the installed pack files against the installer's index
+/// (packwiz.json): a same-size corruption is detected, while unchanged files
+/// (mtime+size match the cache) are not re-hashed. Game-mutable files are
+/// skipped (see `game_mutable`). False when there is nothing to verify (fresh
+/// dir) or a checked file is missing or mismatched.
+pub fn pack_files_valid(root: &Path, app_data: &Path) -> bool {
+    let (checked, bad) = pack_check(root, app_data);
+    checked && bad.is_empty()
+}
+
+/// Checked entries that are missing or hash-mismatched, as game-dir-relative
+/// paths. Powers the update-path heal; `pack_files_valid` is this list
+/// being empty.
+pub fn pack_files_bad(root: &Path, app_data: &Path) -> Vec<String> {
+    pack_check(root, app_data).1
+}
+
+fn pack_check(root: &Path, app_data: &Path) -> (bool, Vec<String>) {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let files = pack_files(&root);
+    if files.is_empty() {
+        return (false, Vec::new());
+    }
+    let packwiz_mtime = file_stat(&root.join("packwiz.json"))
+        .map(|stat| stat.mtime_ns)
+        .unwrap_or(0);
+    let cache_path = app_data.join(PACK_HASH_CACHE);
+    let mut cache: PackHashCache = fs::read(&cache_path)
+        .ok()
+        .and_then(|data| serde_json::from_slice(&data).ok())
+        .unwrap_or_default();
+    let dir = cache.dirs.entry(root.clone()).or_default();
+    if dir.packwiz_mtime_ns != packwiz_mtime {
+        dir.files.clear();
+        dir.packwiz_mtime_ns = packwiz_mtime;
+    }
+    let mut bad = Vec::new();
+    for (relative, expected) in &files {
+        if game_mutable(relative) {
+            continue;
+        }
+        let entry_ok = match safe_file(&root, relative) {
+            Some(path) => match file_stat(&path) {
+                Some(stat) if dir.files.get(relative) == Some(&stat) => true,
+                Some(stat) if pack_hash_matches(&path, expected) => {
+                    dir.files.insert(relative.clone(), stat);
+                    true
+                }
+                _ => {
+                    dir.files.remove(relative);
+                    false
+                }
+            },
+            None => {
+                dir.files.remove(relative);
+                false
+            }
+        };
+        if !entry_ok {
+            bad.push(relative.clone());
+        }
+    }
+    if fs::create_dir_all(app_data).is_ok() {
+        let _ = fs::write(&cache_path, serde_json::to_vec(&cache).unwrap());
+    }
+    (true, bad)
+}
+
+/// Deletes missing/mismatched checked files and drops their `packwiz.json`
+/// entries, so the installer downloads them again instead of trusting its
+/// stale hashes and reporting "already up to date". Returns the removed
+/// game-dir-relative paths plus the ones whose removal failed: a failed
+/// entry stays in the manifest so the next check still fails instead of
+/// reporting success with a damaged file. Game-mutable files are never touched.
+pub fn drop_bad_pack_files(root: &Path, app_data: &Path) -> (Vec<String>, Vec<String>) {
+    let bad = pack_files_bad(root, app_data);
+    if bad.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut removed = Vec::new();
+    let mut failed = Vec::new();
+    for relative in &bad {
+        // Deleted through the same guard as the check: symlinks and escapes
+        // are never followed or removed.
+        if let Some(path) = safe_file(&root, relative) {
+            if let Err(error) = fs::remove_file(&path) {
+                log::error!("Cannot remove damaged pack file {relative}: {error}");
+                failed.push(relative.clone());
+                continue;
+            }
+        } else if truly_absent(&root, relative) {
+            // Nothing on disk: no removal needed, the entry can go.
+        } else {
+            // Any blocker (symlink, special file, non-dir parent, directory)
+            // stays on disk: keep the entry so the next check still fails.
+            log::error!("Cannot remove damaged pack file {relative}: blocked, entry kept");
+            failed.push(relative.clone());
+            continue;
+        }
+        removed.push(relative.clone());
+    }
+    let doomed: BTreeSet<&str> = removed.iter().map(String::as_str).collect();
+    let manifest = root.join("packwiz.json");
+    if let Ok(data) = fs::read(&manifest) {
+        if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&data) {
+            if let Some(files) = json.get_mut("cachedFiles").and_then(|v| v.as_object_mut()) {
+                files.retain(|_, entry| {
+                    entry
+                        .get("cachedLocation")
+                        .and_then(serde_json::Value::as_str)
+                        .is_none_or(|path| !doomed.contains(path))
+                });
+                let _ = fs::write(&manifest, serde_json::to_vec(&json).unwrap_or_default());
+            }
+        }
+    }
+    (removed, failed)
+}
+
+/// True when nothing stands at `relative`: lstat reports NotFound while every
+/// parent is a real directory (no symlinks, no files). Anything else — a
+/// symlink, special file, non-directory parent or directory at the path — is
+/// a blocker that stays on disk, so the entry must stay too.
+fn truly_absent(root: &Path, relative: &str) -> bool {
+    if !valid_relative(relative) {
+        return false;
+    }
+    let mut full = root.to_path_buf();
+    for part in relative.split('/') {
+        full.push(part);
+    }
+    // lstat only: never follow a link, and only NotFound means absent.
+    if !matches!(
+        fs::symlink_metadata(&full).map(|_| ()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    ) {
+        return false;
+    }
+    let mut parent = root.to_path_buf();
+    let mut parts = relative.split('/').peekable();
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            break;
+        }
+        parent.push(part);
+        let Ok(metadata) = fs::symlink_metadata(&parent) else {
+            return false;
+        };
+        if is_link(&metadata) || !metadata.is_dir() {
+            return false;
+        }
+    }
+    true
+}
+
+fn record_file(root: &Path, relative: &str) {
+    let Some(path) = safe_file(root, relative) else {
+        return;
+    };
+    let Ok(hash) = Downloader::sha256_file(&path) else {
+        return;
+    };
+    if let Some(tracking) = ACTIVE.lock().unwrap().as_mut() {
+        if tracking.root == root {
+            tracking
+                .record
+                .directories
+                .get_mut(root)
+                .unwrap()
+                .insert(relative.into(), hash);
+        }
+    }
+}
+
+pub fn cleanup_partials(root: &Path) {
+    let Ok(root) = root.canonicalize() else {
+        return;
+    };
+    let active = ACTIVE.lock().unwrap();
+    let Some(files) = active
+        .as_ref()
+        .and_then(|tracking| tracking.record.directories.get(&root))
+    else {
+        return;
+    };
+    for (relative, expected) in files.iter().filter(|(path, _)| path.ends_with(".part")) {
+        if let Some(path) = safe_file(&root, relative) {
+            if Downloader::sha256_file(&path).is_ok_and(|hash| hash == *expected) {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+}
+
+/// Files the game itself rewrites: mods add default keys to their configs at
+/// start, the client saves options and the server list. packwiz keeps their
+/// index hash and reports "up to date", so checking them would block every
+/// launch after the first one.
+fn game_mutable(relative: &str) -> bool {
+    relative.starts_with("config/") || matches!(relative, "options.txt" | "servers.dat")
+}
+
+fn pack_hash_matches(path: &Path, expected: &serde_json::Value) -> bool {
+    use sha2::Digest;
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    let hash = match expected["type"].as_str() {
+        Some("sha256") => crate::download::hex_digest(&sha2::Sha256::digest(&bytes)),
+        Some("sha512") => crate::download::hex_digest(&sha2::Sha512::digest(&bytes)),
+        Some("sha1") => crate::download::hex_digest(&sha1::Sha1::digest(&bytes)),
+        Some("md5") => crate::download::hex_digest(&md5::Md5::digest(&bytes)),
+        _ => return false,
+    };
+    expected["value"]
+        .as_str()
+        .is_some_and(|value| hash.eq_ignore_ascii_case(value))
+}
+
+fn inventory(root: &Path, directory: &Path, files: &mut BTreeSet<String>) -> Result<(), String> {
+    if !directory.exists() || fs::symlink_metadata(directory).is_ok_and(|meta| is_link(&meta)) {
+        return Ok(());
+    }
+    for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let metadata = fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
+        if is_link(&metadata) {
+            continue;
+        }
+        if metadata.is_dir() {
+            inventory(root, &entry.path(), files)?;
+        } else if let Some(relative) = relative_file(root, &entry.path()) {
+            files.insert(relative);
+        }
+    }
+    Ok(())
+}
+
+/// Manifest- or index-derived relative paths must stay inside their root:
+/// no absolute paths, no `.`/`..`/empty components, no separators that
+/// escape the join. Same rule the installer tracker enforces.
+pub(crate) fn valid_relative(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains(['\\', ':'])
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+        && Path::new(path)
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+}
+
+fn relative_file(root: &Path, path: &Path) -> Option<String> {
+    let mut ancestor = path;
+    let mut suffix = Vec::new();
+    while !ancestor.exists() {
+        suffix.push(ancestor.file_name()?);
+        ancestor = ancestor.parent()?;
+    }
+    let mut resolved = ancestor.canonicalize().ok()?;
+    for part in suffix.into_iter().rev() {
+        resolved.push(part);
+    }
+    let relative = resolved
+        .strip_prefix(root)
+        .ok()?
+        .to_str()?
+        .replace('\\', "/");
+    valid_relative(&relative).then_some(relative)
+}
+
+fn safe_file(root: &Path, relative: &str) -> Option<PathBuf> {
+    if !valid_relative(relative) {
+        return None;
+    }
+    let mut path = root.to_path_buf();
+    for part in relative.split('/') {
+        path.push(part);
+        let metadata = fs::symlink_metadata(&path).ok()?;
+        if is_link(&metadata) {
+            return None;
+        }
+    }
+    fs::metadata(&path).ok()?.is_file().then_some(path)
+}
+
+fn is_link(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+fn load(path: &Path) -> Result<Record, String> {
+    match fs::read(path) {
+        Ok(data) => {
+            serde_json::from_slice(&data).map_err(|e| format!("Invalid ownership record: {e}"))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Record::default()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn save(path: &Path, record: &Record) -> Result<(), String> {
+    let partial = crate::download::partial_path(path);
+    fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    fs::write(
+        &partial,
+        serde_json::to_vec(record).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    crate::download::activate_partial(&partial, path).map_err(|e| e.to_string())
+}
+
+fn clean_downloads(record: &Record) -> Result<(), String> {
+    for (root, files) in &record.directories {
+        if !root.is_absolute() || root.parent().is_none() || !root.exists() {
+            continue;
+        }
+        if root
+            .ancestors()
+            .any(|path| fs::symlink_metadata(path).is_ok_and(|meta| is_link(&meta)))
+        {
+            continue;
+        }
+        let mut directories = BTreeSet::new();
+        for (relative, expected) in files {
+            let Some(path) = safe_file(root, relative) else {
+                continue;
+            };
+            if Downloader::sha256_file(&path).is_ok_and(|hash| hash == *expected) {
+                fs::remove_file(&path)
+                    .map_err(|e| format!("Cannot remove {}: {e}", path.display()))?;
+                for parent in path
+                    .ancestors()
+                    .skip(1)
+                    .take_while(|parent| parent.starts_with(root))
+                {
+                    directories.insert(parent.to_path_buf());
+                }
+            }
+        }
+        for directory in directories.into_iter().rev() {
+            // Nonempty directories contain retained files and must remain.
+            let _ = fs::remove_dir(directory);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn uninstall() -> Result<(), String> {
+    let base = directories::BaseDirs::new().ok_or("Cannot resolve app data")?;
+    uninstall_from(base.data_dir())
+}
+
+pub fn uninstall_from(data_dir: &Path) -> Result<(), String> {
+    let app_data = data_dir.join(if launcher_core::dev::is_dev_build() {
+        "com.blockfield.launcher.dev"
+    } else {
+        "com.blockfield.launcher"
+    });
+    if app_data
+        .ancestors()
+        .any(|path| fs::symlink_metadata(path).is_ok_and(|meta| is_link(&meta)))
+    {
+        return Err("App data contains a filesystem link; cleanup refused".into());
+    }
+    let record_path = app_data.join(RECORD);
+    // DEV builds never track download ownership, so their records cannot authorize deletion.
+    if !launcher_core::dev::is_dev_build() {
+        clean_downloads(&load(&record_path)?)?;
+    }
+    for path in [launcher_core::config::config_path(&app_data), record_path] {
+        if path.is_file() {
+            fs::remove_file(path).map_err(|e| e.to_string())?;
+        }
+    }
+    let _ = fs::remove_dir(app_data);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uninstall_isolates_build_identity_and_only_production_owns_downloads() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let production = root.join("com.blockfield.launcher");
+        let dev = root.join("com.blockfield.launcher.dev");
+        let game = root.join("game");
+        fs::create_dir(&game).unwrap();
+        let game = game.canonicalize().unwrap();
+        let downloaded = game.join("owned.jar");
+        fs::write(&downloaded, b"production download").unwrap();
+        let record = Record {
+            directories: BTreeMap::from([(
+                game,
+                BTreeMap::from([(
+                    "owned.jar".into(),
+                    Downloader::sha256_file(&downloaded).unwrap(),
+                )]),
+            )]),
+        };
+        for data in [&production, &dev] {
+            fs::create_dir(data).unwrap();
+            fs::write(data.join("launcher-config.json"), b"production config").unwrap();
+            fs::write(data.join(launcher_core::dev::CONFIG_FILE), b"dev config").unwrap();
+            save(&data.join(RECORD), &record).unwrap();
+        }
+        uninstall_from(&root).unwrap();
+        if launcher_core::dev::is_dev_build() {
+            assert!(!dev.join(launcher_core::dev::CONFIG_FILE).exists());
+            assert!(!dev.join(RECORD).exists());
+            assert!(dev.join("launcher-config.json").is_file());
+            assert_eq!(fs::read(&downloaded).unwrap(), b"production download");
+            assert_eq!(
+                fs::read(production.join(RECORD)).unwrap(),
+                serde_json::to_vec(&record).unwrap()
+            );
+            assert_eq!(
+                fs::read(production.join("launcher-config.json")).unwrap(),
+                b"production config"
+            );
+        } else {
+            assert!(!production.join("launcher-config.json").exists());
+            assert!(!production.join(RECORD).exists());
+            assert!(production.join(launcher_core::dev::CONFIG_FILE).is_file());
+            assert!(!downloaded.exists());
+            assert_eq!(
+                fs::read(dev.join(RECORD)).unwrap(),
+                serde_json::to_vec(&record).unwrap()
+            );
+            assert_eq!(
+                fs::read(dev.join(launcher_core::dev::CONFIG_FILE)).unwrap(),
+                b"dev config"
+            );
+        }
+    }
+
+    #[test]
+    fn pack_hashes_match_published_digest_vectors() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("artifact");
+        fs::write(&path, b"abc").unwrap();
+        for (algorithm, digest) in [
+            ("md5", "900150983cd24fb0d6963f7d28e17f72"),
+            ("sha1", "a9993e364706816aba3e25717850c26c9cd0d89d"),
+            ("sha256", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+            ("sha512", "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"),
+        ] {
+            assert!(pack_hash_matches(
+                &path,
+                &serde_json::json!({ "type": algorithm, "value": digest.to_uppercase() })
+            ));
+            assert!(!pack_hash_matches(
+                &path,
+                &serde_json::json!({ "type": algorithm, "value": "wrong" })
+            ));
+        }
+        assert!(!pack_hash_matches(
+            &path,
+            &serde_json::json!({ "type": "unsupported", "value": "" })
+        ));
+        fs::remove_file(&path).unwrap();
+        assert!(!pack_hash_matches(
+            &path,
+            &serde_json::json!({ "type": "sha256", "value": "" })
+        ));
+    }
+
+    #[test]
+    fn tracks_actual_writes_and_preserves_preexisting_and_modified_files() {
+        if launcher_core::dev::is_dev_build() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Blockfield");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        let manual = root.join("mods/manual.jar");
+        fs::write(&manual, b"manual").unwrap();
+        let automatic = root.join("automatic.jar");
+        let modified = root.join("modified.jar");
+        {
+            let _session = begin(&data, &root).unwrap();
+            write(&automatic, b"downloaded").unwrap();
+            write(&modified, b"downloaded").unwrap();
+            write(&manual, b"replaced by installer").unwrap();
+        }
+        fs::write(&modified, b"edited by player").unwrap();
+        {
+            let _session = begin(&data, &root).unwrap();
+            write(&modified, b"repaired by installer").unwrap();
+            let pack = ExternalInstall::new(&root, "").unwrap();
+            let new_mod = root.join("mods/new.jar");
+            let mismatch = root.join("mods/mismatch.jar");
+            fs::write(&new_mod, b"pack download").unwrap();
+            fs::write(&mismatch, b"manual copy during installation").unwrap();
+            fs::write(root.join("packwiz.json"), serde_json::to_vec(&serde_json::json!({
+                "cachedFiles": {
+                    "mods/new.pw.toml": {
+                        "cachedLocation": "mods/new.jar",
+                        "linkedFileHash": { "type": "sha256", "value": Downloader::sha256_file(&new_mod).unwrap() }
+                    },
+                    "mods/manual.jar": {
+                        "cachedLocation": "mods/manual.jar",
+                        "hash": { "type": "sha256", "value": Downloader::sha256_file(&manual).unwrap() }
+                    },
+                    "mods/mismatch.jar": {
+                        "cachedLocation": "mods/mismatch.jar",
+                        "hash": { "type": "sha256", "value": "00".repeat(32) }
+                    }
+                }
+            })).unwrap()).unwrap();
+            pack.finish_pack();
+            let java = ExternalInstall::new(&root, "java").unwrap();
+            fs::create_dir_all(root.join("java/bin")).unwrap();
+            fs::write(root.join("java/bin/java.exe"), b"runtime").unwrap();
+            java.finish_tree(&root.join("java")).unwrap();
+            write(&root.join("owned.part"), b"partial download").unwrap();
+            fs::write(root.join("manual.part"), b"user data").unwrap();
+            cleanup_partials(&root);
+            assert!(!root.join("owned.part").exists());
+            assert!(root.join("manual.part").is_file());
+        }
+        let record = load(&data.join(RECORD)).unwrap();
+        clean_downloads(&record).unwrap();
+        assert!(!automatic.exists());
+        assert!(!root.join("mods/new.jar").exists());
+        assert!(!root.join("java").exists());
+        assert!(manual.is_file());
+        assert!(modified.is_file());
+        assert!(root.join("mods/mismatch.jar").is_file());
+        assert!(root.join("manual.part").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn heal_keeps_index_entry_when_removal_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        let bad = root.join("mods/bad.jar");
+        fs::write(&bad, b"correct-bytes!").unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/bad.pw.toml": {
+                    "cachedLocation": "mods/bad.jar",
+                    "hash": { "type": "sha256", "value": Downloader::sha256_file(&bad).unwrap() }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(&bad, b"corrupt-bytes!").unwrap();
+        // Read-only parent: removal fails, the manifest stays writable.
+        let mods = root.join("mods");
+        fs::set_permissions(&mods, fs::Permissions::from_mode(0o555)).unwrap();
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        fs::set_permissions(&mods, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(removed.is_empty());
+        assert_eq!(failed, ["mods/bad.jar".to_string()]);
+        // The entry must stay so the next check still fails instead of
+        // reporting success with the damaged file on disk.
+        assert!(bad.is_file());
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("packwiz.json")).unwrap()).unwrap();
+        assert!(index["cachedFiles"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|file| file["cachedLocation"] == "mods/bad.jar"));
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[test]
+    fn heal_removes_bad_files_and_drops_their_index_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        let good = root.join("mods/good.jar");
+        let bad = root.join("mods/bad.jar");
+        let config = root.join("config/edited.yaml");
+        fs::write(&good, b"correct-bytes!").unwrap();
+        fs::write(&bad, b"correct-bytes!").unwrap();
+        fs::write(&config, b"installed-defaults").unwrap();
+        let entry = |path: &Path| {
+            serde_json::json!({
+                "cachedLocation": path.strip_prefix(&root).unwrap().to_str().unwrap().replace('\\', "/"),
+                "hash": { "type": "sha256", "value": Downloader::sha256_file(path).unwrap() }
+            })
+        };
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/good.pw.toml": entry(&good),
+                "mods/bad.pw.toml": entry(&bad),
+                "config/edited.pw.toml": entry(&config),
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        // Same-size corruption plus a game-mutable edit: only the mod is bad.
+        fs::write(&bad, b"corrupt-bytes!").unwrap();
+        fs::write(&config, b"rewritten-by-mod").unwrap();
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        assert!(failed.is_empty());
+        assert_eq!(removed, ["mods/bad.jar".to_string()]);
+        assert!(!bad.exists());
+        assert!(good.is_file());
+        assert_eq!(fs::read(&config).unwrap(), b"rewritten-by-mod");
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("packwiz.json")).unwrap()).unwrap();
+        let files = index["cachedFiles"].as_object().unwrap();
+        assert!(!files
+            .values()
+            .any(|file| file["cachedLocation"] == "mods/bad.jar"));
+        assert_eq!(files.len(), 2);
+        // With the bad entry gone the check passes on the surviving files.
+        assert!(pack_files_valid(&root, &data));
+    }
+
+    #[test]
+    fn heal_keeps_index_entry_when_directory_blocks_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods/bad.jar")).unwrap();
+        fs::write(root.join("mods/blocker.txt"), b"blocker").unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/bad.pw.toml": {
+                    "cachedLocation": "mods/bad.jar",
+                    "hash": { "type": "sha256", "value": Downloader::sha256_file(&root.join("mods/blocker.txt")).unwrap() }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        assert!(removed.is_empty());
+        assert_eq!(failed, ["mods/bad.jar".to_string()]);
+        // The directory cannot be removed here: the entry must stay so the
+        // next check still fails instead of forgetting the blocked file.
+        assert!(root.join("mods/bad.jar").is_dir());
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("packwiz.json")).unwrap()).unwrap();
+        assert!(index["cachedFiles"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|file| file["cachedLocation"] == "mods/bad.jar"));
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn heal_keeps_index_entry_when_symlink_blocks_file() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        let target = root.join("mods/real.jar");
+        fs::write(&target, b"target-bytes!").unwrap();
+        symlink(&target, root.join("mods/bad.jar")).unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/bad.pw.toml": {
+                    "cachedLocation": "mods/bad.jar",
+                    "hash": { "type": "sha256", "value": Downloader::sha256_file(&target).unwrap() }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        assert!(removed.is_empty());
+        assert_eq!(failed, ["mods/bad.jar".to_string()]);
+        // Never delete or follow the link: it stays, the target is intact,
+        // the entry stays so the next check still fails.
+        assert!(fs::symlink_metadata(root.join("mods/bad.jar"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read(&target).unwrap(), b"target-bytes!");
+        assert!(index_keeps(&root, "mods/bad.jar"));
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn heal_keeps_index_entry_when_parent_is_symlink() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        let real_mods = temp.path().join("real-mods");
+        fs::create_dir_all(&real_mods).unwrap();
+        fs::write(real_mods.join("bad.jar"), b"blocked-bytes").unwrap();
+        fs::create_dir_all(&root).unwrap();
+        symlink(&real_mods, root.join("mods")).unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/bad.pw.toml": {
+                    "cachedLocation": "mods/bad.jar",
+                    "hash": { "type": "sha256", "value": "00".repeat(32) }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        assert!(removed.is_empty());
+        assert_eq!(failed, ["mods/bad.jar".to_string()]);
+        assert!(fs::symlink_metadata(root.join("mods"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(index_keeps(&root, "mods/bad.jar"));
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn heal_keeps_index_entry_when_parent_is_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("mods"), b"not-a-directory").unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/bad.pw.toml": {
+                    "cachedLocation": "mods/bad.jar",
+                    "hash": { "type": "sha256", "value": "00".repeat(32) }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        let (removed, failed) = drop_bad_pack_files(&root, &data);
+        assert!(removed.is_empty());
+        assert_eq!(failed, ["mods/bad.jar".to_string()]);
+        assert_eq!(fs::read(root.join("mods")).unwrap(), b"not-a-directory");
+        assert!(index_keeps(&root, "mods/bad.jar"));
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[cfg(test)]
+    #[cfg(unix)]
+    fn index_keeps(root: &Path, location: &str) -> bool {
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("packwiz.json")).unwrap()).unwrap();
+        index["cachedFiles"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|file| file["cachedLocation"] == location)
+    }
+
+    #[test]
+    fn game_mutable_files_are_not_hash_checked() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        let good = root.join("mods/mod.jar");
+        let options = root.join("options.txt");
+        let config = root.join("config/kiwi-client.yaml");
+        fs::write(&good, b"correct-bytes!").unwrap();
+        fs::write(&options, b"installed-defaults").unwrap();
+        fs::write(&config, b"default-keys: 1\n").unwrap();
+        fs::create_dir_all(root.join("tacz")).unwrap();
+        let gun = root.join("tacz/gun.json");
+        fs::write(&gun, b"{\"damage\": 5}").unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/mod.pw.toml": {
+                    "cachedLocation": "mods/mod.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&good).unwrap()
+                    }
+                },
+                "options.pw.toml": {
+                    "cachedLocation": "options.txt",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&options).unwrap()
+                    }
+                },
+                "tacz/gun.pw.toml": {
+                    "cachedLocation": "tacz/gun.json",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&gun).unwrap()
+                    }
+                },
+                "config/kiwi-client.pw.toml": {
+                    "cachedLocation": "config/kiwi-client.yaml",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&config).unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        // Mods rewrite their configs at game start: not a corrupt pack.
+        fs::write(&options, b"player-settings!").unwrap();
+        fs::write(&config, b"default-keys: 1\ngained-keys: 2\n").unwrap();
+        assert!(pack_files_valid(&root, &data));
+        // Pinned data outside config/ is still checked, whatever its type.
+        fs::write(&gun, b"{\"damage\": 9}").unwrap();
+        // Same size within one mtime tick would hit the stat cache: move the
+        // mtime so the edit is seen, as a real edit later in time would be.
+        std::fs::File::options()
+            .write(true)
+            .open(&gun)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        fs::write(&gun, b"{\"damage\": 5}").unwrap();
+        assert!(pack_files_valid(&root, &data));
+        // A corrupted mod archive still fails the check.
+        fs::write(&good, b"corrupt-bytes!").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&good)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        // A healed archive passes again, a missing one fails.
+        fs::write(&good, b"correct-bytes!").unwrap();
+        assert!(pack_files_valid(&root, &data));
+        fs::remove_file(&good).unwrap();
+        assert!(!pack_files_valid(&root, &data));
+    }
+
+    #[test]
+    fn same_size_corrupted_mod_fails_pack_check_until_healed() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("game");
+        let data = temp.path().join("app-data");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        let good = root.join("mods/mod.jar");
+        fs::write(&good, b"correct-bytes!").unwrap();
+        fs::write(
+            root.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "mods/mod.pw.toml": {
+                    "cachedLocation": "mods/mod.jar",
+                    "hash": {
+                        "type": "sha256",
+                        "value": Downloader::sha256_file(&good).unwrap()
+                    }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(pack_files_valid(&root, &data));
+        // Same byte size, different bytes: no size probe can catch this.
+        fs::write(&good, b"corrupt-bytes!").unwrap();
+        // Real corruption lands long after install; pin a distinct mtime so this
+        // stays deterministic where filesystem timestamp granularity is coarse.
+        std::fs::File::options()
+            .write(true)
+            .open(&good)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        assert!(!pack_files_valid(&root, &data));
+        // The installer rewrites the file: the next launch check passes again.
+        fs::write(&good, b"correct-bytes!").unwrap();
+        assert!(pack_files_valid(&root, &data));
+        // A fresh dir with no installer cache is never "valid".
+        assert!(!pack_files_valid(&temp.path().join("empty"), &data));
+    }
+
+    #[test]
+    fn cleanup_removes_only_unchanged_recorded_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Blockfield");
+        fs::create_dir_all(root.join("mods")).unwrap();
+        fs::create_dir_all(root.join("saves/world")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let downloaded = root.join("mods/downloaded.jar");
+        let modified = root.join("mods/modified.jar");
+        let manual = root.join("mods/manual.jar");
+        fs::write(&downloaded, b"automatic").unwrap();
+        fs::write(&modified, b"automatic").unwrap();
+        fs::write(&manual, b"manual").unwrap();
+        fs::write(root.join("saves/world/level.dat"), b"world").unwrap();
+        let mut files = BTreeMap::from([
+            (
+                "mods/downloaded.jar".into(),
+                Downloader::sha256_file(&downloaded).unwrap(),
+            ),
+            (
+                "mods/modified.jar".into(),
+                Downloader::sha256_file(&modified).unwrap(),
+            ),
+        ]);
+        let outside = temp.path().join("personal.txt");
+        fs::write(&outside, b"personal").unwrap();
+        files.insert(
+            "../personal.txt".into(),
+            Downloader::sha256_file(&outside).unwrap(),
+        );
+        fs::write(&modified, b"manual changes").unwrap();
+        let record = Record {
+            directories: BTreeMap::from([(root.clone(), files)]),
+        };
+        clean_downloads(&record).unwrap();
+        clean_downloads(&record).unwrap();
+        assert!(!downloaded.exists());
+        for path in [
+            modified,
+            manual,
+            outside,
+            root.join("saves/world/level.dat"),
+        ] {
+            assert!(path.is_file(), "{}", path.display());
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_relative_paths_and_corrupt_records() {
+        for path in [
+            "",
+            "../file",
+            "/file",
+            "a/../file",
+            "a//file",
+            "C:/file",
+            "a\\file",
+            "file:stream",
+        ] {
+            assert!(!valid_relative(path), "{path}");
+        }
+        assert!(valid_relative("mods/example.jar"));
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join(RECORD), b"invalid json").unwrap();
+        assert!(load(&temp.path().join(RECORD)).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_never_follows_links() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Blockfield");
+        let outside = temp.path().join("personal");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let root = root.canonicalize().unwrap();
+        let file = outside.join("keep.txt");
+        fs::write(&file, b"keep").unwrap();
+        symlink(&outside, root.join("mods")).unwrap();
+        let record = Record {
+            directories: BTreeMap::from([(
+                root.clone(),
+                BTreeMap::from([(
+                    "mods/keep.txt".into(),
+                    Downloader::sha256_file(&file).unwrap(),
+                )]),
+            )]),
+        };
+        clean_downloads(&record).unwrap();
+        assert!(file.is_file());
+        assert!(root
+            .join("mods")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+}

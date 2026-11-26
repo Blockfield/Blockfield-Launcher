@@ -1,0 +1,4 @@
+FROM localhost/blockfield-tauri-builder:latest
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb x11-utils xdotool ffmpeg dbus-x11 mesa-utils libgl1-mesa-dri \
+    fonts-dejavu-core fonts-liberation python3 && rm -rf /var/lib/apt/lists/*

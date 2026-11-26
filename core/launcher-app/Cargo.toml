@@ -1,0 +1,22 @@
+[package]
+name = "launcher-app"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license = "GPL-3.0-only"
+description = "Tauri-independent shared state, event seam and operation gate of the Blockfield Launcher"
+
+[dependencies]
+launcher-core = { path = "../launcher-core" }
+launcher-net = { path = "../launcher-net" }
+blockfield-shared = { path = "../../shared" }
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
+url = "2"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+fs2 = "0.4"
+tar = "0.4"
+flate2 = "1"

@@ -1,4 +1,4 @@
-use crate::config::LauncherConfig;
+use launcher_core::config::LauncherConfig;
 use std::io::Write;
 use std::process::Stdio;
 pub fn run_hook(
@@ -20,13 +20,13 @@ pub fn run_hook(
     writeln!(log, "\n--- Launcher command ---").map_err(|e| e.to_string())?;
     #[cfg(windows)]
     let mut command = {
-        let mut command = crate::host_env::command("cmd.exe");
+        let mut command = launcher_core::host_env::command("cmd.exe");
         command.args(["/D", "/S", "/C", script]);
         command
     };
     #[cfg(not(windows))]
     let mut command = {
-        let mut command = crate::host_env::command("/bin/sh");
+        let mut command = launcher_core::host_env::command("/bin/sh");
         command.args(["-c", script]);
         command
     };

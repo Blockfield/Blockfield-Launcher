@@ -1,0 +1,58 @@
+import { Tokens } from "tokens.slint";
+import { SettingRow } from "settings-fields.slint";
+import { SettingsForm } from "settings-model.slint";
+import { FormButton, FormInput, EditablePath, FormToggle, FormError } from "settings-inputs.slint";
+
+export component SettingsGeneral inherits Rectangle {
+    in property <string> username;
+    private property <length> account-height: Math.max(50px, 40px + (SettingsForm.password-open ? 48px : 0px) + (SettingsForm.account-error != "" ? account-error.height + 8px : 0px) + (SettingsForm.password-changed ? 22px : 0px)) + 25px;
+    private property <length> directory-height: 75px;
+    private property <length> workshop-height: SettingsForm.data.workshop ? 90px : 0px;
+    height: root.account-height + root.directory-height + root.workshop-height + 90px + 75px + 90px;
+    SettingRow {
+        x: 0px; y: 0px; width: parent.width; row-height: root.account-height;
+        icon: @image-url("../assets/icons/user-round.svg"); label: "АККАУНТ";
+        hint: ["Никнейм в игре. Пароль нужен для", "входа в лаунчер."];
+        Text { x: 0px; y: 5px; width: parent.width - 284px - 270px; height: 40px; text: root.username; font-family: Tokens.mono; font-size: 12px; color: Tokens.neutral-200; vertical-alignment: center; overflow: elide; }
+        FormButton { y: 5px; x: parent.width - 284px - self.width - logout.width - 8px; text: "СМЕНИТЬ ПАРОЛЬ"; icon: @image-url("../assets/icons/key-round.svg");
+            clicked => { SettingsForm.password-open = !SettingsForm.password-open; if SettingsForm.password-open { password.focus(); } }
+        }
+        logout := FormButton { y: 5px; x: parent.width - 284px - self.width; text: "ВЫЙТИ"; icon: @image-url("../assets/icons/log-out.svg"); enabled: !SettingsForm.account-busy; clicked => { SettingsForm.logout(); } }
+        password := FormInput { y: 48px; width: parent.width - 284px - password-save.width + 1px; visible: SettingsForm.password-open; label: "Новый пароль"; placeholder: "Новый пароль"; password: true; value <=> SettingsForm.password;
+            accepted => { if SettingsForm.password != "" && !SettingsForm.account-busy { SettingsForm.change-password(); } }
+        }
+        password-save := FormButton { y: 48px; x: parent.width - 284px - self.width; visible: SettingsForm.password-open; text: SettingsForm.account-busy ? "" : "СОХРАНИТЬ"; busy: SettingsForm.account-busy; enabled: !SettingsForm.account-busy && SettingsForm.password != ""; clicked => { SettingsForm.change-password(); } }
+        account-error := FormError { y: SettingsForm.password-open ? 96px : 48px; width: parent.width - 284px; visible: SettingsForm.account-error != ""; message: SettingsForm.account-error; raw: SettingsForm.account-raw-error; }
+        Text { y: 48px; visible: SettingsForm.password-changed; text: "ПАРОЛЬ ИЗМЕНЁН"; color: Tokens.primary; font-size: 11px; }
+    }
+    SettingRow {
+        y: root.account-height; width: parent.width; row-height: root.directory-height;
+        icon: @image-url("../assets/icons/folder.svg"); label: SettingsForm.data.workshop ? "Папка мастерской" : "ПАПКА ИГРЫ";
+        hint: SettingsForm.data.workshop ? ["Настройки, клавиши, миры и логи", "мастерской хранятся отдельно от игры."] : ["Расположение всех игровых файлов и", "профилей игрока."];
+        EditablePath { y: (parent.height - 25px - self.height) / 2; width: parent.width - 284px; label: SettingsForm.data.workshop ? "Папка мастерской" : "ПАПКА ИГРЫ"; value <=> SettingsForm.data.game-dir; browse => { SettingsForm.browse("dir"); } }
+    }
+    if SettingsForm.data.workshop: SettingRow {
+        y: root.account-height + root.directory-height; width: parent.width; row-height: root.workshop-height;
+        icon: @image-url("../assets/icons/gamepad-2.svg"); label: "Адрес мастерской";
+        hint: ["Отдельный хост подключения к", "мастерской. Аккаунт должен иметь", "доступ к строительству."];
+        FormInput { y: (parent.height - 25px - self.height) / 2; width: parent.width - 284px; label: "Адрес мастерской"; placeholder: "Хост или хост:порт"; value <=> SettingsForm.data.workshop-server; edited => { SettingsForm.edited(); } }
+    }
+    SettingRow {
+        y: root.account-height + root.directory-height + root.workshop-height; width: parent.width; row-height: 90px;
+        icon: @image-url("../assets/icons/refresh-cw.svg"); label: "ПРОВЕРКА ПЕРЕД ЗАПУСКОМ";
+        hint: ["Проверять и восстанавливать файлы", "установленной сборки перед запуском", "игры."];
+        FormToggle { x: 0px; y: (parent.height - 25px - self.height) / 2; label: "ПРОВЕРКА ПЕРЕД ЗАПУСКОМ"; on: SettingsForm.data.auto-update; toggled(value) => { SettingsForm.data.auto-update = value; } }
+    }
+    SettingRow {
+        y: root.account-height + root.directory-height + root.workshop-height + 90px; width: parent.width; row-height: 75px;
+        icon: @image-url("../assets/icons/eye-off.svg"); label: "DISCORD RICH PRESENCE";
+        hint: ["Показывать в Discord состояние игры,", "карту и матч."];
+        FormToggle { x: 0px; y: (parent.height - 25px - self.height) / 2; label: "Показывать активность в Discord"; on: SettingsForm.data.discord-presence; toggled(value) => { SettingsForm.data.discord-presence = value; } }
+    }
+    SettingRow {
+        y: root.account-height + root.directory-height + root.workshop-height + 165px; width: parent.width; row-height: 90px; last: true;
+        icon: @image-url("../assets/icons/eye-off.svg"); label: "СКРЫВАТЬ ВО ВРЕМЯ ИГРЫ";
+        hint: ["Окно вернётся после выхода. Открыть", "его раньше можно через ярлык", "лаунчера."];
+        FormToggle { x: 0px; y: (parent.height - 25px - self.height) / 2; label: "Скрывать лаунчер во время игры"; on: SettingsForm.data.hide-while-playing; toggled(value) => { SettingsForm.data.hide-while-playing = value; } }
+    }
+}

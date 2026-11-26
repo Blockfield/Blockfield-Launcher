@@ -1,0 +1,71 @@
+import { Tokens } from "tokens.slint";
+import { SettingRow } from "settings-fields.slint";
+import { SettingsForm } from "settings-model.slint";
+import { FormButton, FormInput, EditablePath } from "settings-inputs.slint";
+
+export component SettingsRuntime inherits Rectangle {
+    height: 196px;
+    SettingRow {
+        x: 0px; y: 0px; width: parent.width; row-height: 75px;
+        icon: @image-url("../assets/icons/coffee.svg"); label: "СРЕДА JAVA";
+        hint: ["Путь необязателен — лаунчер выберет", "Java автоматически."];
+        EditablePath { y: (parent.height - 25px - self.height) / 2; width: parent.width - 284px; label: "СРЕДА JAVA"; placeholder: "Автоматически"; value <=> SettingsForm.data.java-path; browse => { SettingsForm.browse("java"); } }
+    }
+    SettingRow {
+        y: 75px; width: parent.width; row-height: 121px; last: true;
+        icon: @image-url("../assets/icons/cpu.svg"); label: "ВЫДЕЛЕНИЕ RAM";
+        hint: [SettingsForm.data.ram + " ГБ выделено · по умолчанию 4 ГБ"];
+        if SettingsForm.data.max-ram < 2: Text { width: parent.width; text: "Недостаточно памяти: для игры нужно выделить минимум 2 ГБ."; color: Tokens.foreground; wrap: word-wrap; }
+        if SettingsForm.data.max-ram >= 2: Rectangle {
+            x: 0px; y: 0px; width: parent.width - 284px; height: parent.height - 25px;
+            FormButton { x: 0px; y: 0px; width: 36px; height: 36px; text: ""; icon: @image-url("../assets/icons/minus.svg"); label: "Уменьшить память"; enabled: SettingsForm.data.ram > 2; clicked => { SettingsForm.set-ram(SettingsForm.data.ram - 1); } }
+            slider := Rectangle {
+                x: 48px; y: 15px; width: parent.width - 188px; height: 6px;
+                private property <float> fraction: (SettingsForm.data.ram - 2) / Math.max(1, SettingsForm.data.max-ram - 2);
+                background: Tokens.chrome; border-width: 1phx; border-color: Tokens.border;
+                accessible-role: AccessibleRole.slider; accessible-label: "Выделенная память, ГБ";
+                accessible-action-increment => { SettingsForm.set-ram(SettingsForm.data.ram + 1); }
+                accessible-action-decrement => { SettingsForm.set-ram(SettingsForm.data.ram - 1); }
+                accessible-value: SettingsForm.data.ram; accessible-value-minimum: 2; accessible-value-maximum: SettingsForm.data.max-ram;
+                Rectangle { x: 0px; y: 0px; width: parent.width * slider.fraction; height: parent.height; background: @linear-gradient(90deg, #8a571c, #f5a524); }
+                Rectangle { x: parent.width * slider.fraction - 6px; y: -3px; width: 12px; height: 12px; background: Tokens.primary; border-width: 1phx; border-color: Tokens.background; }
+                slider-keys := FocusScope {
+                    key-pressed(event) => {
+                        if event.text == Key.RightArrow || event.text == Key.UpArrow { SettingsForm.set-ram(SettingsForm.data.ram + 1); }
+                        else if event.text == Key.LeftArrow || event.text == Key.DownArrow { SettingsForm.set-ram(SettingsForm.data.ram - 1); }
+                        else if event.text == Key.Home { SettingsForm.set-ram(2); }
+                        else if event.text == Key.End { SettingsForm.set-ram(SettingsForm.data.max-ram); }
+                        else { return reject; }
+                        return accept;
+                    }
+                    TouchArea {
+                        y: -15px; height: 36px; mouse-cursor: pointer;
+                        pointer-event(event) => { if event.kind == PointerEventKind.down { slider-keys.focus(); SettingsForm.set-ram(2 + self.mouse-x / self.width * (SettingsForm.data.max-ram - 2)); } }
+                        moved => { if self.pressed { SettingsForm.set-ram(2 + self.mouse-x / self.width * (SettingsForm.data.max-ram - 2)); } }
+                    }
+                }
+            }
+            FormButton { x: parent.width - 128px; y: 0px; width: 36px; height: 36px; text: ""; icon: @image-url("../assets/icons/plus.svg"); label: "Увеличить память"; enabled: SettingsForm.data.ram < SettingsForm.data.max-ram; clicked => { SettingsForm.set-ram(SettingsForm.data.ram + 1); } }
+            ram-box := FormInput {
+                x: parent.width - 70px; y: 0px; width: 48px; height: 36px; label: "Память, ГБ"; numeric: true;
+                property <int> committed: SettingsForm.data.ram;
+                value: self.committed;
+                changed committed => { self.value = self.committed; }
+                edited => { SettingsForm.edited(); }
+                blurred => { SettingsForm.commit-ram(self.value); self.value = SettingsForm.data.ram; }
+                accepted => { commit-focus.focus(); }
+            }
+            commit-focus := FocusScope { enabled: ram-box.has-focus; }
+            Text { x: parent.width - 17px; y: 0px; height: 36px; text: "GB"; font-size: 10px; letter-spacing: 1.8px; color: Tokens.muted-foreground; vertical-alignment: center; }
+            HorizontalLayout {
+                y: 48px; width: parent.width; height: 28px; spacing: 4px;
+                for preset in SettingsForm.presets: FormButton {
+                    horizontal-stretch: 1; width: (parent.width - 4px * (SettingsForm.presets.length - 1)) / SettingsForm.presets.length;
+                    text: preset + "G"; compact: true; selected: preset == SettingsForm.data.ram;
+                    clicked => { SettingsForm.set-ram(preset); }
+                }
+            }
+            Text { y: 88px; width: parent.width; height: 15px; text: "Доступно для игры: 2–" + SettingsForm.data.max-ram + " ГБ"; font-size: 10px; color: #a89373; horizontal-alignment: right; }
+        }
+    }
+}

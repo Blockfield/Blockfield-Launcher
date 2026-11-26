@@ -22,6 +22,10 @@ VERSION_FILES = (
     "src-tauri/tauri.conf.json",
 )
 
+# Newer trees also sync the native shell version; older tags predate it, so
+# it is only bumped and checked when the file exists.
+OPTIONAL_VERSION_FILES = ("native/app/Cargo.toml",)
+
 # Rollback tooling that must survive a rollback. The good tag predates it, so
 # the restore step excludes these paths and verify allows them to differ.
 PRESERVED_TOOLING = (
@@ -101,15 +105,22 @@ def read_current_versions(root):
         r'^version\s*=\s*"([^"]+)"', (root / "src-tauri/Cargo.toml").read_text(), re.M
     ).group(1)
     tauri = json.loads((root / "src-tauri/tauri.conf.json").read_text())["version"]
-    return {
+    versions = {
         "package.json": package,
         "src-tauri/Cargo.toml": cargo,
         "src-tauri/tauri.conf.json": tauri,
     }
+    for optional in OPTIONAL_VERSION_FILES:
+        path = root / optional
+        if path.is_file():
+            versions[optional] = re.search(
+                r'^version\s*=\s*"([^"]+)"', path.read_text(), re.M
+            ).group(1)
+    return versions
 
 
 def apply_version(root, good, new):
-    """Bump the three version files from `good` to `new`; refuse otherwise."""
+    """Bump the version files from `good` to `new`; refuse otherwise."""
     parse_version(good)
     parse_version(new)
     current = read_current_versions(root)
@@ -142,7 +153,21 @@ def apply_version(root, good, new):
     data = json.loads(conf.read_text())
     data["version"] = new
     conf.write_text(json.dumps(data, indent=2) + "\n")
-    return sorted(VERSION_FILES)
+    bumped = list(VERSION_FILES)
+    for optional in OPTIONAL_VERSION_FILES:
+        path = root / optional
+        if path.is_file():
+            path.write_text(
+                re.sub(
+                    r'^version\s*=\s*"[^"]+"',
+                    f'version = "{new}"',
+                    path.read_text(),
+                    count=1,
+                    flags=re.M,
+                )
+            )
+            bumped.append(optional)
+    return sorted(bumped)
 
 
 def verify_rollback_tree(root, good):
@@ -157,7 +182,7 @@ def verify_rollback_tree(root, good):
     if proc.returncode != 0:
         raise ValueError(f"Cannot diff against {tag}: {proc.stderr.strip()}")
     changed = sorted(line for line in proc.stdout.splitlines() if line.strip())
-    allowed = set(VERSION_FILES) | set(PRESERVED_TOOLING)
+    allowed = set(VERSION_FILES) | set(OPTIONAL_VERSION_FILES) | set(PRESERVED_TOOLING)
     extra = [path for path in changed if path not in allowed]
     if extra:
         raise ValueError(
