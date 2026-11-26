@@ -209,112 +209,7 @@ jobs:
           out=xplat-captures
           rm -rf "$out"
           mkdir -p "$out"
-          {
-            echo "os=$RUNNER_OS arch=$RUNNER_ARCH"
-            uname -a
-            rustc -vV | tr '\n' ' '; echo
-            grep -A2 'name = "slint"' Cargo.lock | head -3
-            grep -A2 'name = "wgpu"' Cargo.lock | head -3
-            wc -c "$exe"
-          } > "$out/env.txt" 2>&1
-          cat "$out/env.txt"
-          # Portable 150 s watchdog; the capture quits its own event loop,
-          # this only guards hangs.
-          cat > "$RUNNER_TEMP/runguarded.py" <<'PYEOF'
-          import subprocess, sys
-          log, *cmd = sys.argv[1:]
-          with open(log, "wb") as f:
-              try:
-                  p = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, timeout=150)
-                  sys.exit(p.returncode)
-              except subprocess.TimeoutExpired:
-                  f.write(b"\nTIMEOUT after 150s\n")
-                  sys.exit(124)
-          PYEOF
-          # Independent captures (renderer x scale x state, one output dir
-          # each): run up to 4 at once, one Xvfb per task on Linux. Env is
-          # per-task (never exported) so parallel runs cannot leak into
-          # each other.
-          cat > "$RUNNER_TEMP/parrun_captures.py" <<'PYEOF'
-          import concurrent.futures, os, subprocess, sys, threading
-          out, exe, guard = sys.argv[1:4]
-          linux = os.environ.get("RUNNER_OS") == "Linux"
-          lock = threading.Lock()
-          def one(args):
-              display, line = args
-              renderer, scale, state = line.strip().split("|")
-              d = os.path.join(out, renderer, "scale-" + scale, state)
-              os.makedirs(d, exist_ok=True)
-              env = dict(os.environ)
-              env["SLINT_SCALE_FACTOR"] = scale
-              if renderer == "software":
-                  env["SLINT_BACKEND"] = "winit-software"
-              else:
-                  env.pop("SLINT_BACKEND", None)
-              log = os.path.join(d, "app.log")
-              if linux:
-                  cmd = ["xvfb-run", "-n", str(display), "-s", "-screen 0 1920x1080x24",
-                         "python3", guard, log, exe, "--state", state,
-                         "--freeze-motion", "--capture-dir", d]
-              else:
-                  cmd = ["python3", guard, log, exe, "--state", state,
-                         "--freeze-motion", "--capture-dir", d]
-              label = f"{renderer} scale={scale} state={state}"
-              with lock:
-                  print(f"=== {label} ===", flush=True)
-              r = subprocess.run(cmd, env=env)
-              with lock:
-                  print(f"exit={r.returncode} [{label}] (capture asserts panic nonzero on failure)", flush=True)
-                  if r.returncode != 0:
-                      print(f"--- {d}/app.log (last 3k) ---", flush=True)
-                      try:
-                          with open(os.path.join(d, "app.log"), "rb") as f:
-                              print(f.read()[-3000:].decode("utf-8", "replace"), flush=True)
-                      except OSError as e:
-                          print(f"(no log: {e})", flush=True)
-              return r.returncode
-          fail = False
-          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-              for code in pool.map(one, enumerate([l for l in sys.stdin if l.strip()], start=100)):
-                  if code != 0:
-                      fail = True
-          sys.exit(1 if fail else 0)
-          PYEOF
-          status=0
-          for renderer in default software; do
-            for scale in 1 1.5; do
-              for state in main settings-skin; do
-                printf '%s|%s|%s\n' "$renderer" "$scale" "$state"
-              done
-            done
-          done | python3 "$RUNNER_TEMP/parrun_captures.py" "$out" "./$exe" "$RUNNER_TEMP/runguarded.py" || status=$?
-          # PPM (P6) -> PNG with stdlib only; no ffmpeg/magick on runners.
-          python3 - "$out" <<'PYEOF'
-          import struct, sys, zlib
-          from pathlib import Path
-          def chunk(typ, data):
-              return (struct.pack(">I", len(data)) + typ + data
-                      + struct.pack(">I", zlib.crc32(typ + data) & 0xffffffff))
-          def convert(path):
-              data = path.read_bytes()
-              assert data.startswith(b"P6\n"), path
-              header_end = data.index(b"255\n") + 4
-              w, h, maxval = (int(x) for x in data[:header_end].split()[1:4])
-              assert maxval == 255, path
-              raw = data[header_end:]
-              assert len(raw) == w * h * 3, (path, len(raw), w, h)
-              rows = b"".join(b"\x00" + raw[y * w * 3:(y + 1) * w * 3] for y in range(h))
-              png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-                     + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
-              out = path.with_suffix(".png")
-              out.write_bytes(png)
-              print(f"{out} {w}x{h}")
-              path.unlink()
-          for ppm in sorted(Path(sys.argv[1]).rglob("*.ppm")):
-              convert(ppm)
-          PYEOF
-          find "$out" -type f | sort
-          exit "$status"
+          python3 ../../scripts/native-e2e-runner.py capture --exe "./$exe" --out "$out"
       # Layer 2: real-window acceptance walk against per-OS goldens at 1x.
       # Renderer is pinned to software on every OS: it is the one renderer
       # both runners support (u17: Windows Skia-GL has no GPU and falls
@@ -335,58 +230,10 @@ jobs:
           rm -rf "$out"
           mkdir -p "$out"
           update=""
-          if [ "${{ inputs.update_goldens }}" = "true" ]; then update="--e2e-update-goldens"; fi
-          # Independent per-state walks (one output dir each): run up to 4 at
-          # once, one Xvfb per task on Linux. State travels per-task in the
-          # environment, never exported, so parallel runs cannot leak.
-          # New settings tabs rejoin this list with U12 once per-OS goldens exist.
-          cat > "$RUNNER_TEMP/parrun_e2e.py" <<'PYEOF'
-          import concurrent.futures, os, subprocess, sys, threading
-          out, exe, guard, golden = sys.argv[1:5]
-          extra = sys.argv[5:]
-          linux = os.environ.get("RUNNER_OS") == "Linux"
-          lock = threading.Lock()
-          def one(args):
-              display, line = args
-              state = line.strip()
-              d = os.path.join(out, state)
-              os.makedirs(d, exist_ok=True)
-              env = dict(os.environ, BLOCKFIELD_E2E_STATE=state)
-              log = os.path.join(d, "app.log")
-              if linux:
-                  cmd = ["xvfb-run", "-n", str(display), "-s", "-screen 0 1920x1080x24",
-                         "python3", guard, log, exe, "--state", state,
-                         "--freeze-motion", "--e2e", d,
-                         "--e2e-golden", golden, *extra]
-              else:
-                  cmd = ["python3", guard, log, exe, "--state", state,
-                         "--freeze-motion", "--e2e", d,
-                         "--e2e-golden", golden, *extra]
-              with lock:
-                  print(f"=== e2e state={state} ===", flush=True)
-              r = subprocess.run(cmd, env=env)
-              with lock:
-                  print(f"exit={r.returncode} [e2e state={state}]", flush=True)
-                  if r.returncode != 0:
-                      print(f"--- {d}/app.log (last 3k) ---", flush=True)
-                      try:
-                          with open(os.path.join(d, "app.log"), "rb") as f:
-                              print(f.read()[-3000:].decode("utf-8", "replace"), flush=True)
-                      except OSError as e:
-                          print(f"(no log: {e})", flush=True)
-              return r.returncode
-          fail = False
-          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-              for code in pool.map(one, enumerate([l for l in sys.stdin if l.strip()], start=100)):
-                  if code != 0:
-                      fail = True
-          sys.exit(1 if fail else 0)
-          PYEOF
+          if [ "${{ inputs.update_goldens }}" = "true" ]; then update="--update"; fi
           # shellcheck disable=SC2086
-          printf '%s\n' main main-launching offline error settings-skin login firstrun update \
-            | python3 "$RUNNER_TEMP/parrun_e2e.py" "$out" "./$exe" \
-              "$RUNNER_TEMP/runguarded.py" "tests/golden/${{ matrix.golden_os }}" $update
-          find "$out" -type f | sort
+          python3 ../../scripts/native-e2e-runner.py e2e --exe "./$exe" --out "$out" \
+            --golden "tests/golden/${{ matrix.golden_os }}" $update
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
