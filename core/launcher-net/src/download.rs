@@ -104,7 +104,6 @@ impl Downloader {
             Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(3))
                 .read_timeout(std::time::Duration::from_secs(5))
-                .timeout(std::time::Duration::from_secs(60))
                 .build()
                 .expect("valid HTTP client")
         })
@@ -643,5 +642,58 @@ mod tests {
         cleanup_partials(game.path());
         assert_eq!(std::fs::read(resumable).unwrap(), b"downloaded prefix");
         assert_eq!(std::fs::read(obsolete).unwrap(), b"old runtime download");
+    }
+
+    #[test]
+    fn download_one_fast_attempts_once_without_retries() {
+        use std::io::{Read as _, Write as _};
+        use std::sync::atomic::AtomicUsize;
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits_clone = hits.clone();
+        let _server = std::thread::spawn(move || {
+            for stream in listener.incoming().take(4) {
+                let Ok(mut stream) = stream else { break };
+                let mut head = [0u8; 1024];
+                let _ = stream.read(&mut head);
+                hits_clone.fetch_add(1, Ordering::SeqCst);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 3\r\nconnection: close\r\n\r\nbad",
+                );
+            }
+        });
+
+        let retries = Arc::new(AtomicUsize::new(0));
+        let retries_clone = retries.clone();
+        let downloader = Downloader::new(
+            Arc::new(|_| {}),
+            Arc::new(move |_, _| {
+                retries_clone.fetch_add(1, Ordering::SeqCst);
+            }),
+            noop_guard_sink(),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let dest = temp.path().join("a.jar.part");
+        let mut total = 0;
+        let err = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(downloader.download_one_fast(
+                &format!("http://{addr}/a.jar"),
+                &dest,
+                "a.jar",
+                0,
+                1,
+                1,
+                &mut total,
+                0,
+            ))
+            .unwrap_err();
+        assert!(err.to_string().contains("502"), "{err}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(retries.load(Ordering::SeqCst), 0);
     }
 }
