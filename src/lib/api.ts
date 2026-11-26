@@ -116,6 +116,22 @@ export async function openExternalUrl(url: string): Promise<void> {
   }
 }
 
+/** Open a player's site profile. The backend only allows the exact player-page URL shape. */
+export async function openPlayerProfile(uuid: string): Promise<void> {
+  const id = uuid.toLowerCase()
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('open_player_profile', { uuid: id })
+  } catch {
+    const { playerProfileUrl } = await import('./stats')
+    const { apiBaseUrl } = await import('./api-base')
+    const url = playerProfileUrl(apiBaseUrl(), id)
+    if (url && typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }
+}
+
 export interface LauncherContentFeature {
   icon?: string
   title?: string

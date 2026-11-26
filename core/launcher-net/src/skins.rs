@@ -12,6 +12,9 @@ use std::path::Path;
 use std::sync::Mutex;
 
 pub const DEFAULT_SERVER: &str = "https://skins.blockfield.pro";
+/// Abort text when the account changed between click and upload; shared by Tauri and native.
+pub const ACCOUNT_SWITCHED: &str =
+    "Аккаунт сменился до загрузки, скин не отправлен. Выберите его ещё раз.";
 const MAX_TEXTURE_BYTES: u64 = 1024 * 1024;
 const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
 const MOJANG_PROFILES: &str = "https://api.mojang.com";
@@ -37,8 +40,13 @@ pub struct SkinPreview {
 }
 
 /// Uploads the chosen PNGs; `None` leaves that texture untouched on the server.
+///
+/// `expected_player_uuid` is the account the UI showed at click time: the upload
+/// aborts when another account is active now, so one account's skin can never
+/// land on another account's session (an account switch between click and run).
 pub async fn upload_skin(
     config: &LauncherConfig,
+    expected_player_uuid: Option<&str>,
     skins_base: Option<String>,
     skin_path: Option<String>,
     cape_path: Option<String>,
@@ -47,6 +55,7 @@ pub async fn upload_skin(
     if config.api_token.is_empty() || config.player_uuid.is_empty() {
         return Err(format!("{SESSION_EXPIRED}: log in again"));
     }
+    check_upload_account(expected_player_uuid, &config.player_uuid)?;
     let skin = skin_path.as_deref().map(read_texture).transpose()?;
     let cape = cape_path.as_deref().map(read_texture).transpose()?;
     if skin.is_none() && cape.is_none() {
@@ -284,6 +293,15 @@ async fn fetch_png(client: &reqwest::Client, url: Option<&str>) -> Option<String
     Some(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
+/// The account snapshot the UI saw at click time must still be the active one; a missing
+/// or empty snapshot fails closed before any file or network touch.
+pub fn check_upload_account(started: Option<&str>, current_uuid: &str) -> Result<(), String> {
+    match started.filter(|s| !s.is_empty()) {
+        Some(started) if started == current_uuid => Ok(()),
+        _ => Err(ACCOUNT_SWITCHED.to_string()),
+    }
+}
+
 fn read_texture(path: &str) -> Result<String, String> {
     let path = Path::new(path);
     let size = std::fs::metadata(path)
@@ -347,5 +365,14 @@ mod tests {
         let model = |m: Value| skin_model(&json!({ "SKIN": { "metadata": { "model": m } } }));
         assert_eq!(model(json!("slim")), "slim");
         assert_eq!(model(Value::Null), "classic");
+    }
+
+    #[test]
+    fn account_switch_between_click_and_run_aborts_upload() {
+        assert!(check_upload_account(Some("uuid-a"), "uuid-a").is_ok());
+        assert!(check_upload_account(None, "uuid-a").is_err());
+        assert!(check_upload_account(Some(""), "uuid-a").is_err());
+        let err = check_upload_account(Some("uuid-a"), "uuid-b").unwrap_err();
+        assert_eq!(err, ACCOUNT_SWITCHED);
     }
 }

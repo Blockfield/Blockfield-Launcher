@@ -27,7 +27,7 @@ use tauri::{Emitter, Manager};
 /// fixed-size list is the testable copy: the size forces a compile error when
 /// a command is added or removed, and `tests/adapter_contract.rs` fails CI if
 /// the contents drift from either side (macro or frontend `invoke()` calls).
-pub const REGISTERED_COMMANDS: [&str; 27] = [
+pub const REGISTERED_COMMANDS: [&str; 28] = [
     "check_launcher_update",
     "install_launcher_update",
     "account_status",
@@ -49,6 +49,7 @@ pub const REGISTERED_COMMANDS: [&str; 27] = [
     "stats_seasons",
     "stats_player",
     "open_url",
+    "open_player_profile",
     "dev_status",
     "upload_skin",
     "preview_skin",
@@ -274,6 +275,7 @@ pub fn run() {
             commands::stats_seasons,
             commands::stats_player,
             commands::open_url,
+            commands::open_player_profile,
             commands::dev_status,
             skins::upload_skin,
             skins::preview_skin,

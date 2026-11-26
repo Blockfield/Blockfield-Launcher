@@ -105,6 +105,59 @@ fn offline_pack_for_launch(cached: Option<PackState>, active: ClientProfile) -> 
     cached.filter(|pack| pack.profile == active)
 }
 
+/// Game-leg address for the Workshop launch guard in `target()`: the Game
+/// pack manifest's server. Fail-open to "unknown" (empty): with no Game host
+/// known, `target()` trusts only the built-in default Workshop address.
+async fn game_leg_server() -> String {
+    let base = match pack_base_url_for(ClientProfile::Game) {
+        Ok(base) => base,
+        Err(error) => {
+            log::warn!("launch: Game pack URL unknown, Workshop guard has no Game host: {error}");
+            return String::new();
+        }
+    };
+    match launcher_net::pack::fetch_launcher_info(&base).await {
+        Ok(info) => info.server,
+        Err(error) => {
+            log::warn!(
+                "launch: Game manifest unreachable, Workshop guard has no Game host: {error}"
+            );
+            String::new()
+        }
+    }
+}
+
+/// Cross-check input for `LauncherConfig::target()` at launch: the Game leg
+/// address, never the active pack's own server. The Workshop pack carries its
+/// own server on the Workshop host by design, so feeding the active pack in
+/// refuses every online Workshop launch (#57); the guard's real purpose is a
+/// Game-leg comparison (a Game port change must not silently retarget the
+/// Workshop profile).
+fn launch_cross_check_server(
+    profile: ClientProfile,
+    pack_server: Option<&str>,
+    game_leg_server: &str,
+) -> String {
+    match profile {
+        ClientProfile::Game => pack_server.unwrap_or_default().to_owned(),
+        ClientProfile::Workshop => game_leg_server.to_owned(),
+    }
+}
+
+/// TCP fallback is the Game profile's proxy route only: a custom/dev RakNet
+/// target must never remap (its TCP port may serve another server), and a
+/// Workshop target never falls back at all.
+fn tcp_fallback_allowed(
+    profile: ClientProfile,
+    target: &str,
+    game_server: &str,
+    from_dev_override: bool,
+) -> bool {
+    !from_dev_override
+        && profile == ClientProfile::Game
+        && launcher_net::tcp_fallback::is_proxy_target(target, game_server)
+}
+
 /// Blocking pack hash check, designed for `spawn_blocking`: a corrupt pack
 /// must not survive a launch, so the check runs off the async worker.
 async fn pack_phase_done(app_data: PathBuf, game_dir: PathBuf, index_hash: String) -> bool {
@@ -284,40 +337,51 @@ pub(crate) async fn launch_with_identity(
                 .or_else(|| option_env!("BLOCKFIELD_MINECRAFT_VERSION").map(String::from))
                 .unwrap_or_else(|| "1.21.1".to_string())
         });
-    let game_server = match &pack {
-        Some(pack) => pack.info.server.clone(),
-        None if config.active_profile == ClientProfile::Workshop => {
-            // Offline after a profile switch: the manifest is unreachable and
-            // the cached pack (if any) was checked for the other profile, so
-            // it cannot verify the install — but its launcher info still
-            // carries the Game host needed to validate the configured
-            // Workshop address. Reuse it with no network request (state.pack
-            // still holds the pre-drop cache; launch_game only overwrites it
-            // on a fresh fetch). Empty when never checked: target() then uses
-            // the configured Workshop address without the host check.
-            state
-                .pack
-                .read()
-                .await
-                .as_ref()
-                .map(|cached| cached.info.server.clone())
-                .unwrap_or_default()
+    // The launch guard in target() compares against the GAME leg address, not
+    // the active pack's server: the Workshop pack carries its own server on
+    // the Workshop host by design, so feeding it in refuses every online
+    // Workshop launch (#57). When offline (pack=None), reuse a cached Game
+    // pack's server if present, else empty (target() trusts only the built-in
+    // default Workshop address without a network request).
+    let game_leg = match config.active_profile {
+        ClientProfile::Game => String::new(),
+        ClientProfile::Workshop => {
+            if pack.is_some() {
+                game_leg_server().await
+            } else {
+                state
+                    .pack
+                    .read()
+                    .await
+                    .as_ref()
+                    .filter(|cached| cached.profile == ClientProfile::Game)
+                    .map(|cached| cached.info.server.clone())
+                    .unwrap_or_default()
+            }
         }
-        None => String::new(),
     };
+    let game_server = launch_cross_check_server(
+        config.active_profile,
+        pack.as_ref().map(|pack| pack.info.server.as_str()),
+        &game_leg,
+    );
     let quick_play = config.target(&game_server)?;
     // Dev build: another server, or none at all so the game opens on the title screen.
-    let quick_play = launcher_core::dev::server_override().unwrap_or(quick_play);
+    let dev_override = launcher_core::dev::server_override();
+    let from_dev_override = dev_override.is_some();
+    let quick_play = dev_override.unwrap_or(quick_play);
     // TCP fallback (proxy#74 U3): the proxy routes TCP 25565 logins to the Game.
     // A remembered RakNet failure (<24 h) skips the probe; otherwise one
     // unconnected ping decides whether the RakNet path is usable from here.
     let mut quick_play = quick_play;
     let mut via_tcp_fallback = false;
     if let Some(target) = quick_play.clone() {
-        // TCP fallback is the proxy's own route only (the pack's game host):
-        // a custom/dev RakNet target must never remap, its TCP port may serve
-        // another server.
-        if launcher_net::tcp_fallback::is_proxy_target(&target, &game_server) {
+        if tcp_fallback_allowed(
+            config.active_profile,
+            &target,
+            &game_server,
+            from_dev_override,
+        ) {
             let fallback_state =
                 launcher_net::tcp_fallback::FallbackState::load(&state.app_data_dir);
             let now = launcher_net::tcp_fallback::now_secs();
@@ -552,10 +616,12 @@ mod tests {
                 installer: launcher_net::pack::Artifact {
                     url: String::new(),
                     sha256: String::new(),
+                    source: None,
                 },
                 bootstrap: launcher_net::pack::Artifact {
                     url: String::new(),
                     sha256: String::new(),
+                    source: None,
                 },
                 java: Default::default(),
                 skins: None,
@@ -593,6 +659,70 @@ mod tests {
         )
         .is_none());
         assert!(offline_pack_for_launch(None, ClientProfile::Game).is_none());
+    }
+
+    #[test]
+    fn online_workshop_launch_checks_the_game_leg_not_the_packs_own_server() {
+        // #57 / #159 fail-before: launch_game fed the ACTIVE pack's server into
+        // target(), and the Workshop pack manifest carries its own server on
+        // the Workshop host by design, so every online Workshop launch
+        // errored with «Мастерской нужен отдельный адрес…».
+        let workshop_pack_server = "raknet;workshop.blockfield.pro:25567";
+        let game_leg_server = "raknet;play.blockfield.pro:25566";
+        let config = LauncherConfig {
+            active_profile: ClientProfile::Workshop,
+            workshop_server: workshop_pack_server.into(),
+            ..LauncherConfig::default()
+        };
+        assert_eq!(
+            config.target(workshop_pack_server).unwrap_err(),
+            "Мастерской нужен отдельный адрес: смена порта игрового адреса не меняет профиль."
+        );
+        let cross_check = launch_cross_check_server(
+            ClientProfile::Workshop,
+            Some(workshop_pack_server),
+            game_leg_server,
+        );
+        assert_eq!(cross_check, game_leg_server);
+        let target = config.target(&cross_check).unwrap();
+        assert_eq!(target.as_deref(), Some(workshop_pack_server));
+        assert!(config
+            .target("raknet;workshop.blockfield.pro:25566")
+            .is_err());
+        assert_eq!(
+            launch_cross_check_server(ClientProfile::Game, Some(game_leg_server), ""),
+            game_leg_server
+        );
+    }
+
+    #[test]
+    fn tcp_fallback_never_applies_to_workshop_or_dev_override() {
+        let game_server = "raknet;play.example:25566";
+        let target = "raknet;play.example:25566";
+        assert!(tcp_fallback_allowed(
+            ClientProfile::Game,
+            target,
+            game_server,
+            false
+        ));
+        assert!(!tcp_fallback_allowed(
+            ClientProfile::Workshop,
+            target,
+            game_server,
+            false
+        ));
+        assert!(!tcp_fallback_allowed(
+            ClientProfile::Game,
+            "raknet;custom.example:25566",
+            game_server,
+            false
+        ));
+        assert!(!tcp_fallback_allowed(
+            ClientProfile::Game,
+            target,
+            game_server,
+            true
+        ));
     }
 
     /// Offline Workshop launch after a profile switch: the manifest is
@@ -734,10 +864,12 @@ mod tests {
                 installer: launcher_net::pack::Artifact {
                     url: String::new(),
                     sha256: String::new(),
+                    source: None,
                 },
                 bootstrap: launcher_net::pack::Artifact {
                     url: String::new(),
                     sha256: String::new(),
+                    source: None,
                 },
                 java: Default::default(),
                 skins: None,

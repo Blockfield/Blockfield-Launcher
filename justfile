@@ -28,6 +28,11 @@ format *args:
     sys.argv = ["scripts/quality.py", "format", *sys.argv[1:]]
     runpy.run_path("scripts/quality.py", run_name="__main__")
 
+format-staged *args:
+    import runpy, sys
+    sys.argv = ["scripts/quality.py", "format-staged", *sys.argv[1:]]
+    runpy.run_path("scripts/quality.py", run_name="__main__")
+
 test *args:
     import runpy, sys
     sys.argv = ["scripts/quality.py", "test", *sys.argv[1:]]
@@ -72,6 +77,11 @@ version-check *args:
     import runpy, sys
     sys.argv = ["scripts/quality.py", "run", 'pnpm', 'run', 'version:check', *sys.argv[1:]]
     runpy.run_path("scripts/quality.py", run_name="__main__")
+
+rollback *args:
+    import runpy, sys
+    sys.argv = ["scripts/rollback-release.py", *sys.argv[1:]]
+    runpy.run_path("scripts/rollback-release.py", run_name="__main__")
 
 config-check *args:
     import runpy, sys

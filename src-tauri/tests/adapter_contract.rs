@@ -41,8 +41,8 @@ fn registered_commands_match_frontend_invoke_calls() {
     frontend.sort_unstable();
     assert_eq!(
         registered.len(),
-        27,
-        "adapter must serve exactly 27 commands"
+        28,
+        "adapter must serve exactly 28 commands"
     );
     assert_eq!(
         frontend, registered,

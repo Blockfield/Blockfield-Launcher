@@ -391,21 +391,28 @@ pub async fn fetch_rooms(base: &str) -> Option<RoomsResponse> {
 const STATS_TIMEOUT: Duration = Duration::from_secs(5);
 const STATS_QUERY_KEYS: [&str; 6] = ["mode", "period", "season", "sort", "limit", "page"];
 
+/// Lowercase dashed UUID, the only player identifier the public site and stats API take.
+pub fn valid_player_uuid(uuid: &str) -> bool {
+    uuid.len() == 36
+        && uuid.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => matches!(b, b'0'..=b'9' | b'a'..=b'f'),
+        })
+}
+
 /// Only the public read endpoints; the player segment must be a lowercase dashed UUID.
 fn valid_stats_path(path: &str) -> bool {
     match path.strip_prefix("players/") {
-        Some(uuid) => {
-            uuid.len() == 36
-                && uuid.bytes().enumerate().all(|(i, b)| match i {
-                    8 | 13 | 18 | 23 => b == b'-',
-                    _ => matches!(b, b'0'..=b'9' | b'a'..=b'f'),
-                })
-        }
+        Some(uuid) => valid_player_uuid(uuid),
         None => matches!(path, "leaderboard" | "seasons"),
     }
 }
 
-/// Stats are read from the site API, independent of the game server. 404 is `Ok(None)`.
+/// Public control-plane reads; stats are anonymous under `/public/*` (CP SPEC §4).
+pub const STATS_API_URL: &str = "https://cp.blockfield.pro";
+
+/// Stats are read from the control-plane API, independent of the game server. Only an
+/// unknown player is `Ok(None)`; every other non-2xx, including a route 404, is an error.
 pub async fn fetch_stats(
     base: &str,
     path: &str,
@@ -422,25 +429,29 @@ pub async fn fetch_stats(
         .timeout(STATS_TIMEOUT)
         .build()
         .map_err(|e| e.to_string())?
-        .get(format!("{base}/api/stats/{path}"))
+        .get(format!("{base}/public/{path}"))
         .query(query)
         .send()
         .await
         .map_err(|e| format!("Stats API unavailable: {e}"))?;
     let status = response.status();
-    if status == reqwest::StatusCode::NOT_FOUND {
+    let body = response.json::<serde_json::Value>().await;
+    if status.is_success() {
+        return body
+            .map(Some)
+            .map_err(|e| format!("Invalid stats response: {e}"));
+    }
+    // CP problems are `{"error": "<code>"}`; proxies in front of it may answer with HTML.
+    let code = body
+        .ok()
+        .and_then(|value| value["error"].as_str().map(str::to_string));
+    if status == reqwest::StatusCode::NOT_FOUND && code.as_deref() == Some("player_not_found") {
         return Ok(None);
     }
-    let body = response.json::<serde_json::Value>().await;
-    if !status.is_success() {
-        let detail = body
-            .ok()
-            .and_then(|value| value["error"].as_str().map(str::to_string))
-            .unwrap_or_else(|| status.to_string());
-        return Err(format!("Stats API: {detail}"));
-    }
-    body.map(Some)
-        .map_err(|e| format!("Invalid stats response: {e}"))
+    Err(match code {
+        Some(code) => format!("Stats API: {status} ({code})"),
+        None => format!("Stats API: {status}"),
+    })
 }
 
 pub type RoomsResponse = (bool, Vec<GameRoom>, Option<Maintenance>);
@@ -584,6 +595,148 @@ mod tests {
         json["rooms"][0]["format"] = serde_json::json!("ranked");
         json["rooms"][0]["admission"] = serde_json::json!("OPEN");
         assert!(rooms_response(&json).is_none());
+    }
+
+    #[test]
+    fn only_dashed_lowercase_uuids_open_player_pages() {
+        assert!(valid_player_uuid("f3e1b9a6-2270-3dee-8782-b7cdd8519efe"));
+        for bad in [
+            "",
+            "NetherG",
+            "F3E1B9A6-2270-3DEE-8782-B7CDD8519EFE",
+            "f3e1b9a6_2270_3dee_8782_b7cdd8519efe",
+            "f3e1b9a622703dee8782b7cdd8519efe",
+            "https://blockfield.pro/players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe",
+        ] {
+            assert!(!valid_player_uuid(bad), "{bad}");
+        }
+    }
+
+    async fn serve_stats(
+        responses: Vec<(String, String, String)>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for (status, path, body) in responses {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut chunk = [0; 4096];
+                    let read = socket.read(&mut chunk).await.unwrap();
+                    assert!(read > 0);
+                    request.extend_from_slice(&chunk[..read]);
+                }
+                let line = String::from_utf8_lossy(&request);
+                assert!(line.starts_with(&format!("GET /public/{path}")), "{line}");
+                let head = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(head.as_bytes()).await.unwrap();
+                socket.write_all(body.as_bytes()).await.unwrap();
+            }
+        });
+        (base, server)
+    }
+
+    #[tokio::test]
+    async fn stats_leaderboard_uses_public_route() {
+        let (base, server) = serve_stats(vec![
+            (
+                "200 OK".to_string(),
+                "leaderboard".to_string(),
+                r#"{"schemaVersion":1,"page":1,"limit":25,"total":0,"players":[]}"#.to_string(),
+            ),
+            (
+                "401 Unauthorized".to_string(),
+                "leaderboard".to_string(),
+                r#"{"error":"unauthorized"}"#.to_string(),
+            ),
+        ])
+        .await;
+        let query = std::collections::BTreeMap::from([("season".to_string(), "s2".to_string())]);
+        let board = fetch_stats(&base, "leaderboard", &query)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(board["schemaVersion"], 1);
+        assert_eq!(board["total"], 0);
+        assert_eq!(
+            fetch_stats(&base, "leaderboard", &std::collections::BTreeMap::new()).await,
+            Err("Stats API: 401 Unauthorized (unauthorized)".to_string())
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stats_seasons_use_public_route() {
+        let (base, server) = serve_stats(vec![
+            (
+                "200 OK".to_string(),
+                "seasons".to_string(),
+                r#"{"schemaVersion":1,"current":"s3","seasons":[]}"#.to_string(),
+            ),
+            (
+                "404 Not Found".to_string(),
+                "seasons".to_string(),
+                r#"{"error":"not_found"}"#.to_string(),
+            ),
+            (
+                "200 OK".to_string(),
+                "seasons".to_string(),
+                "not json".to_string(),
+            ),
+        ])
+        .await;
+        let none = std::collections::BTreeMap::new();
+        let seasons = fetch_stats(&base, "seasons", &none).await.unwrap().unwrap();
+        assert_eq!(seasons["current"], "s3");
+        assert_eq!(
+            fetch_stats(&base, "seasons", &none).await,
+            Err("Stats API: 404 Not Found (not_found)".to_string())
+        );
+        assert!(fetch_stats(&base, "seasons", &none)
+            .await
+            .unwrap_err()
+            .starts_with("Invalid stats response"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stats_player_uses_public_route() {
+        let player = "players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe";
+        let (base, server) = serve_stats(vec![
+            (
+                "200 OK".to_string(),
+                player.to_string(),
+                r#"{"schemaVersion":1,"profile":{"uuid":"f3e1b9a6-2270-3dee-8782-b7cdd8519efe","name":"Steve","lastSeen":1},"totals":null,"classes":[],"campaigns":{"completed":0,"wins":null},"history":[],"mmr":null,"ratingHistory":[]}"#.to_string(),
+            ),
+            (
+                "404 Not Found".to_string(),
+                player.to_string(),
+                r#"{"error":"player_not_found"}"#.to_string(),
+            ),
+            (
+                "503 Service Unavailable".to_string(),
+                player.to_string(),
+                "<html>busy</html>".to_string(),
+            ),
+        ])
+        .await;
+        let query = std::collections::BTreeMap::from([("season".to_string(), "s2".to_string())]);
+        let profile = fetch_stats(&base, player, &query).await.unwrap().unwrap();
+        assert_eq!(
+            profile["profile"]["name"],
+            serde_json::Value::String("Steve".to_string())
+        );
+        assert_eq!(fetch_stats(&base, player, &query).await, Ok(None));
+        assert_eq!(
+            fetch_stats(&base, player, &std::collections::BTreeMap::new()).await,
+            Err("Stats API: 503 Service Unavailable".to_string())
+        );
+        server.await.unwrap();
     }
 
     #[test]

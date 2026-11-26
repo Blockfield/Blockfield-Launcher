@@ -91,6 +91,7 @@ export component AppWindow inherits Window {
     callback stats-page-delta(int);
     callback stats-refresh();
     callback stats-open-site();
+    callback stats-open-player(string);
     callback stats-shown();
     in property <string> settings-title;
     in property <string> settings-subtitle;
@@ -243,6 +244,7 @@ export component AppWindow inherits Window {
                 page-delta(delta) => { root.stats-page-delta(delta); }
                 refresh => { root.stats-refresh(); }
                 open-site => { root.stats-open-site(); }
+                open-player(uuid) => { root.stats-open-player(uuid); }
             }
             if root.show-main && root.active == 1: UpdateScreen {
                 data: root.update-data;

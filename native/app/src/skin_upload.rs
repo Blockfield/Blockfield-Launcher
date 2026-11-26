@@ -37,20 +37,25 @@ pub async fn perform_upload(
     cape_path: Option<String>,
     slim: bool,
 ) -> Result<launcher_net::skins::SkinUploadResult, String> {
-    let current = state.config.read().await;
-    if current.player_uuid != started.player_uuid || current.api_token != started.api_token {
-        return Err(
-            "Аккаунт сменился до загрузки, скин не отправлен. Выберите его ещё раз.".to_string(),
-        );
-    }
-    drop(current);
+    // The active account must still be the click-time snapshot; the engine
+    // compares them after its session check, so a queued upload can never run
+    // on another account's session.
+    let current = state.config.read().await.clone();
     let base = state
         .pack
         .read()
         .await
         .as_ref()
         .and_then(|pack| pack.info.skins.clone());
-    launcher_net::skins::upload_skin(started, base, skin_path, cape_path, slim).await
+    launcher_net::skins::upload_skin(
+        &current,
+        Some(started.player_uuid.as_str()),
+        base,
+        skin_path,
+        cape_path,
+        slim,
+    )
+    .await
 }
 
 /// Wire the skin tab upload to the core runtime (same code path as

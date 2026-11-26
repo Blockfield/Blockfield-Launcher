@@ -340,6 +340,6 @@ mod tests {
             super::launch_sub("😀".repeat(33).into(), -1),
             "😀".repeat(32)
         );
-        assert_eq!(super::launcher_version(), "1.0.20");
+        assert_eq!(super::launcher_version(), "1.0.31");
     }
 }

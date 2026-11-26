@@ -86,11 +86,24 @@ export function friendlyError(raw: unknown, context: ErrorContext): FriendlyErro
     'Профиль изменился. Откройте настройки заново.',
     'Профиль изменился. Повторите проверку файлов.',
     'Профиль изменён. Повторите проверку.',
+    'Аккаунт сменился до загрузки, скин не отправлен. Выберите его ещё раз.',
   ]
   const profileError = profileErrors.find((message) => text.includes(message))
   if (profileError) return { message: profileError, raw: text }
   if (text.includes(SESSION_EXPIRED)) {
     return { message: 'Сессия истекла — войдите снова.', raw: text }
+  }
+  if (text.includes('PACK_STALE')) {
+    return {
+      message: 'Пак устарел — откройте «Обновления», чтобы скачать свежую сборку.',
+      raw: text,
+    }
+  }
+  if (text.includes('PACK_REPAIR')) {
+    return {
+      message: 'Файлы игры повреждены — откройте «Обновления», чтобы восстановить их.',
+      raw: text,
+    }
   }
   if (text.includes('Drasl account server unavailable')) {
     return { message: 'Сервер аккаунтов недоступен, попробуйте позже.', raw: text }

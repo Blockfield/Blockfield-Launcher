@@ -57,3 +57,30 @@ describe('settings validation errors', () => {
     expect(friendlyError('Unexpected failure', 'settings-save').message).not.toContain('доступ')
   })
 })
+
+describe('skin upload account switch', () => {
+  it('shows the abort message verbatim instead of a generic upload failure', () => {
+    const message = 'Аккаунт сменился до загрузки, скин не отправлен. Выберите его ещё раз.'
+    const result = friendlyError(message, 'skin-upload')
+    expect(result.message).toBe(message)
+    expect(result.raw).toBe(message)
+  })
+})
+
+describe('stale pack', () => {
+  it('points a stale pack at Updates instead of a generic launch failure', () => {
+    const result = friendlyError(
+      'PACK_STALE: installed pack is outdated (remote 2.80.0). Open Updates to install it, then launch again.',
+      'launch',
+    )
+    expect(result.message).toContain('Обновления')
+  })
+  it('points a damaged pack at Updates instead of a generic launch failure', () => {
+    const result = friendlyError(
+      'PACK_REPAIR: pack files changed or are missing. Open Updates to repair them, then launch again.',
+      'launch',
+    )
+    expect(result.message).toContain('Обновления')
+    expect(result.message).toContain('повреждены')
+  })
+})

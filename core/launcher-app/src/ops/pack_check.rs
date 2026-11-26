@@ -326,10 +326,12 @@ mod tests {
                     installer: launcher_net::pack::Artifact {
                         url: String::new(),
                         sha256: String::new(),
+                        source: None,
                     },
                     bootstrap: launcher_net::pack::Artifact {
                         url: String::new(),
                         sha256: String::new(),
+                        source: None,
                     },
                     java: Default::default(),
                     skins: None,

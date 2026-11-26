@@ -14,16 +14,29 @@ async fn skins_base(state: &LauncherAppState) -> Option<String> {
 }
 
 /// Uploads the chosen PNGs; `None` leaves that texture untouched on the server.
+///
+/// `player_uuid` is the account the UI showed when the user clicked upload: the upload is
+/// bound to it and aborts when another account is active now, so one account's skin can
+/// never land on another account's session (an account switch between click and run).
 #[tauri::command]
 pub async fn upload_skin(
     state: State<'_, LauncherAppState>,
     skin_path: Option<String>,
     cape_path: Option<String>,
     slim: bool,
+    player_uuid: Option<String>,
 ) -> Result<SkinUploadResult, String> {
     let config = state.config.read().await.clone();
     let base = skins_base(&state).await;
-    launcher_net::skins::upload_skin(&config, base, skin_path, cape_path, slim).await
+    launcher_net::skins::upload_skin(
+        &config,
+        player_uuid.as_deref(),
+        base,
+        skin_path,
+        cape_path,
+        slim,
+    )
+    .await
 }
 
 /// Resolve the textures the game server will show for this name: the launcher upload on Drasl
