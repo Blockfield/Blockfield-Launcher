@@ -198,8 +198,10 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         }
         let cancel = state.cancel_flag.clone();
         let events = state.events.clone();
-        let (java_for_installer, dir, pack_url) =
-            (java.clone(), game_dir.clone(), pack.info.pack.clone());
+        // Fail over before the JVM starts: a dead pack host URL would stall
+        // packwiz-installer for ~85s. Single-source failures surface here.
+        let pack_url = launcher_net::pack::resolve_reachable_pack_url(&pack.info).await?;
+        let (java_for_installer, dir) = (java.clone(), game_dir.clone());
         tokio::task::spawn_blocking(move || {
             run_packwiz_installer(&events, &cancel, &java_for_installer, &dir, &pack_url)
         })
@@ -325,31 +327,48 @@ async fn ensure_jar(
     // The pack host is a single uplink; launcher.json carries a GitHub
     // fallback (`source`) for exactly this case. A partial from one host is
     // never resumed from the other: their byte ranges may differ.
-    for url in artifact.sources() {
+    let sources = artifact.sources();
+    let ordered = launcher_net::pack::default_health().order_urls(&sources);
+    let mut failed: Vec<String> = Vec::new();
+    for (index, url) in ordered.iter().enumerate() {
+        let last = index + 1 == ordered.len();
         let _ = std::fs::remove_file(&partial);
         let mut downloaded = 0;
-        let result = state
-            .downloader
-            .download_one(url, &partial, name, 0, 1, 1, &mut downloaded, 0)
-            .await
-            .map_err(|e| e.to_string())
-            .and_then(|()| {
-                Downloader::sha256_file(&partial)
-                    .map_err(|e| e.to_string())
-                    .and_then(|actual| {
-                        actual
-                            .eq_ignore_ascii_case(&artifact.sha256)
-                            .then_some(())
-                            .ok_or_else(|| format!("{name} SHA-256 mismatch"))
-                    })
-            });
+        let download = if last {
+            state
+                .downloader
+                .download_one(url, &partial, name, 0, 1, 1, &mut downloaded, 0)
+                .await
+        } else {
+            // Fast failover: one short attempt so a blackholed primary hands
+            // off to the fallback instead of stalling the install.
+            state
+                .downloader
+                .download_one_fast(url, &partial, name, 0, 1, 1, &mut downloaded, 0)
+                .await
+        };
+        let result = download.map_err(|e| e.to_string()).and_then(|()| {
+            Downloader::sha256_file(&partial)
+                .map_err(|e| e.to_string())
+                .and_then(|actual| {
+                    actual
+                        .eq_ignore_ascii_case(&artifact.sha256)
+                        .then_some(())
+                        .ok_or_else(|| format!("{name} SHA-256 mismatch"))
+                })
+        });
         match result {
             Ok(()) => {
+                for failed_url in &failed {
+                    launcher_net::pack::default_health().mark_unhealthy(failed_url);
+                }
+                launcher_net::pack::default_health().mark_healthy(url);
                 return launcher_net::download::activate_partial(&partial, &jar)
                     .map_err(|e| e.to_string());
             }
             Err(error) => {
                 log::warn!("[ensure_jar] {name} from {url} failed: {error}");
+                failed.push((*url).to_string());
                 last_error = error;
             }
         }
@@ -602,7 +621,7 @@ pub async fn verify_files(
     let events = state.events.clone();
     let java_for_verify = java.clone();
     let dir = game_dir.clone();
-    let pack_url = pack.info.pack.clone();
+    let pack_url = launcher_net::pack::resolve_reachable_pack_url(&pack.info).await?;
     tokio::task::spawn_blocking(move || {
         run_packwiz_installer(&events, &cancel, &java_for_verify, &dir, &pack_url)
     })
@@ -960,5 +979,93 @@ mod tests {
                 assert!(state.cancel_flag.load(Ordering::SeqCst));
             });
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ensure_jar_skips_cooled_down_primary_without_touching_it() {
+        use std::io::{Read as _, Write as _};
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let payload = b"ensure-jar-fallback-bytes";
+        // Expected hash via the same engine that verifies the download.
+        let probe = std::env::temp_dir().join(format!(
+            "blockfield-ensure-jar-hash-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&probe, payload).unwrap();
+        let sha256 = Downloader::sha256_file(&probe).unwrap();
+        let _ = std::fs::remove_file(&probe);
+
+        let primary_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let primary_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let primary_addr = primary_listener.local_addr().unwrap();
+        let primary_hits_clone = primary_hits.clone();
+        let _blackhole = std::thread::spawn(move || {
+            for stream in primary_listener.incoming().take(4).flatten() {
+                primary_hits_clone.fetch_add(1, AtomicOrdering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                drop(stream);
+            }
+        });
+
+        let fallback_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let fallback_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let fallback_addr = fallback_listener.local_addr().unwrap();
+        let fallback_hits_clone = fallback_hits.clone();
+        let _fallback = std::thread::spawn(move || {
+            for stream in fallback_listener.incoming().take(4) {
+                let Ok(mut stream) = stream else { break };
+                let mut head = [0u8; 1024];
+                let _ = stream.read(&mut head);
+                fallback_hits_clone.fetch_add(1, AtomicOrdering::SeqCst);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    payload.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(payload);
+            }
+        });
+
+        let primary_url = format!("http://{primary_addr}/a.jar");
+        let fallback_url = format!("http://{fallback_addr}/a.jar");
+        // Pre-mark the hanging primary as unhealthy: ensure_jar must order
+        // the fallback first and never touch the blackhole.
+        launcher_net::pack::default_health().mark_unhealthy(&primary_url);
+
+        let artifact = Artifact {
+            url: primary_url.clone(),
+            sha256: sha256.clone(),
+            source: Some(fallback_url.clone()),
+        };
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-ensure-jar-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let state = test_state(root.clone(), LauncherConfig::default());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                ensure_jar(&state, &game_dir, "a.jar", &artifact)
+                    .await
+                    .expect("fallback bytes must install");
+            });
+        assert_eq!(std::fs::read(game_dir.join("a.jar")).unwrap(), payload);
+        assert_eq!(primary_hits.load(AtomicOrdering::SeqCst), 0);
+        assert!(fallback_hits.load(AtomicOrdering::SeqCst) >= 1);
+        launcher_net::pack::default_health().mark_healthy(&primary_url);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

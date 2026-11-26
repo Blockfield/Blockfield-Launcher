@@ -94,6 +94,22 @@ pub struct Downloader {
 }
 
 impl Downloader {
+    /// Fast-failover client for a source that has a fallback behind it: 3s
+    /// connect / 5s idle-read so a blackholed pack host fails over instead of
+    /// stalling the whole install. No per-try total cap here (the caller uses
+    /// a single attempt); the normal client still owns total budgets.
+    fn fast_client() -> &'static Client {
+        static CLIENT: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
+        CLIENT.get_or_init(|| {
+            Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(3))
+                .read_timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("valid HTTP client")
+        })
+    }
+
     pub fn new(progress_sink: ProgressSink, retry_sink: RetrySink, guard_sink: GuardSink) -> Self {
         let client_builder = || {
             Client::builder()
@@ -169,10 +185,70 @@ impl Downloader {
         _total_downloaded: &mut u64,
         _total_bytes_all: u64,
     ) -> Result<(), DownloadError> {
+        self.download_one_inner(
+            &self.client,
+            3,
+            url,
+            dest,
+            file_path,
+            file_size,
+            file_index,
+            file_count,
+            _total_downloaded,
+            _total_bytes_all,
+        )
+        .await
+    }
+
+    /// Fast-failover variant for a source with a fallback behind it: one
+    /// attempt on the 3s-connect / 5s-read client so a blackholed pack host
+    /// hands off to GitHub in ~5s instead of stalling the install.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn download_one_fast(
+        &self,
+        url: &str,
+        dest: &Path,
+        file_path: &str,
+        file_size: u64,
+        file_index: usize,
+        file_count: usize,
+        _total_downloaded: &mut u64,
+        _total_bytes_all: u64,
+    ) -> Result<(), DownloadError> {
+        self.download_one_inner(
+            Self::fast_client(),
+            1,
+            url,
+            dest,
+            file_path,
+            file_size,
+            file_index,
+            file_count,
+            _total_downloaded,
+            _total_bytes_all,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn download_one_inner(
+        &self,
+        client: &Client,
+        max_attempts: u64,
+        url: &str,
+        dest: &Path,
+        file_path: &str,
+        file_size: u64,
+        file_index: usize,
+        file_count: usize,
+        _total_downloaded: &mut u64,
+        _total_bytes_all: u64,
+    ) -> Result<(), DownloadError> {
         let finish_write = (self.guard_sink)(dest);
         let result = self
-            .download_one_with_client(
-                &self.client,
+            .download_one_uncounted(
+                client,
+                max_attempts,
                 url,
                 dest,
                 file_path,
@@ -188,9 +264,10 @@ impl Downloader {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn download_one_with_client(
+    async fn download_one_uncounted(
         &self,
         client: &Client,
+        max_attempts: u64,
         url: &str,
         dest: &Path,
         file_path: &str,
@@ -201,7 +278,6 @@ impl Downloader {
         _total_bytes_all: u64,
     ) -> Result<(), DownloadError> {
         log::info!("Downloading: {file_path} ({file_size} bytes)");
-
         // Ensure parent directory exists
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
@@ -222,7 +298,7 @@ impl Downloader {
         let start = Instant::now();
         let mut last_error = "download failed".to_string();
 
-        for attempt in 1..=3u64 {
+        for attempt in 1..=max_attempts.max(1) {
             if self.is_cancelled().await {
                 let _ = std::fs::remove_file(dest);
                 return Err(DownloadError::Other("Download cancelled".to_string()));
@@ -240,7 +316,7 @@ impl Downloader {
                 Ok(response) => response,
                 Err(error) => {
                     last_error = error.to_string();
-                    if attempt < 3 {
+                    if attempt < max_attempts.max(1) {
                         self.emit_retry(file_path, attempt + 1);
                         tokio::time::sleep(std::time::Duration::from_millis(250 * attempt)).await;
                         continue;
@@ -254,7 +330,7 @@ impl Downloader {
                 let transient = status.is_server_error()
                     || status == reqwest::StatusCode::REQUEST_TIMEOUT
                     || status == reqwest::StatusCode::TOO_MANY_REQUESTS;
-                if transient && attempt < 3 {
+                if transient && attempt < max_attempts.max(1) {
                     self.emit_retry(file_path, attempt + 1);
                     tokio::time::sleep(std::time::Duration::from_millis(250 * attempt)).await;
                     continue;
@@ -342,7 +418,7 @@ impl Downloader {
             if file_size > 0 && file_bytes > file_size {
                 break;
             }
-            if attempt < 3 {
+            if attempt < max_attempts.max(1) {
                 self.emit_retry(file_path, attempt + 1);
                 tokio::time::sleep(std::time::Duration::from_millis(250 * attempt)).await;
             }
@@ -350,7 +426,7 @@ impl Downloader {
 
         let _ = std::fs::remove_file(dest);
         Err(DownloadError::Other(format!(
-            "Download failed for {file_path} after 3 attempts: {last_error}"
+            "Download failed for {file_path} after {max_attempts} attempts: {last_error}"
         )))
     }
 

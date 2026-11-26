@@ -90,7 +90,14 @@ pub fn stale_pack_message(installed_hash: &str, meta: &PackMeta) -> Option<Strin
 async fn fresh_pack_state(profile: ClientProfile) -> Result<PackState, String> {
     let base = pack_base_url_for(profile)?;
     let info = launcher_net::pack::fetch_launcher_info(&base).await?;
-    let meta = launcher_net::pack::fetch_pack_meta(&info.pack).await?;
+    let sources = info.pack_sources();
+    let meta = launcher_net::pack::fetch_pack_meta_with_sources(
+        &sources,
+        launcher_net::pack::default_health(),
+        launcher_net::pack::primary_failover_client(),
+        launcher_net::pack::fallback_client(),
+    )
+    .await?;
     Ok(PackState {
         profile,
         info,
@@ -625,6 +632,7 @@ mod tests {
                 },
                 java: Default::default(),
                 skins: None,
+                pack_mirrors: Vec::new(),
             },
             meta: PackMeta {
                 version: "1.0".into(),
@@ -873,6 +881,7 @@ mod tests {
                 },
                 java: Default::default(),
                 skins: None,
+                pack_mirrors: Vec::new(),
             },
             meta: PackMeta {
                 version: "1.0".into(),
