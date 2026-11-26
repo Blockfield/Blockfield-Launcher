@@ -40,6 +40,10 @@ jobs:
     name: lint (ubuntu)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      # No debuginfo in the dev-profile clippy build: faster linking and a
+      # smaller rust-cache (same flag as the standards check job).
+      CARGO_PROFILE_DEV_DEBUG: 0
     defaults:
       run:
         shell: bash
@@ -162,12 +166,22 @@ jobs:
           grep -F './usr/bin/blockfield-native' <<<"$contents"
           grep -F './usr/share/applications/blockfield-native.desktop' <<<"$contents"
           grep -F './usr/share/icons/hicolor/256x256/apps/blockfield-native.png' <<<"$contents"
+      - name: Cache NSIS
+        if: runner.os == 'Windows'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: C:\Program Files (x86)\NSIS
+          key: nsis-v1-${{ runner.os }}-${{ runner.arch }}
       - name: Smoke-check Windows MSI and NSIS packaging
         if: runner.os == 'Windows'
         timeout-minutes: 10
         run: |
           set -euo pipefail
-          if ! command -v makensis >/dev/null 2>&1 && [ ! -f "/c/Program Files (x86)/NSIS/makensis.exe" ]; then
+          nsis_dir="/c/Program Files (x86)/NSIS"
+          if ! command -v makensis >/dev/null 2>&1 && [ -f "$nsis_dir/makensis.exe" ]; then
+            echo "$nsis_dir" >> "$GITHUB_PATH"
+            export PATH="$nsis_dir:$PATH"
+          elif ! command -v makensis >/dev/null 2>&1; then
             choco install nsis --no-progress -y
           fi
           version=$(python -c 'import tomllib; print(tomllib.load(open("native/app/Cargo.toml", "rb"))["package"]["version"])')
@@ -217,34 +231,56 @@ jobs:
                   f.write(b"\nTIMEOUT after 150s\n")
                   sys.exit(124)
           PYEOF
-          # No empty bash arrays (treated as unbound under `set -u`),
-          # so branch instead of wrapping.
-          run_guarded() {
-            if [ "$RUNNER_OS" = Linux ]; then
-              xvfb-run -a -s "-screen 0 1920x1080x24" python3 "$RUNNER_TEMP/runguarded.py" "$@"
-            else
-              python3 "$RUNNER_TEMP/runguarded.py" "$@"
-            fi
-          }
-          fail=0
+          # Independent captures (renderer x scale x state, one output dir
+          # each): run up to 4 at once, one Xvfb per task on Linux. Env is
+          # per-task (never exported) so parallel runs cannot leak into
+          # each other.
+          cat > "$RUNNER_TEMP/parrun_captures.py" <<'PYEOF'
+          import concurrent.futures, os, subprocess, sys
+          out, exe, guard = sys.argv[1:4]
+          linux = os.environ.get("RUNNER_OS") == "Linux"
+          def one(line):
+              renderer, scale, state = line.strip().split("|")
+              d = os.path.join(out, renderer, "scale-" + scale, state)
+              os.makedirs(d, exist_ok=True)
+              env = dict(os.environ)
+              env["SLINT_SCALE_FACTOR"] = scale
+              if renderer == "software":
+                  env["SLINT_BACKEND"] = "winit-software"
+              else:
+                  env.pop("SLINT_BACKEND", None)
+              log = os.path.join(d, "app.log")
+              if linux:
+                  cmd = ["xvfb-run", "-a", "-s", "-screen 0 1920x1080x24",
+                         "python3", guard, log, exe, "--state", state,
+                         "--freeze-motion", "--capture-dir", d]
+              else:
+                  cmd = ["python3", guard, log, exe, "--state", state,
+                         "--freeze-motion", "--capture-dir", d]
+              print(f"=== {renderer} scale={scale} state={state} ===", flush=True)
+              r = subprocess.run(cmd, env=env)
+              print(f"exit={r.returncode} (capture asserts panic nonzero on failure)", flush=True)
+              return (d, r.returncode)
+          fail = False
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+              for d, code in pool.map(one, [l for l in sys.stdin if l.strip()]):
+                  if code != 0:
+                      fail = True
+                      print(f"--- {d}/app.log (last 3k) ---", flush=True)
+                      try:
+                          with open(os.path.join(d, "app.log"), "rb") as f:
+                              sys.stdout.buffer.write(f.read()[-3000:] + b"\n")
+                      except OSError as e:
+                          print(f"(no log: {e})", flush=True)
+          sys.exit(1 if fail else 0)
+          PYEOF
           for renderer in default software; do
-            if [ "$renderer" = software ]; then export SLINT_BACKEND=winit-software; else unset SLINT_BACKEND; fi
             for scale in 1 1.5; do
-              export SLINT_SCALE_FACTOR=$scale
               for state in main settings-skin; do
-                dir="$out/$renderer/scale-$scale/$state"
-                mkdir -p "$dir"
-                echo "=== $renderer scale=$scale state=$state ==="
-                status=0
-                SLINT_BACKEND=${SLINT_BACKEND-} SLINT_SCALE_FACTOR=$scale \
-                  run_guarded "$dir/app.log" \
-                  "./$exe" --state "$state" --freeze-motion --capture-dir "$dir" || status=$?
-                echo "exit=$status (capture asserts panic nonzero on failure)"
-                if [ "$status" != 0 ]; then fail=1; tail -c 3000 "$dir/app.log"; fi
+                printf '%s|%s|%s\n' "$renderer" "$scale" "$state"
               done
             done
-          done
-          unset SLINT_BACKEND SLINT_SCALE_FACTOR
+          done | python3 "$RUNNER_TEMP/parrun_captures.py" "$out" "./$exe" "$RUNNER_TEMP/runguarded.py"
           # PPM (P6) -> PNG with stdlib only; no ffmpeg/magick on runners.
           python3 - "$out" <<'PYEOF'
           import struct, sys, zlib
@@ -271,7 +307,6 @@ jobs:
               convert(ppm)
           PYEOF
           find "$out" -type f | sort
-          [ "$fail" = 0 ]
       # Layer 2: real-window acceptance walk against per-OS goldens at 1x.
       # Renderer is pinned to software on every OS: it is the one renderer
       # both runners support (u17: Windows Skia-GL has no GPU and falls
@@ -291,30 +326,54 @@ jobs:
           out=e2e-out
           rm -rf "$out"
           mkdir -p "$out"
-          run_guarded() {
-            if [ "$RUNNER_OS" = Linux ]; then
-              xvfb-run -a -s "-screen 0 1920x1080x24" python3 "$RUNNER_TEMP/runguarded.py" "$@"
-            else
-              python3 "$RUNNER_TEMP/runguarded.py" "$@"
-            fi
-          }
           update=""
           if [ "${{ inputs.update_goldens }}" = "true" ]; then update="--e2e-update-goldens"; fi
-          fail=0
-          # New settings tabs rejoin this loop with U12 once per-OS goldens exist.
-          for state in main main-launching offline error settings-skin login firstrun update; do
-            dir="$out/$state"
-            mkdir -p "$dir"
-            echo "=== e2e state=$state ==="
-            status=0
-            BLOCKFIELD_E2E_STATE="$state" run_guarded "$dir/app.log" \
-              "./$exe" --state "$state" --freeze-motion \
-              --e2e "$dir" --e2e-golden "tests/golden/${{ matrix.golden_os }}" $update || status=$?
-            echo "exit=$status"
-            if [ "$status" != 0 ]; then fail=1; tail -c 3000 "$dir/app.log"; fi
-          done
+          # Independent per-state walks (one output dir each): run up to 4 at
+          # once, one Xvfb per task on Linux. State travels per-task in the
+          # environment, never exported, so parallel runs cannot leak.
+          # New settings tabs rejoin this list with U12 once per-OS goldens exist.
+          cat > "$RUNNER_TEMP/parrun_e2e.py" <<'PYEOF'
+          import concurrent.futures, os, subprocess, sys
+          out, exe, guard, golden = sys.argv[1:5]
+          extra = sys.argv[5:]
+          linux = os.environ.get("RUNNER_OS") == "Linux"
+          def one(state):
+              state = state.strip()
+              d = os.path.join(out, state)
+              os.makedirs(d, exist_ok=True)
+              env = dict(os.environ, BLOCKFIELD_E2E_STATE=state)
+              log = os.path.join(d, "app.log")
+              if linux:
+                  cmd = ["xvfb-run", "-a", "-s", "-screen 0 1920x1080x24",
+                         "python3", guard, log, exe, "--state", state,
+                         "--freeze-motion", "--e2e", d,
+                         "--e2e-golden", golden, *extra]
+              else:
+                  cmd = ["python3", guard, log, exe, "--state", state,
+                         "--freeze-motion", "--e2e", d,
+                         "--e2e-golden", golden, *extra]
+              print(f"=== e2e state={state} ===", flush=True)
+              r = subprocess.run(cmd, env=env)
+              print(f"exit={r.returncode}", flush=True)
+              return (d, r.returncode)
+          fail = False
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+              for d, code in pool.map(one, [l for l in sys.stdin if l.strip()]):
+                  if code != 0:
+                      fail = True
+                      print(f"--- {d}/app.log (last 3k) ---", flush=True)
+                      try:
+                          with open(os.path.join(d, "app.log"), "rb") as f:
+                              sys.stdout.buffer.write(f.read()[-3000:] + b"\n")
+                      except OSError as e:
+                          print(f"(no log: {e})", flush=True)
+          sys.exit(1 if fail else 0)
+          PYEOF
+          # shellcheck disable=SC2086
+          printf '%s\n' main main-launching offline error settings-skin login firstrun update \
+            | python3 "$RUNNER_TEMP/parrun_e2e.py" "$out" "./$exe" \
+              "$RUNNER_TEMP/runguarded.py" "tests/golden/${{ matrix.golden_os }}" $update
           find "$out" -type f | sort
-          [ "$fail" = 0 ]
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:

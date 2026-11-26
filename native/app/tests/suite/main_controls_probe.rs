@@ -5,7 +5,7 @@ use slint::{
 };
 
 slint::slint! {
-    import { ActionArea } from "../ui/controls.slint";
+    import { ActionArea } from "../../ui/controls.slint";
     export component ControlsProbe inherits Window {
         width: 100px; height: 100px;
         in property <bool> enabled: true;
@@ -22,7 +22,7 @@ slint::slint! {
 }
 
 slint::slint! {
-    import { StatusDot } from "../ui/controls.slint";
+    import { StatusDot } from "../../ui/controls.slint";
     export component PulseProbe inherits Window {
         width: 100px; height: 100px;
         out property <float> dot-opacity: dot.opacity;

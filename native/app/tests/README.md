@@ -3,7 +3,7 @@
 Two layers gate every merge into `feat/native-slint` (workflow
 `.github/workflows/native.yml`, matrix Windows/macOS/Ubuntu).
 
-- **Layer 1** — `tests/layer1_screens.rs`: in-process scenarios driving the
+- **Layer 1** — `tests/suite.rs` (scenarios in `tests/suite/`): in-process scenarios driving the
   real Slint UI tree headless via the Slint testing backend
   (`i-slint-backend-testing`: find by accessible label, invoke default
   action, mock drag; state asserted through the generated property API).
@@ -43,7 +43,7 @@ podman run --rm --network=none --security-opt label=disable --read-only \
 
 ## Add a scenario + golden for a new screen (<= 10 min)
 
-1. Layer 1: add a `scenario_*` fn in `tests/layer1_screens.rs` using the
+1. Layer 1: add a `scenario_*` fn in `tests/suite/layer1_screens.rs` using the
    `given_/when_/all_labels` helpers, and call it from
    `layer1_screen_walk`. Give every new control an `accessible-label`
    (plus `accessible-role` and `accessible-action-default` where it acts)
