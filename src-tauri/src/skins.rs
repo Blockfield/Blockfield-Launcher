@@ -27,15 +27,16 @@ pub async fn upload_skin(
     player_uuid: Option<String>,
 ) -> Result<SkinUploadResult, String> {
     let config = state.config.read().await.clone();
-    if config.api_token.is_empty() || config.player_uuid.is_empty() {
-        return Err(format!(
-            "{}: log in again",
-            launcher_net::account::SESSION_EXPIRED
-        ));
-    }
-    launcher_net::skins::check_upload_account(player_uuid.as_deref(), &config.player_uuid)?;
     let base = skins_base(&state).await;
-    launcher_net::skins::upload_skin(&config, base, skin_path, cape_path, slim).await
+    launcher_net::skins::upload_skin(
+        &config,
+        player_uuid.as_deref(),
+        base,
+        skin_path,
+        cape_path,
+        slim,
+    )
+    .await
 }
 
 /// Resolve the textures the game server will show for this name: the launcher upload on Drasl

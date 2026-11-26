@@ -40,8 +40,13 @@ pub struct SkinPreview {
 }
 
 /// Uploads the chosen PNGs; `None` leaves that texture untouched on the server.
+///
+/// `expected_player_uuid` is the account the UI showed at click time: the upload
+/// aborts when another account is active now, so one account's skin can never
+/// land on another account's session (an account switch between click and run).
 pub async fn upload_skin(
     config: &LauncherConfig,
+    expected_player_uuid: Option<&str>,
     skins_base: Option<String>,
     skin_path: Option<String>,
     cape_path: Option<String>,
@@ -50,6 +55,7 @@ pub async fn upload_skin(
     if config.api_token.is_empty() || config.player_uuid.is_empty() {
         return Err(format!("{SESSION_EXPIRED}: log in again"));
     }
+    check_upload_account(expected_player_uuid, &config.player_uuid)?;
     let skin = skin_path.as_deref().map(read_texture).transpose()?;
     let cape = cape_path.as_deref().map(read_texture).transpose()?;
     if skin.is_none() && cape.is_none() {
