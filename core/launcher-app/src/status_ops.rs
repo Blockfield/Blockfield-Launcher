@@ -45,7 +45,9 @@ pub async fn server_status(
         tokio::task::spawn_blocking(move || status::ping(&ping_host, port)),
         status::locate(&host, port),
         async {
-            if config.active_profile == ClientProfile::Game {
+            if config.active_profile == ClientProfile::Game
+                && !pack::default_health().is_cooled_down(&base)
+            {
                 status::fetch_rooms(&base).await
             } else {
                 None

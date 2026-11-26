@@ -839,9 +839,19 @@ pub mod self_update {
     }
 
     fn http_client() -> Result<reqwest::Client, String> {
-        // Same 30 s ceiling the Tauri updater configures for check+download.
+        // Manifest check keeps a 15s total ceiling; package bytes use the
+        // dedicated package client below (connect + idle-read only, no total
+        // cap so slow links can still finish 20-50MB artifacts).
         reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|e| e.to_string())
+    }
+
+    fn package_client() -> Result<reqwest::Client, String> {
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .read_timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| e.to_string())
     }
@@ -1065,7 +1075,7 @@ pub mod self_update {
         on_progress: impl FnMut(u64, Option<u64>),
         mut on_stage: impl FnMut(InstallStage),
     ) -> Result<(), String> {
-        let client = http_client()?;
+        let client = package_client()?;
         let bytes = download_bytes(&client, &release.url, on_progress).await?;
         on_stage(InstallStage::Verifying);
         verify_signature_with_key(&bytes, &release.signature, &release.version, pubkey_base64)?;

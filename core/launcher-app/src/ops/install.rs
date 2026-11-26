@@ -13,7 +13,7 @@ use super::pack_check::{installed_pack, require_pack_profile, INSTALLED_VERSION_
 use crate::{DownloadMirrorPayload, EventSink, LauncherAppState, LauncherEvent};
 use launcher_core::config::ClientProfile;
 use launcher_net::download::Downloader;
-use launcher_net::pack::{Artifact, JavaInfo};
+use launcher_net::pack::{Artifact, JavaInfo, PackMeta};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -68,6 +68,55 @@ async fn pack_files_valid_blocking(app_data: PathBuf, game_dir: PathBuf) -> bool
     })
     .await
     .unwrap_or(false)
+}
+
+/// Reject a resolved mirror whose Minecraft or Fabric version disagrees with
+/// the cached `pack.meta` used to prepare loader and runtime files.
+fn ensure_compatible_pack_meta(expected: &PackMeta, resolved: &PackMeta) -> Result<(), String> {
+    if resolved.minecraft != expected.minecraft || resolved.loader != expected.loader {
+        return Err(format!(
+            "Pack metadata changed (expected Minecraft {}/{}, mirror served {}/{}). Check for updates and retry.",
+            expected.minecraft,
+            expected.loader.as_deref().unwrap_or("none"),
+            resolved.minecraft,
+            resolved.loader.as_deref().unwrap_or("none"),
+        ));
+    }
+    Ok(())
+}
+
+/// Interruptible wrapper around `resolve_reachable_pack_url` so `cancel_download`
+/// aborts a slow mirror probe without waiting for network timeouts or launching the JVM.
+async fn resolve_pack_url_cancelable(
+    info: &launcher_net::pack::LauncherInfo,
+    cancel: &AtomicBool,
+) -> Result<(String, PackMeta), String> {
+    resolve_with_cancel(cancel, launcher_net::pack::resolve_reachable_pack_url(info)).await
+}
+
+async fn resolve_with_cancel<T, F>(cancel: &AtomicBool, fut: F) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, String>>,
+{
+    if cancel.load(Ordering::SeqCst) {
+        return Err("Download cancelled".to_string());
+    }
+    let cancel_wait = async {
+        while !cancel.load(Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    };
+    tokio::select! {
+        biased;
+        () = cancel_wait => Err("Download cancelled".to_string()),
+        res = fut => {
+            if cancel.load(Ordering::SeqCst) {
+                Err("Download cancelled".to_string())
+            } else {
+                res
+            }
+        }
+    }
 }
 
 pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
@@ -198,8 +247,16 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         }
         let cancel = state.cancel_flag.clone();
         let events = state.events.clone();
-        let (java_for_installer, dir, pack_url) =
-            (java.clone(), game_dir.clone(), pack.info.pack.clone());
+        // Fail over before the JVM starts: a dead pack host URL would stall
+        // packwiz-installer for ~85s. Frozen dev runs skip the network probe.
+        let (pack_url, installed_meta) = if frozen {
+            (pack.info.pack.clone(), pack.meta.clone())
+        } else {
+            let (url, resolved_meta) = resolve_pack_url_cancelable(&pack.info, &cancel).await?;
+            ensure_compatible_pack_meta(&pack.meta, &resolved_meta)?;
+            (url, resolved_meta)
+        };
+        let (java_for_installer, dir) = (java.clone(), game_dir.clone());
         tokio::task::spawn_blocking(move || {
             run_packwiz_installer(&events, &cancel, &java_for_installer, &dir, &pack_url)
         })
@@ -207,7 +264,10 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
         launcher_net::installed_files::write(
             &game_dir.join(INSTALLED_VERSION_FILE),
-            format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
+            format!(
+                "{}\n{}\n",
+                installed_meta.index_hash, installed_meta.version
+            ),
         )
         .map_err(|e| format!("Failed to record installed version: {e}"))?;
         // Single pass, no loop: a pack that is still bad after a repair +
@@ -325,31 +385,53 @@ async fn ensure_jar(
     // The pack host is a single uplink; launcher.json carries a GitHub
     // fallback (`source`) for exactly this case. A partial from one host is
     // never resumed from the other: their byte ranges may differ.
-    for url in artifact.sources() {
+    let sources = artifact.sources();
+    let health = launcher_net::pack::default_health();
+    let ordered = health.order_urls(&sources);
+    let mut failed: Vec<String> = Vec::new();
+    for (index, url) in ordered.iter().enumerate() {
+        let use_fast = ordered.len() > 1
+            && (health.is_cooled_down(url)
+                || ordered[index + 1..]
+                    .iter()
+                    .any(|next| !health.is_cooled_down(next)));
         let _ = std::fs::remove_file(&partial);
         let mut downloaded = 0;
-        let result = state
-            .downloader
-            .download_one(url, &partial, name, 0, 1, 1, &mut downloaded, 0)
-            .await
-            .map_err(|e| e.to_string())
-            .and_then(|()| {
-                Downloader::sha256_file(&partial)
-                    .map_err(|e| e.to_string())
-                    .and_then(|actual| {
-                        actual
-                            .eq_ignore_ascii_case(&artifact.sha256)
-                            .then_some(())
-                            .ok_or_else(|| format!("{name} SHA-256 mismatch"))
-                    })
-            });
+        let download = if use_fast {
+            // Fast failover: one short attempt when another healthy source
+            // remains or when probing a cooled-down host as a last resort.
+            state
+                .downloader
+                .download_one_fast(url, &partial, name, 0, 1, 1, &mut downloaded, 0)
+                .await
+        } else {
+            state
+                .downloader
+                .download_one(url, &partial, name, 0, 1, 1, &mut downloaded, 0)
+                .await
+        };
+        let result = download.map_err(|e| e.to_string()).and_then(|()| {
+            Downloader::sha256_file(&partial)
+                .map_err(|e| e.to_string())
+                .and_then(|actual| {
+                    actual
+                        .eq_ignore_ascii_case(&artifact.sha256)
+                        .then_some(())
+                        .ok_or_else(|| format!("{name} SHA-256 mismatch"))
+                })
+        });
         match result {
             Ok(()) => {
+                for failed_url in &failed {
+                    health.mark_unhealthy(failed_url);
+                }
+                health.mark_healthy(url);
                 return launcher_net::download::activate_partial(&partial, &jar)
                     .map_err(|e| e.to_string());
             }
             Err(error) => {
                 log::warn!("[ensure_jar] {name} from {url} failed: {error}");
+                failed.push((*url).to_string());
                 last_error = error;
             }
         }
@@ -602,7 +684,13 @@ pub async fn verify_files(
     let events = state.events.clone();
     let java_for_verify = java.clone();
     let dir = game_dir.clone();
-    let pack_url = pack.info.pack.clone();
+    let pack_url = if launcher_core::dev::freeze_pack() {
+        pack.info.pack.clone()
+    } else {
+        let (url, resolved_meta) = resolve_pack_url_cancelable(&pack.info, &cancel).await?;
+        ensure_compatible_pack_meta(&pack.meta, &resolved_meta)?;
+        url
+    };
     tokio::task::spawn_blocking(move || {
         run_packwiz_installer(&events, &cancel, &java_for_verify, &dir, &pack_url)
     })
@@ -960,5 +1048,374 @@ mod tests {
                 assert!(state.cancel_flag.load(Ordering::SeqCst));
             });
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ensure_jar_skips_cooled_down_primary_without_touching_it() {
+        use std::io::{Read as _, Write as _};
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let payload = b"ensure-jar-fallback-bytes";
+        // Expected hash via the same engine that verifies the download.
+        let probe = std::env::temp_dir().join(format!(
+            "blockfield-ensure-jar-hash-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&probe, payload).unwrap();
+        let sha256 = Downloader::sha256_file(&probe).unwrap();
+        let _ = std::fs::remove_file(&probe);
+
+        let primary_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let primary_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let primary_addr = primary_listener.local_addr().unwrap();
+        let primary_hits_clone = primary_hits.clone();
+        let _blackhole = std::thread::spawn(move || {
+            for stream in primary_listener.incoming().take(4).flatten() {
+                primary_hits_clone.fetch_add(1, AtomicOrdering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                drop(stream);
+            }
+        });
+
+        let fallback_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let fallback_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let fallback_addr = fallback_listener.local_addr().unwrap();
+        let fallback_hits_clone = fallback_hits.clone();
+        let _fallback = std::thread::spawn(move || {
+            for stream in fallback_listener.incoming().take(4) {
+                let Ok(mut stream) = stream else { break };
+                let mut head = [0u8; 1024];
+                let _ = stream.read(&mut head);
+                fallback_hits_clone.fetch_add(1, AtomicOrdering::SeqCst);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    payload.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(payload);
+            }
+        });
+
+        let primary_url = format!("http://{primary_addr}/a.jar");
+        let fallback_url = format!("http://{fallback_addr}/a.jar");
+        // Pre-mark the hanging primary as unhealthy: ensure_jar must order
+        // the fallback first and never touch the blackhole.
+        launcher_net::pack::default_health().mark_unhealthy(&primary_url);
+
+        let artifact = Artifact {
+            url: primary_url.clone(),
+            sha256: sha256.clone(),
+            source: Some(fallback_url.clone()),
+        };
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-ensure-jar-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let state = test_state(root.clone(), LauncherConfig::default());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                ensure_jar(&state, &game_dir, "a.jar", &artifact)
+                    .await
+                    .expect("fallback bytes must install");
+            });
+        assert_eq!(std::fs::read(game_dir.join("a.jar")).unwrap(), payload);
+        assert_eq!(primary_hits.load(AtomicOrdering::SeqCst), 0);
+        assert!(fallback_hits.load(AtomicOrdering::SeqCst) >= 1);
+        launcher_net::pack::default_health().mark_healthy(&primary_url);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ensure_jar_cold_primary_fails_over_in_one_attempt_and_cools_down() {
+        use std::io::{Read as _, Write as _};
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let payload = b"cold-failover-jar-bytes";
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-ensure-jar-cold-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let probe = root.join("probe.jar");
+        std::fs::write(&probe, payload).unwrap();
+        let sha256 = Downloader::sha256_file(&probe).unwrap();
+
+        let primary_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let primary_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let primary_addr = primary_listener.local_addr().unwrap();
+        let primary_hits_clone = primary_hits.clone();
+        let _primary = std::thread::spawn(move || {
+            for stream in primary_listener.incoming().take(4) {
+                let Ok(mut stream) = stream else { break };
+                let mut head = [0u8; 1024];
+                let _ = stream.read(&mut head);
+                primary_hits_clone.fetch_add(1, AtomicOrdering::SeqCst);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 3\r\nconnection: close\r\n\r\nbad",
+                );
+            }
+        });
+
+        let fallback_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let fallback_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let fallback_addr = fallback_listener.local_addr().unwrap();
+        let fallback_hits_clone = fallback_hits.clone();
+        let _fallback = std::thread::spawn(move || {
+            for stream in fallback_listener.incoming().take(4) {
+                let Ok(mut stream) = stream else { break };
+                let mut head = [0u8; 1024];
+                let _ = stream.read(&mut head);
+                fallback_hits_clone.fetch_add(1, AtomicOrdering::SeqCst);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    payload.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(payload);
+            }
+        });
+
+        let primary_url = format!("http://{primary_addr}/cold.jar");
+        let fallback_url = format!("http://{fallback_addr}/cold.jar");
+        assert!(!launcher_net::pack::default_health().is_cooled_down(&primary_url));
+
+        let artifact = Artifact {
+            url: primary_url.clone(),
+            sha256,
+            source: Some(fallback_url),
+        };
+        let state = test_state(root.clone(), LauncherConfig::default());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(ensure_jar(&state, &game_dir, "cold.jar", &artifact))
+            .expect("cold failover must install from fallback");
+
+        assert_eq!(std::fs::read(game_dir.join("cold.jar")).unwrap(), payload);
+        assert_eq!(primary_hits.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(fallback_hits.load(AtomicOrdering::SeqCst), 1);
+        assert!(launcher_net::pack::default_health().is_cooled_down(&primary_url));
+        launcher_net::pack::default_health().mark_healthy(&primary_url);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ensure_jar_cooled_primary_preserves_fallback_retries() {
+        use std::io::{Read as _, Write as _};
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let payload = b"retry-fallback-jar-bytes";
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-ensure-jar-retry-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let probe = root.join("probe.jar");
+        std::fs::write(&probe, payload).unwrap();
+        let sha256 = Downloader::sha256_file(&probe).unwrap();
+
+        let primary_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let primary_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let primary_addr = primary_listener.local_addr().unwrap();
+        let primary_hits_clone = primary_hits.clone();
+        let _primary = std::thread::spawn(move || {
+            for stream in primary_listener.incoming().take(4).flatten() {
+                primary_hits_clone.fetch_add(1, AtomicOrdering::SeqCst);
+                drop(stream);
+            }
+        });
+
+        let fallback_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let fallback_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let fallback_addr = fallback_listener.local_addr().unwrap();
+        let fallback_hits_clone = fallback_hits.clone();
+        let _fallback = std::thread::spawn(move || {
+            for stream in fallback_listener.incoming().take(4) {
+                let Ok(mut stream) = stream else { break };
+                let mut head = [0u8; 1024];
+                let _ = stream.read(&mut head);
+                let hit = fallback_hits_clone.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+                if hit == 1 {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 3\r\nconnection: close\r\n\r\nbad",
+                    );
+                } else {
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        payload.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.write_all(payload);
+                }
+            }
+        });
+
+        let primary_url = format!("http://{primary_addr}/retry.jar");
+        let fallback_url = format!("http://{fallback_addr}/retry.jar");
+        launcher_net::pack::default_health().mark_unhealthy(&primary_url);
+
+        let artifact = Artifact {
+            url: primary_url.clone(),
+            sha256,
+            source: Some(fallback_url),
+        };
+        let state = test_state(root.clone(), LauncherConfig::default());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(ensure_jar(&state, &game_dir, "retry.jar", &artifact))
+            .expect("healthy fallback must retain multi-attempt retries");
+
+        assert_eq!(std::fs::read(game_dir.join("retry.jar")).unwrap(), payload);
+        assert_eq!(primary_hits.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(fallback_hits.load(AtomicOrdering::SeqCst), 2);
+        launcher_net::pack::default_health().mark_healthy(&primary_url);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ensure_jar_lone_cooled_artifact_retries_transient_failure() {
+        use std::io::{Read as _, Write as _};
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let payload = b"lone-cooled-jar-bytes";
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-ensure-jar-lone-cooled-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let probe = root.join("probe.jar");
+        std::fs::write(&probe, payload).unwrap();
+        let sha256 = Downloader::sha256_file(&probe).unwrap();
+
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let hits_clone = hits.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _server = std::thread::spawn(move || {
+            for stream in listener.incoming().take(4) {
+                let Ok(mut stream) = stream else { break };
+                let mut head = [0u8; 1024];
+                let _ = stream.read(&mut head);
+                let hit = hits_clone.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+                if hit == 1 {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 3\r\nconnection: close\r\n\r\nbad",
+                    );
+                } else {
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        payload.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.write_all(payload);
+                }
+            }
+        });
+
+        let url = format!("http://{addr}/lone.jar");
+        launcher_net::pack::default_health().mark_unhealthy(&url);
+
+        let artifact = Artifact {
+            url: url.clone(),
+            sha256,
+            source: None,
+        };
+        let state = test_state(root.clone(), LauncherConfig::default());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(ensure_jar(&state, &game_dir, "lone.jar", &artifact))
+            .expect("lone cooled artifact must retry and succeed");
+
+        assert_eq!(std::fs::read(game_dir.join("lone.jar")).unwrap(), payload);
+        assert_eq!(hits.load(AtomicOrdering::SeqCst), 2);
+        launcher_net::pack::default_health().mark_healthy(&url);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ensure_compatible_pack_meta_rejects_minecraft_or_loader_mismatch() {
+        let base = PackMeta {
+            version: "2.0.0".to_string(),
+            minecraft: "1.21.1".to_string(),
+            loader: Some("0.16.9".to_string()),
+            index_hash: "aaa".to_string(),
+        };
+        let same_runtime_new_index = PackMeta {
+            version: "2.0.1".to_string(),
+            index_hash: "bbb".to_string(),
+            ..base.clone()
+        };
+        assert!(ensure_compatible_pack_meta(&base, &same_runtime_new_index).is_ok());
+
+        let diff_mc = PackMeta {
+            minecraft: "1.21.4".to_string(),
+            ..base.clone()
+        };
+        assert!(ensure_compatible_pack_meta(&base, &diff_mc).is_err());
+
+        let diff_loader = PackMeta {
+            loader: Some("0.16.10".to_string()),
+            ..base.clone()
+        };
+        assert!(ensure_compatible_pack_meta(&base, &diff_loader).is_err());
+    }
+
+    #[test]
+    fn resolve_with_cancel_aborts_pending_resolution() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let flag = std::sync::Arc::new(AtomicBool::new(true));
+        let immediate = rt.block_on(resolve_with_cancel(&flag, async {
+            Ok::<_, String>("should-not-win")
+        }));
+        assert_eq!(immediate.unwrap_err(), "Download cancelled");
+
+        let flag = std::sync::Arc::new(AtomicBool::new(false));
+        let trigger = flag.clone();
+        let started = std::time::Instant::now();
+        let res = rt.block_on(async move {
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+                trigger.store(true, Ordering::SeqCst);
+            });
+            resolve_with_cancel(&flag, std::future::pending::<Result<(), String>>()).await
+        });
+        assert_eq!(res.unwrap_err(), "Download cancelled");
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 }
