@@ -74,7 +74,7 @@ impl LauncherInfo {
     pub fn pack_sources(&self) -> Vec<&str> {
         let mut out = Vec::new();
         let primary = self.pack.trim();
-        let primary_origin = if is_allowed_pack_url(primary, None) {
+        let primary_origin = if is_allowed_pack_url(primary, Some(primary)) {
             out.push(primary);
             Some(primary)
         } else {
@@ -597,11 +597,12 @@ pub async fn fetch_pack_meta_with_sources(
     .map(|(_, meta)| meta)
 }
 
-/// Resolve the first reachable `pack.toml` URL from `pack_sources()` so
-/// `packwiz-installer` never gets a dead pack host URL that would stall the
-/// JVM. Never falls back to the flat GitHub `manifest` release (which lacks
-/// `index.toml` and `mods/*.pw.toml`).
-pub async fn resolve_reachable_pack_url(info: &LauncherInfo) -> Result<String, String> {
+/// Resolve the first reachable `pack.toml` URL and parsed metadata from
+/// `pack_sources()` so `packwiz-installer` never gets a dead pack host URL
+/// that would stall the JVM, and callers record the exact index hash that
+/// packwiz actually installed. Never falls back to the flat GitHub `manifest`
+/// release (which lacks `index.toml` and `mods/*.pw.toml`).
+pub async fn resolve_reachable_pack_url(info: &LauncherInfo) -> Result<(String, PackMeta), String> {
     resolve_reachable_pack_url_with(
         info,
         default_health(),
@@ -616,7 +617,7 @@ pub async fn resolve_reachable_pack_url_with(
     health: &HostHealth,
     primary_client: &reqwest::Client,
     fallback_client: &reqwest::Client,
-) -> Result<String, String> {
+) -> Result<(String, PackMeta), String> {
     let sources = info.pack_sources();
     fetch_parsed_with_candidates(
         &sources,
@@ -626,7 +627,6 @@ pub async fn resolve_reachable_pack_url_with(
         parse_pack_toml,
     )
     .await
-    .map(|(url, _)| url)
 }
 
 /// Stable GitHub copies of the manifests, republished by client CI on every
@@ -1084,7 +1084,7 @@ mod tests {
         let (primary_client, fallback_client) = test_clients();
         let health = HostHealth::new();
         let info = test_info(&primary_url, &[&fallback_url]);
-        let resolved = block_on(resolve_reachable_pack_url_with(
+        let (resolved, resolved_meta) = block_on(resolve_reachable_pack_url_with(
             &info,
             &health,
             &primary_client,
@@ -1092,10 +1092,11 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(resolved, fallback_url);
+        assert_eq!(resolved_meta.index_hash, "abc");
         assert_eq!(primary_hits.load(Ordering::SeqCst), 1);
         assert!(health.is_cooled_down(&primary_url));
         // Second resolve skips the cooled-down primary entirely.
-        let resolved2 = block_on(resolve_reachable_pack_url_with(
+        let (resolved2, resolved_meta2) = block_on(resolve_reachable_pack_url_with(
             &info,
             &health,
             &primary_client,
@@ -1103,6 +1104,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(resolved2, fallback_url);
+        assert_eq!(resolved_meta2.index_hash, "abc");
         assert_eq!(primary_hits.load(Ordering::SeqCst), 1);
     }
 
@@ -1330,7 +1332,7 @@ mod tests {
         let pack_health = HostHealth::new();
         let primary_pack = format!("{html_base}/pack.toml");
         let fallback_pack = format!("{valid_base}/pack.toml");
-        let resolved = block_on(resolve_reachable_pack_url_with(
+        let (resolved, resolved_meta) = block_on(resolve_reachable_pack_url_with(
             &test_info(&primary_pack, &[&fallback_pack]),
             &pack_health,
             &primary_client,
@@ -1338,6 +1340,7 @@ mod tests {
         ))
         .expect("must fail over past 200 OK HTML to valid pack.toml");
         assert_eq!(resolved, fallback_pack);
+        assert_eq!(resolved_meta.index_hash, "abc");
         assert!(pack_health.is_cooled_down(&primary_pack));
         assert!(!pack_health.is_cooled_down(&fallback_pack));
     }
@@ -1399,6 +1402,16 @@ mod tests {
         assert!(is_allowed_pack_url_with(
             "https://cdn.example/v2/pack.toml",
             Some("https://cdn.example/pack.toml"),
+            false
+        ));
+        assert!(is_allowed_pack_url_with(
+            "https://cdn.example/pack.toml",
+            Some("https://cdn.example/pack.toml"),
+            false
+        ));
+        assert!(!is_allowed_pack_url_with(
+            "https://127.0.0.1/pack.toml",
+            Some("https://127.0.0.1/pack.toml"),
             false
         ));
 

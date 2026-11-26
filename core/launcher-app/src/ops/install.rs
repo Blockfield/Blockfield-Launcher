@@ -200,8 +200,8 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         let events = state.events.clone();
         // Fail over before the JVM starts: a dead pack host URL would stall
         // packwiz-installer for ~85s. Frozen dev runs skip the network probe.
-        let pack_url = if frozen {
-            pack.info.pack.clone()
+        let (pack_url, installed_meta) = if frozen {
+            (pack.info.pack.clone(), pack.meta.clone())
         } else {
             launcher_net::pack::resolve_reachable_pack_url(&pack.info).await?
         };
@@ -213,7 +213,10 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         .map_err(|e| format!("packwiz-installer task failed: {e}"))??;
         launcher_net::installed_files::write(
             &game_dir.join(INSTALLED_VERSION_FILE),
-            format!("{}\n{}\n", pack.meta.index_hash, pack.meta.version),
+            format!(
+                "{}\n{}\n",
+                installed_meta.index_hash, installed_meta.version
+            ),
         )
         .map_err(|e| format!("Failed to record installed version: {e}"))?;
         // Single pass, no loop: a pack that is still bad after a repair +
@@ -633,7 +636,9 @@ pub async fn verify_files(
     let pack_url = if launcher_core::dev::freeze_pack() {
         pack.info.pack.clone()
     } else {
-        launcher_net::pack::resolve_reachable_pack_url(&pack.info).await?
+        launcher_net::pack::resolve_reachable_pack_url(&pack.info)
+            .await?
+            .0
     };
     tokio::task::spawn_blocking(move || {
         run_packwiz_installer(&events, &cancel, &java_for_verify, &dir, &pack_url)
