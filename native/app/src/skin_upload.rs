@@ -39,9 +39,7 @@ pub async fn perform_upload(
 ) -> Result<launcher_net::skins::SkinUploadResult, String> {
     let current = state.config.read().await;
     if current.player_uuid != started.player_uuid || current.api_token != started.api_token {
-        return Err(
-            "Аккаунт сменился до загрузки, скин не отправлен. Выберите его ещё раз.".to_string(),
-        );
+        return Err(launcher_net::skins::ACCOUNT_SWITCHED.to_string());
     }
     drop(current);
     let base = state

@@ -51,7 +51,18 @@ lock = tomllib.loads((root / "Cargo.lock").read_text())
 if any(package["name"] == "blockfield-server" for package in lock["package"]):
     errors.append("Cargo.lock still contains the retired workspace package.")
 native = tomllib.loads((root / "src-tauri/Cargo.toml").read_text())
-if native["dependencies"].get("blockfield-shared", {}).get("path") != "../shared":
+deps = native["dependencies"]
+direct_shared = deps.get("blockfield-shared", {}).get("path") == "../shared"
+app_toml = root / "core/launcher-app/Cargo.toml"
+via_core_app = (
+    deps.get("launcher-app", {}).get("path") == "../core/launcher-app"
+    and app_toml.is_file()
+    and tomllib.loads(app_toml.read_text())["dependencies"]
+    .get("blockfield-shared", {})
+    .get("path")
+    == "../../shared"
+)
+if not (direct_shared or via_core_app):
     errors.append("The active shared contract dependency must be retained.")
 readme = (root / "README.md").read_text()
 for stale in (

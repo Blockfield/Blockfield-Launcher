@@ -368,6 +368,53 @@ fn scenario_filter_options_match_tsx_labels() {
     );
 }
 
+/// PR #177: TOP leaderboard rows are buttons named by the player; clicking one
+/// fires `open-player` with the row's UUID, and `player_profile_url` allows
+/// only dashed UUIDs targeting `https://blockfield.pro/players/<uuid>`.
+fn scenario_leaderboard_rows_open_player_profile() {
+    use i_slint_backend_testing::ElementHandle;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let other_uuid = "00000000-0000-4000-8000-000000000002";
+    let own_uuid = "f3e1b9a6-2270-3dee-8782-b7cdd8519efe";
+    let win = test_app();
+    win.set_active(2);
+    stats::apply_board(
+        &win,
+        &ok(board_json(
+            2,
+            vec![
+                row(other_uuid, "OtherPlayer", Some(1)),
+                row(own_uuid, "CaptureOperator", Some(2)),
+            ],
+        )),
+        own_uuid,
+        1,
+    );
+    let opened: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let opened_cb = opened.clone();
+    win.on_stats_open_player(move |uuid| {
+        opened_cb.borrow_mut().push(uuid.to_string());
+    });
+
+    let buttons: Vec<_> =
+        ElementHandle::find_by_accessible_label(&win, "Профиль OtherPlayer на сайте").collect();
+    assert_eq!(
+        buttons.len(),
+        1,
+        "OtherPlayer row must expose a profile button"
+    );
+    buttons[0].invoke_accessible_default_action();
+    assert_eq!(opened.borrow().as_slice(), &[other_uuid.to_string()]);
+    assert_eq!(
+        launcher_app::status_ops::player_profile_url(&opened.borrow()[0]).unwrap(),
+        format!("https://blockfield.pro/players/{other_uuid}")
+    );
+    assert!(launcher_app::status_ops::player_profile_url("not-a-uuid").is_err());
+    assert!(launcher_app::status_ops::player_profile_url("../admin").is_err());
+}
+
 #[test]
 fn stats_render_walk() {
     scenario_board_states_and_pager();
@@ -376,5 +423,6 @@ fn stats_render_walk() {
     scenario_stale_fixture_renders_both_banners();
     scenario_season_periods_extend_the_filter_model();
     scenario_filter_options_match_tsx_labels();
-    println!("PASS stats render walk (6 scenarios)");
+    scenario_leaderboard_rows_open_player_profile();
+    println!("PASS stats render walk (7 scenarios)");
 }

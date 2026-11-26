@@ -12,7 +12,7 @@ use std::sync::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use launcher_app::{LauncherAppState, ops::pack_check, status_ops};
+use launcher_app::{LauncherAppState, status_ops};
 use launcher_core::fmt;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel, Weak};
 use tokio::runtime::Handle;
@@ -230,10 +230,9 @@ pub struct StatsOutcome {
 
 /// `loadStats` (`stats.ts:133-160`): fetch, cache on success, fall back to
 /// the file cache stale-while-error. `data: None` without error means the API
-/// answered 404 (unknown player / no seasons), like the TS.
+/// answered 404 for an unknown player, like the TS.
 pub async fn load_stats(
     kind: StatsKind,
-    pack_base: &str,
     uuid: &str,
     query: &BTreeMap<String, String>,
     cache: &Path,
@@ -249,9 +248,9 @@ pub async fn load_stats(
         query,
     );
     let fetched = match kind {
-        StatsKind::Leaderboard => status_ops::stats_leaderboard(pack_base, query).await,
-        StatsKind::Seasons => status_ops::stats_seasons(pack_base).await,
-        StatsKind::Player => status_ops::stats_player(pack_base, uuid, query).await,
+        StatsKind::Leaderboard => status_ops::stats_leaderboard(query).await,
+        StatsKind::Seasons => status_ops::stats_seasons().await,
+        StatsKind::Player => status_ops::stats_player(uuid, query).await,
     };
     match fetched {
         Ok(data) => {
@@ -420,7 +419,10 @@ pub fn apply_board(app: &AppWindow, outcome: &StatsOutcome, uuid: &str, page: i6
         .map(|(index, row)| {
             let mmr = row.get("mmr").and_then(mmr_of);
             let name = get_str(row, "name");
+            let row_uuid = get_str(row, "uuid");
+            let own_row = row_uuid.to_lowercase() == own;
             StatsRow {
+                uuid: row_uuid.into(),
                 rank: fmt::display_rank(
                     row.get("rank").and_then(|v| v.as_i64()),
                     index as i64,
@@ -439,7 +441,7 @@ pub fn apply_board(app: &AppWindow, outcome: &StatsOutcome, uuid: &str, page: i6
                 kd: fmt::format_kd(get_i64(row, "kills"), get_i64(row, "deaths")).into(),
                 captures: get_i64(row, "captures").to_string().into(),
                 battles: fmt::format_battles(get_i64(row, "matches"), get_i64(row, "wins")).into(),
-                own: get_str(row, "uuid").to_lowercase() == own,
+                own: own_row,
             }
         })
         .collect();
@@ -660,6 +662,7 @@ pub fn wire_fixtures(app: &AppWindow) {
         }
     });
     app.on_stats_open_site(|| eprintln!("POC stats: open site is a stub (no backend)"));
+    app.on_stats_open_player(|_| eprintln!("POC stats: open player is a stub (no backend)"));
     app.on_stats_shown(|| {});
 }
 
@@ -742,21 +745,28 @@ pub fn wire_live(app: &AppWindow, handle: Handle, state: Arc<LauncherAppState>) 
         }
     });
     let weak_site = app.as_weak();
+    let player_handle = site_handle.clone();
     app.on_stats_open_site(move || {
         let Some(app) = weak_site.upgrade() else {
             return;
         };
-        let uuid = app.get_stats_self_uuid();
-        if uuid.is_empty() {
+        let uuid = app.get_stats_self_uuid().to_string();
+        if status_ops::player_profile_url(&uuid).is_err() {
             return;
         }
-        let uuid = uuid.to_string().to_lowercase();
         site_handle.spawn(async move {
-            let link = match pack_check::pack_base_url() {
-                Ok(base) => format!("{base}/players/{uuid}"),
-                Err(_) => return,
-            };
-            let _ = tokio::task::spawn_blocking(move || status_ops::open_url(&link)).await;
+            let _ =
+                tokio::task::spawn_blocking(move || status_ops::open_player_profile(&uuid)).await;
+        });
+    });
+    app.on_stats_open_player(move |uuid| {
+        let uuid = uuid.to_string();
+        if status_ops::player_profile_url(&uuid).is_err() {
+            return;
+        }
+        player_handle.spawn(async move {
+            let _ =
+                tokio::task::spawn_blocking(move || status_ops::open_player_profile(&uuid)).await;
         });
     });
 }
@@ -788,33 +798,10 @@ fn request_reload(
         let cache = cache_dir(&state.app_data_dir);
         let board_query = filters.query();
         let self_query = filters.base_query();
+        let empty_query = BTreeMap::new();
         let (board, seasons, player) = tokio::join!(
-            async {
-                match pack_check::pack_base_url() {
-                    Ok(base) => {
-                        load_stats(StatsKind::Leaderboard, &base, &uuid, &board_query, &cache).await
-                    }
-                    Err(error) => StatsOutcome {
-                        data: None,
-                        saved_at: None,
-                        stale: false,
-                        error: Some(error),
-                    },
-                }
-            },
-            async {
-                match pack_check::pack_base_url() {
-                    Ok(base) => {
-                        load_stats(StatsKind::Seasons, &base, &uuid, &BTreeMap::new(), &cache).await
-                    }
-                    Err(error) => StatsOutcome {
-                        data: None,
-                        saved_at: None,
-                        stale: false,
-                        error: Some(error),
-                    },
-                }
-            },
+            load_stats(StatsKind::Leaderboard, &uuid, &board_query, &cache),
+            load_stats(StatsKind::Seasons, &uuid, &empty_query, &cache),
             async {
                 if uuid.is_empty() {
                     return StatsOutcome {
@@ -824,17 +811,7 @@ fn request_reload(
                         error: None,
                     };
                 }
-                match pack_check::pack_base_url() {
-                    Ok(base) => {
-                        load_stats(StatsKind::Player, &base, &uuid, &self_query, &cache).await
-                    }
-                    Err(error) => StatsOutcome {
-                        data: None,
-                        saved_at: None,
-                        stale: false,
-                        error: Some(error),
-                    },
-                }
+                load_stats(StatsKind::Player, &uuid, &self_query, &cache).await
             }
         );
         let page = filters.page;

@@ -4,8 +4,7 @@ import { GridBackdrop, TopoBackdrop } from './Backdrop'
 import { PlayerHead } from './PlayerHead'
 import { ErrorDetail, SectionHeader } from './ui-bits'
 import { useI18n } from '../i18n'
-import { openExternalUrl } from '../../lib/api'
-import { apiBaseUrl } from '../../lib/api-base'
+import { openPlayerProfile } from '../../lib/api'
 import {
   displayRank,
   formatBattles,
@@ -224,10 +223,20 @@ export function StatsView({
                             {displayRank(row, index, page, limit)}
                           </td>
                           <td className="text-left">
-                            <span className="flex min-w-0 items-center gap-2 text-neutral-100">
+                            <button
+                              type="button"
+                              aria-label={`Профиль ${row.name} на сайте`}
+                              title={`Профиль ${row.name} на сайте`}
+                              onClick={() => {
+                                void openPlayerProfile(row.uuid)
+                              }}
+                              className="group flex min-w-0 max-w-full cursor-pointer items-center gap-2 rounded-sm text-[12px] font-normal leading-normal text-neutral-100 transition-colors hover:text-[#F5A524] focus-visible:outline-2 focus-visible:outline-[#F5A524]"
+                            >
                               <PlayerHead username={row.name} />
-                              <span className="truncate">{row.name}</span>
-                            </span>
+                              <span className="truncate py-0.5 group-hover:underline underline-offset-4">
+                                {row.name}
+                              </span>
+                            </button>
                           </td>
                           <td>{formatMmr(row.mmr)}</td>
                           <td>{formatScore(row.score)}</td>
@@ -365,7 +374,7 @@ function SelfCard({ uuid, self }: { uuid: string; self: StatsResult<PlayerStats>
         href="#"
         onClick={(event) => {
           event.preventDefault()
-          void openExternalUrl(`${apiBaseUrl()}/players/${uuid.toLowerCase()}`)
+          void openPlayerProfile(uuid)
         }}
         className="mt-auto flex items-center gap-1.5 text-[11px] text-[#C7AE86] hover:text-[#F5A524] transition-colors focus-visible:outline-2 focus-visible:outline-[#F5A524]"
       >

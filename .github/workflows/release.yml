@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-2025, macos-15, macos-15-intel]
+        os: [ubuntu-22.04, windows-2025]
     steps:
       - if: runner.os == 'Windows'
         run: git config --global core.longpaths true
@@ -43,7 +43,7 @@ jobs:
           node-version: '24.21.0'
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # Python 3.12 security releases have no Windows/macOS builds in setup-python.
+          # Python 3.12 security releases have no Windows builds in setup-python.
           python-version: ${{ runner.os == 'Linux' && '3.12.15' || '3.14.8' }}
       - name: Cache pinned project tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -60,7 +60,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # An Ubuntu 24.04 cache broke Ubuntu 22.04 clippy with "can't find crate".
-          # Keep runner images separate, including the two macOS architectures.
+          # Keep runner images separate.
           key: ${{ runner.os == 'Linux' && 'gh2204' || format('quality-{0}', matrix.os) }}
           workspaces: . -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -104,11 +104,49 @@ jobs:
           ghcr.io/gitleaks/gitleaks:v8.30.1
           detect --source=/repo --config=/repo/.gitleaks.toml --verbose --redact
 
+  # The draft release is created once, before the build matrix: tauri-action
+  # uploads to this release by id, so the Linux and Windows jobs can no longer
+  # create one draft each for the same tag (launcher#165).
+  create-draft:
+    name: Create draft release
+    if: github.ref_type == 'tag'
+    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      release-id: ${{ steps.draft.outputs.release-id }}
+    steps:
+      - name: Create the draft release once
+        id: draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No checkout in this job: gh needs the repository explicitly.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          # Idempotent: workflow reruns reuse the existing draft.
+          id=$(gh release view "$tag" --json databaseId --jq .databaseId 2>/dev/null || true)
+          if [ -z "$id" ]; then
+            gh release create "$tag" --draft \
+              --title "Launcher v${tag#launcher-v}" \
+              --notes "Stable release $tag ($GITHUB_SHA)" \
+              --target "$GITHUB_SHA"
+            id=$(gh release view "$tag" --json databaseId --jq .databaseId)
+          fi
+          echo "release-id=$id" >> "$GITHUB_OUTPUT"
+
   tauri-release:
-    if: github.ref_type == 'tag' || github.ref == 'refs/heads/main'
+    # create-draft is skipped off tags; a skipped need would otherwise skip the main-branch cache build.
+    if: >-
+      !cancelled()
+      && (github.ref_type == 'tag' || github.ref == 'refs/heads/main')
+      && (needs.create-draft.result == 'success' || needs.create-draft.result == 'skipped')
     name: Build launcher (${{ matrix.name }})
     timeout-minutes: 60
     environment: dev
+    needs: [create-draft]
     permissions:
       contents: write
     strategy:
@@ -122,14 +160,6 @@ jobs:
           - name: windows-x86_64
             os: windows-2025
             args: ''
-          - name: macos-aarch64
-            os: macos-15
-            args: --target aarch64-apple-darwin
-            target: aarch64-apple-darwin
-          - name: macos-x86_64
-            os: macos-15-intel
-            args: --target x86_64-apple-darwin
-            target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -144,31 +174,23 @@ jobs:
           v=$(node -p "require('./package.json').version")
           [ "launcher-v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != package.json version $v"; exit 1; }
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: runner.os == 'macOS'
-        with:
-          version: 12.9.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.21.0'
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        if: runner.os != 'macOS'
         with:
           python-version: ${{ runner.os == 'Windows' && '3.14.8' || '3.12.15' }}
       - name: Cache pinned project tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: runner.os != 'macOS'
         with:
           path: |
             .cache/quality
             .dev/jdk
           key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
-        if: runner.os != 'macOS'
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: 1.99.0
-          targets: ${{ matrix.target || '' }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: github-${{ matrix.os }}-${{ matrix.name }}
@@ -182,36 +204,17 @@ jobs:
         run: scripts/install-tauri-deps.sh libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - name: Locate pnpm store
         id: pnpm-store-3
-        if: runner.os != 'macOS'
         shell: bash
         run: echo "path=$(python -I -X utf8 scripts/quality.py run pnpm store path --silent)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: runner.os != 'macOS'
         with:
           path: ${{ steps.pnpm-store-3.outputs.path }}
           key: pnpm-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: just setup
-        if: runner.os != 'macOS'
-      - name: Locate pnpm store
-        id: pnpm-store-4
-        if: runner.os == 'macOS'
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: runner.os == 'macOS'
-        with:
-          path: ${{ steps.pnpm-store-4.outputs.path }}
-          key: pnpm-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
-      - run: pnpm install --frozen-lockfile
-        if: runner.os == 'macOS'
       - run: just config-check
-        if: runner.os != 'macOS'
         env:
           VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
-      - run: pnpm config:check
-        if: runner.os == 'macOS'
-        env:
-          VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
+          VITE_BLOCKFIELD_WORKSHOP_PACK_URL: ${{ vars.VITE_BLOCKFIELD_WORKSHOP_PACK_URL }}
       - name: Patch linuxdeploy GTK plugin for Wayland compatibility and metadata
         if: runner.os == 'Linux'
         run: scripts/patch-linuxdeploy.sh
@@ -222,6 +225,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
+          VITE_BLOCKFIELD_WORKSHOP_PACK_URL: ${{ vars.VITE_BLOCKFIELD_WORKSHOP_PACK_URL }}
           VITE_BRAND: ${{ vars.VITE_BRAND || 'BLOCKFIELD' }}
           VITE_BRAND_SUBTITLE: ${{ vars.VITE_BRAND_SUBTITLE || 'КОМАНДНЫЕ БОИ' }}
           VITE_CHROME_TITLE: ${{ vars.VITE_CHROME_TITLE || 'BLOCKFIELD LAUNCHER' }}
@@ -239,9 +243,12 @@ jobs:
           BLOCKFIELD_AUTO_UPDATE: ${{ vars.BLOCKFIELD_AUTO_UPDATE || 'true' }}
           BLOCKFIELD_DEFAULT_LANG: ${{ vars.BLOCKFIELD_DEFAULT_LANG || 'en' }}
         with:
-          tauriScript: ${{ runner.os == 'macOS' && 'pnpm tauri' || 'just tauri' }}
+          tauriScript: 'just tauri'
           args: --config src-tauri/tauri.prod.conf.json ${{ matrix.args }}
           # Empty on main: the cache run builds and signs but creates no release.
+          # On tags the draft already exists (create-draft job): upload by id so
+          # both matrix jobs share one release instead of creating one each.
+          releaseId: ${{ needs.create-draft.outputs.release-id }}
           tagName: ${{ github.ref_type == 'tag' && 'launcher-v__VERSION__' || '' }}
           releaseName: Launcher v__VERSION__
           releaseBody: Stable release ${{ github.ref_name }} (${{ github.sha }})
@@ -253,7 +260,7 @@ jobs:
     name: Publish launcher release
     if: github.ref_type == 'tag'
     timeout-minutes: 10
-    needs: [quality, secret-scan, tauri-release]
+    needs: [quality, secret-scan, tauri-release, create-draft]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -275,7 +282,7 @@ jobs:
           key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
       - name: Release text
-        uses: ./.github/actions/release-text
+        uses: Blockfield/blockfield-workspace/.github/actions/release-text@cdb1c24c5b88a18221c2d927d3df684c64c4472d
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           RELEASE_TEXT_MODEL: ${{ vars.RELEASE_TEXT_MODEL }}
@@ -284,6 +291,15 @@ jobs:
           version: ${{ github.ref_name }}
           kind: launcher
           out-dir: rn
+      - name: Fetch pinned release-notes check tool
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Blockfield/blockfield-workspace
+          ref: cdb1c24c5b88a18221c2d927d3df684c64c4472d
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout: .github/actions/release-text/release_notes_tool.py
+          path: vendor/release-text
       - name: Validate updater assets and publish the completed draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -291,7 +307,21 @@ jobs:
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
           tag="launcher-v$version"
-          just python .github/actions/release-text/release_notes_tool.py check rn/release-notes.md \
+          # gh addresses releases by tag, so pin the pre-created draft by id:
+          # exactly one draft must exist for this tag, and it must be ours.
+          expected_id="${{ needs.create-draft.outputs.release-id }}"
+          actual_id=$(gh release view "$tag" --json databaseId --jq .databaseId)
+          [ "$actual_id" = "$expected_id" ] || {
+            echo "::error::Draft release for $tag is id $actual_id, expected $expected_id. Delete the stray draft and rerun."
+            exit 1
+          }
+          count=$(gh release list --limit 200 --json tagName,isDraft \
+            --jq "[.[] | select(.tagName == \"$tag\" and .isDraft)] | length")
+          [ "$count" = "1" ] || {
+            echo "::error::Expected exactly one draft release for tag $tag, found $count. Delete the stray duplicate drafts and rerun."
+            exit 1
+          }
+          just python vendor/release-text/.github/actions/release-text/release_notes_tool.py check rn/release-notes.md \
             --repository Blockfield/Blockfield-Launcher --version "$tag" --kind launcher
           mkdir -p release
           gh release download "$tag" --dir release

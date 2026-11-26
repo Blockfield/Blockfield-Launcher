@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchServerStatus, openExternalUrl } from './api'
+import { fetchServerStatus, openExternalUrl, openPlayerProfile } from './api'
 
 const invoke = vi.fn()
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }))
@@ -66,5 +66,15 @@ describe('openExternalUrl', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+describe('openPlayerProfile', () => {
+  it('opens the site player page through the allow-listed backend command', async () => {
+    invoke.mockResolvedValue(undefined)
+    await openPlayerProfile('F3E1B9A6-2270-3DEE-8782-B7CDD8519EFE')
+    expect(invoke).toHaveBeenCalledWith('open_player_profile', {
+      uuid: 'f3e1b9a6-2270-3dee-8782-b7cdd8519efe',
+    })
   })
 })

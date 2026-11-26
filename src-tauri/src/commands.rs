@@ -91,12 +91,12 @@ type StatsQuery = std::collections::BTreeMap<String, String>;
 
 #[tauri::command]
 pub async fn stats_leaderboard(query: StatsQuery) -> Result<Option<serde_json::Value>, String> {
-    launcher_app::status_ops::stats_leaderboard(&pack_base_url()?, &query).await
+    launcher_app::status_ops::stats_leaderboard(&query).await
 }
 
 #[tauri::command]
 pub async fn stats_seasons() -> Result<Option<serde_json::Value>, String> {
-    launcher_app::status_ops::stats_seasons(&pack_base_url()?).await
+    launcher_app::status_ops::stats_seasons().await
 }
 
 #[tauri::command]
@@ -104,7 +104,7 @@ pub async fn stats_player(
     uuid: String,
     query: StatsQuery,
 ) -> Result<Option<serde_json::Value>, String> {
-    launcher_app::status_ops::stats_player(&pack_base_url()?, &uuid, &query).await
+    launcher_app::status_ops::stats_player(&uuid, &query).await
 }
 
 #[tauri::command]
@@ -117,6 +117,12 @@ pub fn game_status(state: State<'_, LauncherAppState>) -> crate::game::GameStatu
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
     launcher_app::status_ops::open_url(&url)
+}
+
+/// Leaderboard rows open exactly the site player page — no other URL shape passes this command.
+#[tauri::command]
+pub fn open_player_profile(uuid: String) -> Result<(), String> {
+    launcher_app::status_ops::open_player_profile(&uuid)
 }
 
 // ── Game launch command ────────────────────────────────────────

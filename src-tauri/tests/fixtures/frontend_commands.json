@@ -13,6 +13,7 @@
   "load_settings",
   "login",
   "logout",
+  "open_player_profile",
   "open_url",
   "pending_room",
   "preview_skin",

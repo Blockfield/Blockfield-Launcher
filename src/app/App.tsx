@@ -86,6 +86,9 @@ export default function App() {
 
   const [updatesVisited, setUpdatesVisited] = useState(false)
   const [updateRequest, setUpdateRequest] = useState(0)
+  // Play-triggered routings to Updates: the update flow launches on its own
+  // after the sync, so a forced update never costs the player a second press.
+  const [autoLaunchRequest, setAutoLaunchRequest] = useState(0)
   const [commandError, setCommandError] = useState<string | null>(null)
   // First run: never signed in on this install. Holding the loaded config here (instead of
   // just a boolean) lets the setup screen show real defaults (game dir/Java/RAM).
@@ -208,6 +211,15 @@ export default function App() {
   const navigate = (next: Screen) => {
     if (next === 'update') setUpdatesVisited(true)
     setScreen(next)
+  }
+  // Main screen routing to Updates: Play intent arms auto-launch after the
+  // sync (room invites), while ОБНОВИТЬ only syncs (launcher#156) — then the
+  // button becomes ИГРАТЬ.
+  const goUpdate = (autoLaunch: boolean) => {
+    if (profileBlocked) return
+    setUpdateRequest((value) => value + 1)
+    if (autoLaunch) setAutoLaunchRequest((value) => value + 1)
+    navigate('update')
   }
 
   const i18n = useMemo(() => ({ lang: 'ru' as const, t: translate }), [])
@@ -354,9 +366,7 @@ export default function App() {
               role="alert"
               className="absolute bottom-4 inset-x-4 z-50 flex items-start gap-4 border border-[#c98b8b] bg-[#11100D] p-4 text-[12px] text-[#F3E7D0]"
             >
-              <span className="min-w-0 flex-1 break-words">
-                Ошибка команды после выхода: {commandError}
-              </span>
+              <span className="min-w-0 flex-1 break-words">{commandError}</span>
               <button
                 onClick={() => setCommandError(null)}
                 className="shrink-0 underline underline-offset-4"
@@ -373,22 +383,20 @@ export default function App() {
               profileBlocked={profileBlocked}
               profileError={profileError}
               onSelectProfile={canWorkshop ? (next) => void selectProfile(next) : undefined}
-              onPlay={() => {
-                if (profileBlocked) return
-                setUpdateRequest((value) => value + 1)
-                navigate('update')
-              }}
+              onPlay={() => goUpdate(true)}
+              onUpdate={() => goUpdate(false)}
             />
           )}
           {updatesVisited && (
             <div hidden={screen !== 'update'} className="h-full min-h-0">
-              <UpdateScreen updateRequest={updateRequest} />
+              <UpdateScreen updateRequest={updateRequest} autoLaunchRequest={autoLaunchRequest} />
             </div>
           )}
           {screen === 'stats' && <StatsScreen uuid={account.uuid} />}
           {screen === 'settings' && (
             <SettingsScreen
               username={account?.username ?? ''}
+              playerUuid={account?.uuid ?? ''}
               canWorkshop={canWorkshop}
               profile={profile}
               profileBlocked={profileBlocked}

@@ -100,7 +100,7 @@ export type StatsRequest =
   | { kind: 'player'; uuid: string; query: StatsQuery }
 
 /**
- * `data === null` without `error` means the API answered 404 (unknown player / no seasons).
+ * `data === null` without `error` means the API answered 404 for an unknown player.
  * `stale` marks cached data shown because the latest request failed.
  */
 export interface StatsResult<T> {
@@ -178,3 +178,12 @@ export const displayRank = (
   page: number,
   limit: number,
 ) => row.rank ?? (page - 1) * limit + index + 1
+
+const PLAYER_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/** Site player page for a leaderboard row, or `null` when the uuid is not a dashed UUID. */
+export function playerProfileUrl(base: string, uuid: string): string | null {
+  const id = uuid.toLowerCase()
+  if (!PLAYER_UUID_RE.test(id)) return null
+  return `${base.replace(/\/$/, '')}/players/${id}`
+}

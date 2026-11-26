@@ -22,13 +22,23 @@ pub async fn server_status(
     // Profile-aware pack base (coordination#40): the Workshop profile reads its
     // second pack URL; the passed base stays as fallback when it is unset.
     let base = pack_base_url_for(config.active_profile).unwrap_or_else(|_| pack_base.to_string());
-    let game_target = match state.pack.read().await.as_ref() {
-        Some(pack) => pack.info.server.clone(),
-        None => pack::fetch_launcher_info(&base).await?.server,
+    // The Workshop pack's own server is its host by design, so the
+    // Game-host cross-check in target() would refuse the probe as soon as
+    // the pack cache refreshes (card flips to unavailable, #155). Status
+    // is a read-only probe of the configured address; the cross-check
+    // stays a launch-time guard.
+    let target = match config.active_profile {
+        ClientProfile::Workshop => config.workshop_probe_target()?,
+        ClientProfile::Game => {
+            let game_target = match state.pack.read().await.as_ref() {
+                Some(pack) => pack.info.server.clone(),
+                None => pack::fetch_launcher_info(&base).await?.server,
+            };
+            config
+                .target(&game_target)?
+                .ok_or("Адрес игрового сервера не настроен.")?
+        }
     };
-    let target = config
-        .target(&game_target)?
-        .ok_or("Адрес игрового сервера не настроен.")?;
     let (host, port) = status::split_host_port(&target);
     let ping_host = host.clone();
     let (status, (region_code, location_name), rooms) = tokio::join!(
@@ -53,23 +63,19 @@ pub async fn server_status(
     Ok(status)
 }
 
-pub async fn stats_leaderboard(
-    pack_base: &str,
-    query: &StatsQuery,
-) -> Result<Option<serde_json::Value>, String> {
-    status::fetch_stats(pack_base, "leaderboard", query).await
+pub async fn stats_leaderboard(query: &StatsQuery) -> Result<Option<serde_json::Value>, String> {
+    status::fetch_stats(status::STATS_API_URL, "leaderboard", query).await
 }
 
-pub async fn stats_seasons(pack_base: &str) -> Result<Option<serde_json::Value>, String> {
-    status::fetch_stats(pack_base, "seasons", &StatsQuery::new()).await
+pub async fn stats_seasons() -> Result<Option<serde_json::Value>, String> {
+    status::fetch_stats(status::STATS_API_URL, "seasons", &StatsQuery::new()).await
 }
 
 pub async fn stats_player(
-    pack_base: &str,
     uuid: &str,
     query: &StatsQuery,
 ) -> Result<Option<serde_json::Value>, String> {
-    status::fetch_stats(pack_base, &format!("players/{uuid}"), query).await
+    status::fetch_stats(status::STATS_API_URL, &format!("players/{uuid}"), query).await
 }
 
 pub fn game_status(state: &LauncherAppState) -> GameStatus {
@@ -123,6 +129,21 @@ pub fn open_url(url: &str) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("Cannot open link: {e}"))
+}
+
+/// Pure site player-profile URL builder: dashed lowercase UUID only (PR #177).
+pub fn player_profile_url(uuid: &str) -> Result<String, String> {
+    let uuid = uuid.to_lowercase();
+    if !status::valid_player_uuid(&uuid) {
+        return Err(format!("Refusing to open profile for {uuid}"));
+    }
+    Ok(format!("https://blockfield.pro/players/{uuid}"))
+}
+
+/// Leaderboard rows and self card open exactly the site player page — no other URL shape passes.
+pub fn open_player_profile(uuid: &str) -> Result<(), String> {
+    let url = player_profile_url(uuid)?;
+    open_url(&url)
 }
 
 /// Dev-build overrides in effect, so the developer can see what the launcher will actually do.
@@ -224,18 +245,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn player_profile_url_accepts_only_dashed_uuids_and_lowercases() {
+        assert_eq!(
+            player_profile_url("F3E1B9A6-2270-3DEE-8782-B7CDD8519EFE").unwrap(),
+            "https://blockfield.pro/players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe"
+        );
+        for bad in [
+            "",
+            "NetherG",
+            "f3e1b9a6_2270_3dee_8782_b7cdd8519efe",
+            "f3e1b9a622703dee8782b7cdd8519efe",
+            "https://blockfield.pro/players/f3e1b9a6-2270-3dee-8782-b7cdd8519efe",
+            "../admin",
+        ] {
+            assert!(player_profile_url(bad).is_err(), "{bad:?}");
+        }
+    }
+
     #[tokio::test]
     async fn stats_reject_invalid_requests_without_network() {
-        let base = "https://example.com/pack";
         // Bad player UUID segment.
-        let err = stats_player(base, "not-a-uuid", &StatsQuery::new())
+        let err = stats_player("not-a-uuid", &StatsQuery::new())
             .await
             .unwrap_err();
         assert_eq!(err, "Invalid stats request: players/not-a-uuid");
         // Unknown query key.
         let mut query = StatsQuery::new();
         query.insert("evil".to_string(), "1".to_string());
-        let err = stats_leaderboard(base, &query).await.unwrap_err();
+        let err = stats_leaderboard(&query).await.unwrap_err();
         assert_eq!(err, "Invalid stats request: leaderboard");
     }
 }

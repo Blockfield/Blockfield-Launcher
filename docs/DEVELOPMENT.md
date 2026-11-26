@@ -15,11 +15,13 @@ On **Play**, the launcher validates or refreshes the Drasl session, prepares Jav
 runs the pinned packwiz installer, prepares the vanilla runtime and launches Minecraft with the
 account's player name, UUID and access token. The pack's `server` field, including
 `raknet;host:port`, passes unchanged as one `--quickPlayMultiplayer` argument and
-as `BLOCKFIELD_SERVER`. RakNet (`raknet;host:25566`, UDP) is the only login transport:
-the proxy refuses every login that did not arrive over RakNet and keeps TCP 25565 open
-only for status pings. The status/region path therefore strips `raknet;` and uses TCP 25565
-of the same host for SLP. The launcher does not select a transport; every connect address it
-ships or migrates uses the `raknet;` form. `VITE_SERVER_IP` is display-only text and may be a
+as `BLOCKFIELD_SERVER`. RakNet (`raknet;host:25566`, UDP) is the default login transport;
+the proxy also accepts TCP 25565 logins through the same gate and routes them to the
+Game. The status/region path therefore strips `raknet;` and uses TCP 25565
+of the same host for SLP. If the RakNet path is unreachable from the player (a pre-launch
+unconnected ping to the `raknet;` address gets no reply), the launcher hands the game TCP
+`host:25565` instead, remembers the fallback per server for 24 hours, then retries RakNet.
+`VITE_SERVER_IP` is display-only text and may be a
 plain host. The client mod completes authentication through
 Drasl; the Velocity plugin verifies the session before routing the player.
 
@@ -34,7 +36,10 @@ Linux installation without root uses `scripts/install-linux.sh`.
 
 The August 2026 migration replaced the old Rust API/Filament CMS installation flow with packwiz.
 Those retired services remain documented in [historical notes](legacy/README.md); current accounts
-and dynamic room/statistics APIs are provided by Drasl and blockfield-site.
+and room APIs are provided by Drasl and blockfield-site. Statistics (seasons, leaderboard, player
+profiles) are read anonymously from the public control-plane instance at `https://cp.blockfield.pro`
+(`/public/*`); an unknown player is a 404 with `{"error":"player_not_found"}`, and any other
+non-2xx answer is shown as an error.
 
 The launcher checks the installed pack on startup; **Settings → Check at startup** also enables
 packwiz verification and repair of an up-to-date installation. **Verify files** runs this manually.
@@ -43,8 +48,8 @@ the current check and keeps an ongoing installation alive. Default maximum heap 
 memory choices remain unchanged. Java chooses its GC tuning; initial heap is 512 MiB.
 
 **Settings → Launch commands** supports a shell command before Minecraft and after its process
-exits (including a nonzero exit). A failing pre-launch command cancels the launch. Commands run
-in the game directory with `sh -c` on Linux/macOS or `cmd /D /S /C` on Windows. Environment:
+exits (including a nonzero exit). A failing pre-launch command shows a warning; the game still starts. Commands run
+in the game directory with `sh -c` on Linux or `cmd /D /S /C` on Windows. Environment:
 `INST_DIR`, `INST_MC_DIR`, `INST_JAVA`, and `INST_EXIT_CODE` (post-exit only; empty for termination
 without an exit code). Keep the launcher open for post-exit commands. Command output is appended
 to `logs/launcher-hooks.log`; the current game's stdout/stderr goes to `logs/launcher-game.log`.
@@ -119,9 +124,9 @@ and hook commands remain shared; hooks execute in the selected game directory.
 
 Game keeps the published `launcher.json.server` Quick Play target. Workshop uses
 **Настройки → Адрес мастерской** (`workshopServer`), default
-`raknet;workshop.blockfield.pro:25566`; a runtime or build-time `BLOCKFIELD_WORKSHOP_SERVER`
-overrides it. On load, an empty saved value or the old TCP default
-`workshop.blockfield.pro:25565` (trimmed, case-insensitive) is replaced by the current default;
+`raknet;workshop.blockfield.pro:25567` (the proxy routes UDP 25567 to the Workshop, 25566 to the game); a runtime or build-time `BLOCKFIELD_WORKSHOP_SERVER`
+overrides it. On load, an empty saved value or an old default
+(`workshop.blockfield.pro:25565`, `raknet;workshop.blockfield.pro:25566`; trimmed, case-insensitive) is replaced by the current default;
 any other saved value is kept. An empty value refuses launch with instructions to configure it. The target accepts a host with an optional port and
 `raknet;` transport prefix, including bracketed IPv6. It must have a **different host**
 from Game after transport/port, DNS case/trailing dot and numeric IPv6 normalization.
@@ -157,7 +162,8 @@ Unit tests are not evidence of live RakNet handshakes, DNS or production deploym
 | Shared Rust contracts    | `shared/`                          | Types still imported by the native launcher; not a deployed service           |
 | Static pack/content host | `Blockfield/blockfield-client`     | `pack.toml`, `index.toml`, `launcher.json`, `content.json`                    |
 | Accounts                 | Drasl at `skins.blockfield.pro`    | Yggdrasil sessions, account API, skins and capes                              |
-| Site API                 | `Blockfield/blockfield-site`       | `/api/rooms`, public statistics and web accounts                              |
+| Site API                 | `Blockfield/blockfield-site`       | `/api/rooms` and web accounts                                                 |
+| Stats API                | Control plane `cp.blockfield.pro`  | Anonymous `/public/*`: seasons, leaderboard, player profiles                  |
 | Login and routing        | `Blockfield/blockfield-proxy`      | Drasl session verification, backend routing and login forwarding              |
 | Game bridge              | `Blockfield/blockfield-mod`        | Client authentication, room requests, presence and server SLP snapshot        |
 | Launcher update feed     | Releases in this public repository | Signed bundles and `latest.json`                                              |
@@ -167,8 +173,17 @@ Unit tests are not evidence of live RakNet handshakes, DNS or production deploym
 Install Node.js 24.21.0 LTS (see `.nvmrc`), Python 3.12.15+, Just 1.58.0, Rust 1.99.0, and the platform dependencies required by Tauri.
 
 `just setup` installs the pinned pnpm, formatters, and linters into `.cache/quality`.
-Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux/Windows and Apple's zlib 1.2.12
-on macOS. Each platform's interpreter and compressor are verified; stale cached tool
+Версионированные хуки (`.githooks` через `core.hooksPath`): pre-commit форматирует
+staged-файлы теми же закреплёнными форматтерами и пере-stage'ит их, поэтому коммит
+всегда отформатирован (`just format-staged`); проверки хука и pre-push
+(`just lint`, `just format-check`, без Gradle) видят отформатированное дерево.
+Хуки включаются автоматически при любом `just`-вызове: свежий клон получает хуки
+на первом `just` (обход только через `--no-verify`).
+Если git уже берёт хуки из другого места (`core.hooksPath` в любом конфиге или
+активные хуки в `.git/hooks`), `just` их не трогает и только предупреждает.
+Если записать `core.hooksPath` не удалось, `just setup` завершается ошибкой.
+Build scripts use Python 3.12.15 with zlib 1.3.2 on Linux/Windows.
+Each platform's interpreter and compressor are verified; stale cached tool
 versions are replaced automatically.
 
 ```sh
@@ -225,23 +240,72 @@ The [archived API/CMS reports](legacy/README.md) are historical only.
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) publishes stable releases from `main`:
 
 1. Run frontend and Rust checks, dependency audits, and the Git history secret scan.
-2. Build and sign Linux, Windows, and macOS (Intel and Apple Silicon) bundles under the versioned `launcher-v<version>` tag.
+2. Build and sign Linux and Windows bundles under the versioned `launcher-v<version>` tag.
 3. Validate all signed updater assets, then publish the completed draft in [this repository](https://github.com/Blockfield/Blockfield-Launcher/releases).
 
-Quality checks cover Linux, Windows, Apple Silicon, and Intel Macs. Checks, secret scanning, and platform builds run in parallel. Standard GitHub-hosted runners build Linux on `ubuntu-22.04` (preserving the glibc baseline), Windows on `windows-2025`, Apple Silicon on `macos-15`, and Intel Macs on `macos-15-intel`. Platform builds have a 60-minute limit and upload to a draft release. Publication waits for every check, all four builds, and updater validation. No self-hosted runner is required.
+Quality checks cover Linux and Windows. Checks, secret scanning, and platform builds run in parallel. Standard GitHub-hosted runners build Linux on `ubuntu-22.04` (preserving the glibc baseline) and Windows on `windows-2025`. Platform builds have a 60-minute limit and upload to a draft release. Publication waits for every check, both builds, and updater validation. No self-hosted runner is required.
 
 CI generates `release-notes.md` and, when available, `announcement.json` from the last published launcher release and merged PRs. The public repository uses its pinned local copy of the shared `release-text` action; without an AI key, it produces validated notes from facts. New release notes are not committed in the release PR.
 
-The pinned Tauri release action uses versioned macOS updater archives
-(`blockfield-launcher_<version>_x64.app.tar.gz` and `_aarch64.app.tar.gz`). The
+The pinned Tauri release action produces versioned updater archives
+for both platforms (`blockfield-launcher_<version>_x64_en-US.msi` and
+`blockfield-launcher_<version>_amd64.AppImage`, plus the NSIS, `.deb` and `.rpm`
+installers). The
 publication check requires every installer and its nonempty signature before
 rebuilding `latest.json` with public release download URLs.
 
 Actions caches are scoped per ref, so a tag run cannot read caches saved by earlier tags. The same workflow runs on `main` every Monday (and on demand via `workflow_dispatch`): it runs the checks and builds, publishes nothing and saves the Rust and pnpm caches that tag runs restore read-only. Run it by hand after a dependency or Rust toolchain update.
 
-macOS apps are ad-hoc signed, without Apple notarization. After copying the app from the DMG into Applications, allow its first launch in System Settings → Privacy & Security. Updater archives are separately signed with the existing Tauri key. The hosted pack provides Java 21 downloads for Windows, Linux and both macOS architectures. The launcher selects, downloads, verifies and configures its runtime automatically; no manual Java installation or path selection is required.
+Updater archives are signed with the existing Tauri key. The hosted pack provides Java 21 downloads for Windows and Linux. The launcher selects, downloads, verifies and configures its runtime automatically; no manual Java installation or path selection is required.
+
+Versions follow the game: the minor (`1.1.0`) moves only for a major launcher update such as a new section or a redesign; fixes, dependency updates and small features are patches (`1.0.<n>`).
 
 Before releasing, update `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together, then run `pnpm version:check`. The signing secrets (`TAURI_PRIVATE_KEY`, `TAURI_KEY_PASSWORD`) and build variables remain in the existing GitHub environment named `dev`; its deployment policy must permit `main` and `launcher-v*` tags only. Tag builds also verify that the commit belongs to `main`. Publishing uses this repository’s `GITHUB_TOKEN`; no cross-repository token is needed.
+
+## Rollback of a bad launcher update
+
+The updater only moves forward: a client updates when `latest.json` carries a
+higher version than the installed one, never down. There is no downgrade path,
+so a rollback republishes the last-good code as a HIGHER version. Every client,
+whether on the bad or the good build, then updates forward onto good code.
+
+```
+just rollback --good 1.0.22 --bad 1.0.23 --new 1.0.24
+```
+
+The dry run prints the steps; the branch must be cut from `main` with its
+tree restored to the good tag, otherwise the merge keeps the bad code. End
+to end:
+
+1. `git switch -c rollback/launcher-v<new> origin/main`, then
+   `git restore --source=launcher-v<good> --staged --worktree -- . ':(exclude)justfile' ':(exclude)scripts/rollback-release.py' ':(exclude)scripts/test-rollback-release.py' ':(exclude)docs/DEVELOPMENT.md'` —
+   the tree now equals the good tag except the preserved rollback tooling;
+   everything else `main` gained after it, including the bad release, is
+   gone from the branch. The tooling must survive: the good tag predates it,
+   and a bare restore would delete `just rollback` itself mid-runbook.
+2. `just rollback --good <good> --bad <bad> --new <new> --apply` — refuses
+   unless the tree is at `<good>`, then bumps the three version files to
+   `<new>`.
+3. `pnpm version:check`, commit, push the branch, open a PR to `main` and
+   merge it after review. The rollback must land on `main`: the release
+   workflow only publishes tags whose commit belongs to `main`, and `main`
+   must stop carrying the bad code.
+4. On the updated `main`, `just rollback --good <good> --bad <bad> --new <new> --verify` —
+   refuses unless `main` differs from the good tag only in the version
+   files and the preserved rollback tooling (`justfile`,
+   `scripts/rollback-release.py`, `scripts/test-rollback-release.py`,
+   `docs/DEVELOPMENT.md`) — then `git tag launcher-v<new>` and push the tag. The tag
+   must equal the `package.json` version and the commit must belong to
+   `main` — the tag run checks both before it builds, signs and publishes.
+5. Download `latest.json` from the new release and confirm its `version` is
+   `<new>`; the `--latest` move points the update channel at it.
+
+Limits: clients stay on the bad build until the rollback release finishes, and
+the rollback version must stay higher than the bad one, or the updater ignores
+it. The planner rejects anything else than good < bad < new. Keep the bad tag
+and release in place for forensics; do not delete or reuse version numbers.
+`scripts/test-rollback-release.py` covers the ordering, the version bump and
+the updater behaviour against a mocked feed.
 
 The launcher tracks the game through preparation, running, and post-exit commands. Both launch
 buttons use that shared status, and the backend rejects overlapping launches. Opening the

@@ -31,8 +31,6 @@ class PrepareUpdaterTests(unittest.TestCase):
         self.assets = {
             "linux-x86_64": "blockfield-launcher_1.0.1_amd64.AppImage",
             "windows-x86_64": "blockfield-launcher_1.0.1_x64_en-US.msi",
-            "darwin-aarch64": "blockfield-launcher_1.0.1_aarch64.app.tar.gz",
-            "darwin-x86_64": "blockfield-launcher_1.0.1_x64.app.tar.gz",
             "windows-x86_64-nsis": "blockfield-launcher_1.0.1_x64-setup.exe",
             "linux-x86_64-deb": "blockfield-launcher_1.0.1_amd64.deb",
             "linux-x86_64-rpm": "blockfield-launcher-1.0.1-1.x86_64.rpm",
@@ -41,10 +39,10 @@ class PrepareUpdaterTests(unittest.TestCase):
             (self.root / name).write_bytes(b"bundle")
             (self.root / (name + ".sig")).write_text("signature-" + name + "\n")
 
-    def test_reconstructs_signed_platforms_with_versioned_mac_archives(self):
+    def test_reconstructs_signed_platforms_with_versioned_archives(self):
         updater.prepare(self.root, "1.0.1")
         data = json.loads(self.manifest.read_text())
-        self.assertEqual(len(data["platforms"]), 11)
+        self.assertEqual(len(data["platforms"]), 7)
         self.assertNotIn("obsolete-platform", data["platforms"])
         for key in ("version", "notes", "pub_date"):
             self.assertEqual(data[key], self.original[key])
@@ -57,8 +55,6 @@ class PrepareUpdaterTests(unittest.TestCase):
         for platform, bundle in (
             ("linux-x86_64", "appimage"),
             ("windows-x86_64", "msi"),
-            ("darwin-x86_64", "app"),
-            ("darwin-aarch64", "app"),
         ):
             self.assertEqual(
                 data["platforms"][platform], data["platforms"][f"{platform}-{bundle}"]
