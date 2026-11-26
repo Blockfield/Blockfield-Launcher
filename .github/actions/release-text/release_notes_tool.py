@@ -209,7 +209,9 @@ def pin_diff(old_pins, new_pins):
 
 
 def section(text, title):
-    m = re.search(rf"(?m)^##\s+{re.escape(title)}\s*$(.*?)(?=^##\s|\Z)", text, re.S)
+    m = re.search(
+        rf"(?m)^##[ \t]+{re.escape(title)}[ \t]*$(.*?)(?=^##[ \t]|\Z)", text, re.S
+    )
     return m.group(1).strip() if m else ""
 
 
@@ -344,7 +346,7 @@ def check(path, repository=None, version=None, kind=None):
     if meta["backfilled"] not in ("true", "false"):
         errors.append("заголовок: backfilled должен быть true/false")
     for title in REQUIRED_SECTIONS:
-        if not re.search(rf"(?m)^##\s+{re.escape(title)}\s*$", body):
+        if not re.search(rf"(?m)^##[ \t]+{re.escape(title)}[ \t]*$", body):
             errors.append(f"раздел отсутствует: `## {title}`")
     if not section(body, "Источники и ограничения полноты"):
         errors.append("раздел «Источники и ограничения полноты» пуст")

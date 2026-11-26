@@ -100,9 +100,9 @@ def importance(f):
 
 
 DENY_WORDS = re.compile(r"dokploy|webhook|homeserver|ghcr", re.I)
-HOST_RE = re.compile(
-    r"(?i)(?:https?://)?\b((?:[a-z0-9-]+\.)+(?:com|net|org|io|ru|dev|app|pro|cloud|xyz|me|tv|gg|info|site|online|eu|de|su))\b"
-    r"|https?://([^/\s)>\]\"']+)"
+URL_RE = re.compile(r"(?i)(https?://[^/\s)>\]\"']+)[^\s)>\]\"']*")
+BARE_HOST_RE = re.compile(
+    r"(?i)(?<![a-z0-9.-])((?:[a-z0-9-]+\.)+(?:com|net|org|io|ru|dev|app|pro|cloud|xyz|me|tv|gg|info|site|online|eu|de|su)(?:\.[a-z0-9-]+)*)\b"
 )
 # ponytail: разобранная четвёрка чисел считается IP, в том числе версия вида 1.1.7.10;
 # ложное срабатывание даёт текст только из фактов. Ослабить, если мешает на практике.
@@ -252,12 +252,30 @@ def flatten(pages, key=None):
     return out
 
 
+def _allowed_host(host):
+    return host == "blockfield.pro" or host.endswith(".blockfield.pro")
+
+
 def denied(text):
     """Что в тексте нельзя публиковать: чужие хосты, IP, внутренние названия."""
     found = [m.group(0) for m in DENY_WORDS.finditer(text)]
-    for m in HOST_RE.finditer(text):
-        host = (m.group(1) or m.group(2)).lower().split(":")[0]
-        if host != "blockfield.pro" and not host.endswith(".blockfield.pro"):
+
+    def check_url(m):
+        raw = m.group(0).rstrip(".,;:!?")
+        try:
+            host = (urllib.parse.urlsplit(raw).hostname or "").lower().rstrip(".")
+        except ValueError:
+            host = ""
+        if not host:
+            found.append(raw)
+        elif not _allowed_host(host):
+            found.append(host)
+        return " " + m.group(0)[len(m.group(1)) :]
+
+    rest = URL_RE.sub(check_url, text)
+    for m in BARE_HOST_RE.finditer(rest):
+        host = m.group(1).lower()
+        if not _allowed_host(host):
             found.append(host)
     for m in IP_RE.finditer(text):
         if all(int(part) <= 255 for part in m.group(0).split(".")):

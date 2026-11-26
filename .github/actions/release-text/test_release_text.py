@@ -2610,6 +2610,44 @@ class FactsOnlyFallbackTests(unittest.TestCase):
             text = rt.facts_only_notes(f)
         self.assertIn("подробные сведения недоступны", text)
 
+    def test_denied_rejects_allowlist_prefix_lookalike_hosts(self):
+        self.assertEqual(rt.denied("https://blockfield.pro/download"), [])
+        self.assertEqual(rt.denied("https://cdn.blockfield.pro:8443/x"), [])
+        self.assertEqual(rt.denied("blockfield.pro и cdn.blockfield.pro."), [])
+        for bad in (
+            "https://blockfield.pro.evil.example/x",
+            "https://foo.blockfield.pro.evil.example/x",
+            "https://blockfield.pro@evil.example/x",
+            "blockfield.pro.evil.example",
+            "foo.blockfield.pro.evil.example",
+        ):
+            with self.subTest(bad=bad):
+                self.assertTrue(rt.denied(bad), f"expected denied: {bad}")
+
+    def test_check_requires_heading_marker_and_title_on_same_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "release-notes.md"
+            p.write_text(
+                "---\n"
+                "schema_version: 1\n"
+                "repository: Blockfield/Blockfield-Launcher\n"
+                "version: launcher-v2.0.0\n"
+                "previous_version: launcher-v1.0.31\n"
+                "kind: launcher\n"
+                "date: 2026-11-26\n"
+                "backfilled: false\n"
+                "---\n\n"
+                "##\nКратко\n\nТекст.\n\n"
+                "## Для игроков\n\n- Ок\n\n"
+                "## Технические изменения\n\n- Ок\n\n"
+                "## Компоненты\n\n- Нет\n\n"
+                "## Источники и ограничения полноты\n\n- Ок\n",
+                encoding="utf-8",
+            )
+            errs = rn.check(p, version="launcher-v2.0.0", kind="launcher")
+            self.assertTrue(any("Кратко" in e for e in errs), errs)
+            self.assertEqual(rn.section(p.read_text(encoding="utf-8"), "Кратко"), "")
+
 
 if __name__ == "__main__":
     unittest.main()
