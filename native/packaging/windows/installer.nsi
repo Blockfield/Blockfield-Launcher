@@ -8,6 +8,9 @@ SetCompressor /SOLID lzma
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
+!include "Win\RestartManager.nsh"
+
+!define /ifndef ERROR_MORE_DATA 234
 
 !ifndef VERSION
   !error "VERSION must be defined (e.g. -DVERSION=1.0.31)"
@@ -114,6 +117,18 @@ LangString BlockfieldCleanupFailed ${LANG_ENGLISH} "Safe cleanup could not finis
 LangString BlockfieldCleanupFailed ${LANG_RUSSIAN} "Безопасную очистку не удалось завершить. Файлы без подтверждённого происхождения не удалены. Закройте игру и повторите; при необходимости переустановите лаунчер перед удалением."
 LangString BlockfieldCleanupFailed ${LANG_UKRAINIAN} "Не вдалося завершити безпечне очищення. Файли без підтвердженого походження не видалено. Закрийте гру й повторіть; за потреби перевстановіть лаунчер перед видаленням."
 
+LangString AppRunning ${LANG_ENGLISH} "${DISPLAYNAME} is currently running. Close it and try again."
+LangString AppRunning ${LANG_RUSSIAN} "${DISPLAYNAME} сейчас запущен. Закройте его и повторите попытку."
+LangString AppRunning ${LANG_UKRAINIAN} "${DISPLAYNAME} зараз запущено. Закрийте його та повторіть спробу."
+
+LangString AppRunningOkKill ${LANG_ENGLISH} "${DISPLAYNAME} is currently running. Click OK to close it and continue."
+LangString AppRunningOkKill ${LANG_RUSSIAN} "${DISPLAYNAME} сейчас запущен. Нажмите OK, чтобы закрыть его и продолжить."
+LangString AppRunningOkKill ${LANG_UKRAINIAN} "${DISPLAYNAME} зараз запущено. Натисніть OK, щоб закрити його та продовжити."
+
+LangString FailedToKillApp ${LANG_ENGLISH} "Could not close ${DISPLAYNAME}. Close it manually and try again."
+LangString FailedToKillApp ${LANG_RUSSIAN} "Не удалось закрыть ${DISPLAYNAME}. Закройте его вручную и повторите попытку."
+LangString FailedToKillApp ${LANG_UKRAINIAN} "Не вдалося закрити ${DISPLAYNAME}. Закрийте його вручну та повторіть спробу."
+
 Function SkipIfPassive
   ${If} $PassiveMode = 1
     Abort
@@ -172,8 +187,45 @@ FunctionEnd
   ${EndIf}
 !macroend
 
+!macro CheckIfAppIsRunning executablePath
+  !define UniqueID ${__LINE__}
+
+  ${If} ${FileExists} "${executablePath}"
+    !insertmacro RestartManager_StartSession $R0
+    ${If} $R0 != ""
+      !insertmacro RestartManager_RegisterFile $R0 "${executablePath}"
+      ${If} $0 = 0
+        System::Call 'RSTRTMGR::RmGetList(i R0, *i .r1, *i .r2, p 0, *i .r3) i .r0'
+        ; ERROR_SUCCESS means no locking processes; ERROR_MORE_DATA means at least one.
+        ${If} $0 = ${ERROR_MORE_DATA}
+          IfSilent kill_${UniqueID} 0
+          ${If} $PassiveMode <> 1
+            MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "$(AppRunningOkKill)" IDOK kill_${UniqueID} IDCANCEL cancel_${UniqueID}
+          ${EndIf}
+          kill_${UniqueID}:
+            System::Call 'RSTRTMGR::RmShutdown(i R0, i ${RmForceShutdown}, p 0) i .r0'
+            ${If} $0 = 0
+              Goto app_check_done_${UniqueID}
+            ${Else}
+              !insertmacro RestartManager_EndSession $R0
+              Abort "$(FailedToKillApp)"
+            ${EndIf}
+          cancel_${UniqueID}:
+            !insertmacro RestartManager_EndSession $R0
+            Abort "$(AppRunning)"
+          app_check_done_${UniqueID}:
+        ${EndIf}
+      ${EndIf}
+      !insertmacro RestartManager_EndSession $R0
+    ${EndIf}
+  ${EndIf}
+
+  !undef UniqueID
+!macroend
+
 Section Install
   SetOutPath "$INSTDIR"
+  !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe"
   File "/oname=${MAINBINARYNAME}.exe" "${BINARY_PATH}"
 
   !insertmacro RegisterScheme "blockfield"
@@ -198,17 +250,25 @@ Section Install
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${UNINSTKEY}" "EstimatedSize" "$0"
 
-  CreateDirectory "$SMPROGRAMS\${DISPLAYNAME}"
-  CreateShortcut "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  ${If} $UpdateMode <> 1
+    CreateDirectory "$SMPROGRAMS\${DISPLAYNAME}"
+    CreateShortcut "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  ${EndIf}
 
   ${If} $PassiveMode = 1
   ${OrIf} ${Silent}
-    Call CreateDesktopShortcut
+    ${If} $UpdateMode <> 1
+      Call CreateDesktopShortcut
+    ${EndIf}
+    SetAutoClose true
+  ${ElseIf} $UpdateMode = 1
     SetAutoClose true
   ${EndIf}
 SectionEnd
 
 Section Uninstall
+  !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe"
+
   ; Skip destructive cleanup during upgrades (exact parity with src-tauri/windows/hooks.nsh).
   ${If} $UpdateMode <> 1
     ClearErrors
@@ -235,4 +295,9 @@ Section Uninstall
 
   DeleteRegKey HKCU "${UNINSTKEY}"
   DeleteRegKey HKCU "${MANUPRODUCTKEY}"
+
+  ${If} $PassiveMode = 1
+  ${OrIf} $UpdateMode = 1
+    SetAutoClose true
+  ${EndIf}
 SectionEnd

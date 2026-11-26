@@ -75,6 +75,12 @@ test('native Windows NSIS and WiX installers register schemes and delegate safe 
   const nativeWxs = readFileSync(new URL('installer.wxs', nativePkg), 'utf8')
 
   assert.doesNotMatch(nativeNsis, /\bRmDir\s+\/r\b/i)
+  assert.match(nativeNsis, /^!include "Win\\RestartManager\.nsh"$/m)
+  const nativeRmCalls = [...nativeNsis.matchAll(/^\s*!insertmacro CheckIfAppIsRunning (.+)$/gm)]
+  assert.equal(nativeRmCalls.length, 2)
+  for (const [, args] of nativeRmCalls) {
+    assert.equal(args, '"$INSTDIR\\${MAINBINARYNAME}.exe"')
+  }
   assert.match(nativeNsis, /\$UpdateMode <> 1[\s\S]*ExecWait[^\n]*--uninstall-cleanup/)
   assert.match(nativeNsis, /\$0 <> 0[\s\S]*Abort/)
   assert.match(nativeNsis, /!insertmacro RegisterScheme "blockfield"/)
@@ -85,7 +91,8 @@ test('native Windows NSIS and WiX installers register schemes and delegate safe 
   assert.match(nativeNsis, /LangString BlockfieldCleanupFailed \$\{LANG_RUSSIAN\}/)
 
   assert.match(nativeWxs, /InstallScope="perUser"/)
-  assert.match(nativeWxs, /<MajorUpgrade\b/)
+  assert.doesNotMatch(nativeWxs, /InstallPrivileges=/)
+  assert.match(nativeWxs, /<MajorUpgrade\b[\s\S]*AllowSameVersionUpgrades="yes"/)
   assert.match(nativeWxs, /<MediaTemplate\s+EmbedCab="yes"\s*\/>/)
   assert.match(nativeWxs, /Key="Software\\Classes\\blockfield"/)
   assert.match(nativeWxs, /Key="Software\\Classes\\discord-\$\(var\.DiscordAppId\)"/)

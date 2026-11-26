@@ -846,9 +846,25 @@ pub mod self_update {
             .map_err(|e| e.to_string())
     }
 
+    /// Windows manifest target order: an NSIS install places `uninstall.exe`
+    /// beside the launcher, so prefer `-nsis` to stay on NSIS instead of
+    /// installing MSI side-by-side; MSI installs prefer the default MSI key.
+    pub fn windows_platform_targets(executable: &Path) -> Vec<String> {
+        let arch = std::env::consts::ARCH;
+        let is_nsis = executable
+            .parent()
+            .is_some_and(|dir| dir.join("uninstall.exe").is_file());
+        if is_nsis {
+            vec![format!("windows-{arch}-nsis"), format!("windows-{arch}")]
+        } else {
+            vec![format!("windows-{arch}"), format!("windows-{arch}-nsis")]
+        }
+    }
+
     /// Manifest platform keys to try in order. Linux installs from the
     /// `linux-{arch}-deb` artifact exactly like the Tauri updater target, and
-    /// only from a marker install; Windows tries the msi entry first.
+    /// only from a marker install; Windows matches the installed flavor
+    /// (NSIS vs MSI).
     pub fn platform_targets(executable: &Path) -> Result<Vec<String>, String> {
         #[cfg(target_os = "linux")]
         {
@@ -862,11 +878,7 @@ pub mod self_update {
         }
         #[cfg(target_os = "windows")]
         {
-            let _ = executable;
-            Ok(vec![
-                format!("windows-{}", std::env::consts::ARCH),
-                format!("windows-{}-nsis", std::env::consts::ARCH),
-            ])
+            Ok(windows_platform_targets(executable))
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
@@ -1144,7 +1156,9 @@ pub mod self_update {
             command.arg("/i").arg(staged).arg("/passive");
             command
         } else {
-            std::process::Command::new(staged)
+            let mut command = std::process::Command::new(staged);
+            command.args(["/P", "/UPDATE"]);
+            command
         }
     }
 
@@ -1210,15 +1224,17 @@ pub mod self_update {
             return Err("Invalid or oversized Debian update package".into());
         }
         let mut archive = ar::Archive::new(Cursor::new(package));
+        let mut seen_data = false;
         let mut binary = None;
         while let Some(entry) = archive.next_entry() {
             let entry = entry.map_err(|e| e.to_string())?;
             if entry.header().identifier() != b"data.tar.gz" {
                 continue;
             }
-            if binary.is_some() {
+            if seen_data {
                 return Err("Duplicate update payload".into());
             }
+            seen_data = true;
             let decoder = flate2::read::GzDecoder::new(entry).take(MAX_UNPACKED_BYTES);
             let mut data = tar::Archive::new(decoder);
             for entry in data.entries().map_err(|e| e.to_string())? {
@@ -1452,6 +1468,8 @@ pub mod self_update {
             let setup = Path::new("/tmp/blockfield-launcher-update.exe");
             let command = windows_installer_command(setup, false);
             assert_eq!(command.get_program(), setup.as_os_str());
+            let setup_args: Vec<_> = command.get_args().collect();
+            assert_eq!(setup_args, ["/P", "/UPDATE"]);
             // A launch failure surfaces as an error, never as "installed".
             assert!(
                 std::process::Command::new("/nonexistent/blockfield-installer")
@@ -1459,6 +1477,41 @@ pub mod self_update {
                     .map_err(|e| e.to_string())
                     .is_err()
             );
+        }
+
+        #[test]
+        fn windows_platform_targets_match_install_flavor() {
+            let dir = tempfile::tempdir().unwrap();
+            let exe = dir.path().join("blockfield-native.exe");
+            std::fs::write(&exe, b"MZ").unwrap();
+            let arch = std::env::consts::ARCH;
+            let msi_key = format!("windows-{arch}");
+            let nsis_key = format!("windows-{arch}-nsis");
+            let manifest = serde_json::json!({
+                "version": "1.0.32",
+                "platforms": {
+                    &msi_key: {"url": "https://example.invalid/app.msi", "signature": "eA=="},
+                    &nsis_key: {"url": "https://example.invalid/app-setup.exe", "signature": "eA=="},
+                }
+            })
+            .to_string();
+
+            // MSI-only install (no uninstall.exe beside the binary) prefers MSI first.
+            let msi_targets = windows_platform_targets(&exe);
+            assert_eq!(msi_targets, vec![msi_key.clone(), nsis_key.clone()]);
+            let msi_release = check_manifest(&manifest, &msi_targets, "1.0.31")
+                .unwrap()
+                .unwrap();
+            assert_eq!(msi_release.url, "https://example.invalid/app.msi");
+
+            // NSIS install drops uninstall.exe beside the launcher and must stay on NSIS.
+            std::fs::write(dir.path().join("uninstall.exe"), b"MZ").unwrap();
+            let nsis_targets = windows_platform_targets(&exe);
+            assert_eq!(nsis_targets, vec![nsis_key, msi_key]);
+            let nsis_release = check_manifest(&manifest, &nsis_targets, "1.0.31")
+                .unwrap()
+                .unwrap();
+            assert_eq!(nsis_release.url, "https://example.invalid/app-setup.exe");
         }
 
         #[test]
@@ -1741,6 +1794,45 @@ pub mod self_update {
                 assert!(extract_binary(b"not a deb").is_err());
                 let deb = package(&[("usr/bin/blockfield-launcher", tar::EntryType::Symlink, b"")]);
                 assert!(extract_binary(&deb).is_err());
+                // Duplicate data.tar.gz must be rejected even if the first had no binary.
+                let empty_tar = {
+                    let tar = tar::Builder::new(flate2::write::GzEncoder::new(
+                        Vec::new(),
+                        flate2::Compression::default(),
+                    ));
+                    tar.into_inner().unwrap().finish().unwrap()
+                };
+                let good_tar = {
+                    let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
+                        Vec::new(),
+                        flate2::Compression::default(),
+                    ));
+                    let mut header = tar::Header::new_gnu();
+                    header.set_size(binary.len() as u64);
+                    header.set_mode(0o755);
+                    header.set_entry_type(tar::EntryType::Regular);
+                    header.set_cksum();
+                    tar.append_data(&mut header, "usr/bin/blockfield-native", binary.as_slice())
+                        .unwrap();
+                    tar.into_inner().unwrap().finish().unwrap()
+                };
+                let mut dup_ar = ar::Builder::new(Vec::new());
+                dup_ar
+                    .append(
+                        &ar::Header::new(b"data.tar.gz".to_vec(), empty_tar.len() as u64),
+                        Cursor::new(empty_tar),
+                    )
+                    .unwrap();
+                dup_ar
+                    .append(
+                        &ar::Header::new(b"data.tar.gz".to_vec(), good_tar.len() as u64),
+                        Cursor::new(good_tar),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    extract_binary(&dup_ar.into_inner().unwrap()).unwrap_err(),
+                    "Duplicate update payload"
+                );
                 let mut appimage = binary.clone();
                 appimage[8..11].copy_from_slice(b"AI\x02");
                 assert!(validate_binary(&appimage).is_err());

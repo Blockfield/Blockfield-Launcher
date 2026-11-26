@@ -162,6 +162,24 @@ jobs:
           grep -F './usr/bin/blockfield-native' <<<"$contents"
           grep -F './usr/share/applications/blockfield-native.desktop' <<<"$contents"
           grep -F './usr/share/icons/hicolor/256x256/apps/blockfield-native.png' <<<"$contents"
+      - name: Smoke-check Windows MSI and NSIS packaging
+        if: runner.os == 'Windows'
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          if ! command -v makensis >/dev/null 2>&1 && [ ! -f "/c/Program Files (x86)/NSIS/makensis.exe" ]; then
+            choco install nsis --no-progress -y
+          fi
+          version=$(python -c 'import tomllib; print(tomllib.load(open("native/app/Cargo.toml", "rb"))["package"]["version"])')
+          out="$RUNNER_TEMP/native-win-smoke"
+          rm -rf "$out"
+          python scripts/package-native-windows.py \
+            --binary native/app/target/ci-test/blockfield-native.exe \
+            --version "$version" \
+            --output "$out"
+          ls -la "$out"
+          [ -s "$out/blockfield-native_${version}_x64_en-US.msi" ]
+          [ -s "$out/blockfield-native_${version}_x64-setup.exe" ]
       - name: Capture main and settings-skin
         timeout-minutes: 15
         env:
