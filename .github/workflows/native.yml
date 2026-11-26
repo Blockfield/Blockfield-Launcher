@@ -7,13 +7,13 @@ name: Native e2e
 # No secrets, no signing, no releases — artifacts only.
 on:
   push:
-    # Native e2e also runs on the integration branch itself so merges gating
-    # feat/native-slint are checked, not just native/** feature branches.
-    branches: [native/**, feat/native-slint]
+    # Native e2e runs on integration/release branches so pushes warm the
+    # shared Rust cache and gate merges.
+    branches: [native/**, feat/native-slint, next, main]
   pull_request:
-    # No paths filter: every PR to feat/native-slint runs this, so changes
-    # under core/** (path deps of the native app) and native/** are covered.
-    branches: [feat/native-slint]
+    # Run on PRs targeting feat/native-slint, next, and main (skipping doc-only edits).
+    branches: [feat/native-slint, next, main]
+    paths-ignore: ['**.md', 'docs/**', 'release-notes/**']
   workflow_dispatch:
     inputs:
       update_goldens:
