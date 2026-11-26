@@ -279,12 +279,25 @@ pub async fn check(state: &LauncherAppState, verify: bool) -> Result<VersionChec
     })
     .await?;
     if verify && !version.needs_update && version.java_ok && version.loader_ok {
-        let failed = install::verify_files(state, Some(profile)).await?;
-        if !failed.is_empty() {
-            return Err(format!("Не удалось проверить файлы: {}", failed.join(", ")));
-        }
+        // `verify_files` returns the runtime files it already healed; only
+        // `Err` is a failure. A non-empty list must not fail the check.
+        let repaired = install::verify_files(state, Some(profile)).await;
+        handle_verify_result(repaired)?;
     }
     Ok(version)
+}
+
+/// `verify_files` reports healed runtime paths via `Ok`; only `Err` fails verification.
+fn handle_verify_result(repaired: Result<Vec<String>, String>) -> Result<(), String> {
+    let repaired = repaired?;
+    if !repaired.is_empty() {
+        eprintln!(
+            "[check] repaired {} runtime files: {}",
+            repaired.len(),
+            repaired.join(", ")
+        );
+    }
+    Ok(())
 }
 
 fn apply_version(data: &mut MainData, version: VersionCheckResult) {
@@ -341,5 +354,17 @@ mod tests {
             "😀".repeat(32)
         );
         assert_eq!(super::launcher_version(), "1.0.31");
+    }
+
+    #[test]
+    fn repaired_files_do_not_fail_verification() {
+        // `verify_files` returns healed runtime paths via `Ok`; only `Err`
+        // is a failure. A non-empty repaired list must still verify.
+        assert!(super::handle_verify_result(Ok(vec![])).is_ok());
+        assert!(super::handle_verify_result(Ok(vec!["mods/a.jar".to_string()])).is_ok());
+        assert_eq!(
+            super::handle_verify_result(Err("boom".to_string())).unwrap_err(),
+            "boom"
+        );
     }
 }

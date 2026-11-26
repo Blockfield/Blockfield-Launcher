@@ -5,10 +5,11 @@
 //! the Tauri adapter (`minecraft.rs`, owned by a later unit), so the wrapper
 //! passes it as `loader_ok` and tests pass a stub.
 
+use super::install::pack_phase_done;
 use super::java::java_runtime_ready;
 use crate::{LauncherAppState, PackState, VersionCheckResult};
 use launcher_core::config::ClientProfile;
-use launcher_net::pack::PackMeta;
+use launcher_net::pack::{LauncherInfo, PackMeta};
 use std::path::{Path, PathBuf};
 
 pub const INSTALLED_VERSION_FILE: &str = ".blockfield-pack-version";
@@ -91,27 +92,37 @@ pub async fn check_modpack_version(
     let base = pack_base_url_for(profile)?;
     let info = launcher_net::pack::fetch_launcher_info(&base).await?;
     let meta = launcher_net::pack::fetch_pack_meta(&info.pack).await?;
+    resolve_check(state, profile, base, info, meta, loader_ok).await
+}
 
-    // No operation lock across the network fetches above: holding it there
-    // starves select_profile/save_settings (and the UI retry that waits on a
-    // busy->idle game transition) whenever a probe is in flight. The lock only
-    // guards the pack-state write below.
-    let _operation = state
-        .operation
-        .try_lock()
-        .map_err(|_| "Дождитесь завершения текущей операции.")?;
-    let config = state.config.read().await.active();
-    ensure_profile_unchanged(profile, config.active_profile)?;
-    let game_dir = PathBuf::from(&config.game_dir);
+async fn resolve_check(
+    state: &LauncherAppState,
+    profile: ClientProfile,
+    base: String,
+    info: LauncherInfo,
+    meta: PackMeta,
+    loader_ok: impl FnOnce(&Path, &PackMeta) -> bool,
+) -> Result<VersionCheckResult, String> {
+    // No operation lock across the checks below either: they (re-)hash
+    // changed files on the blocking pool, and a background check must not
+    // starve Play or profile clicks while it does. The lock only guards
+    // the pack-state write at the end; the profile is re-verified there, so a
+    // switch mid-check fails closed instead of binding a stale game dir.
+    // Snapshot the dir first (failing closed if the profile already switched
+    // during the network fetch) so the scan below never reads the other
+    // profile's directory.
+    let (game_dir, app_data) = {
+        let config = state.config.read().await.active();
+        ensure_profile_unchanged(profile, config.active_profile)?;
+        (PathBuf::from(&config.game_dir), state.app_data_dir.clone())
+    };
     let (installed_hash, installed) = installed_pack(&game_dir);
     // A frozen dev pack must not turn "Играть" into "Обновить": the developer manages these files.
-    let needs_update = installed_hash != meta.index_hash && !launcher_core::dev::freeze_pack();
-    log::info!(
-        "[check_modpack_version] pack={} remote={} installed={} needs_update={needs_update}",
-        info.pack,
-        meta.version,
-        installed
-    );
+    // A same-size-corrupted pack must not look current either: the hash check
+    // (cached, stats only for unchanged files) forces the update screen.
+    let pack_done = pack_phase_done(app_data, game_dir.clone(), meta.index_hash.clone()).await;
+    let needs_update =
+        (installed_hash != meta.index_hash || !pack_done) && !launcher_core::dev::freeze_pack();
 
     let java = info.java_for_this_platform();
     let java_ok = java
@@ -119,6 +130,22 @@ pub async fn check_modpack_version(
         .is_none_or(|java| java_runtime_ready(&game_dir, &java.version));
 
     let loader_ok = loader_ok(&game_dir, &meta);
+
+    let _operation = state
+        .operation
+        .try_lock()
+        .map_err(|_| "Дождитесь завершения текущей операции.")?;
+    let config = state.config.read().await.active();
+    ensure_profile_unchanged(profile, config.active_profile)?;
+    if Path::new(&config.game_dir) != game_dir.as_path() {
+        return Err("Настройки изменились. Повторите проверку.".into());
+    }
+    log::info!(
+        "[check_modpack_version] pack={} remote={} installed={} needs_update={needs_update}",
+        info.pack,
+        meta.version,
+        installed
+    );
 
     let result = VersionCheckResult {
         needs_update,
@@ -356,5 +383,199 @@ mod tests {
                 .unwrap_err(),
             "Профиль изменился. Повторите проверку.",
         );
+    }
+
+    fn test_info_meta(version: &str, index_hash: &str) -> (LauncherInfo, PackMeta) {
+        use launcher_net::pack::{Artifact, LauncherInfo, PackMeta};
+        let info = LauncherInfo {
+            pack: "https://packs.example.com/pack.toml".into(),
+            server: String::new(),
+            installer: Artifact {
+                url: String::new(),
+                sha256: String::new(),
+                source: None,
+            },
+            bootstrap: Artifact {
+                url: String::new(),
+                sha256: String::new(),
+                source: None,
+            },
+            java: Default::default(),
+            skins: None,
+        };
+        let meta = PackMeta {
+            version: version.into(),
+            index_hash: index_hash.into(),
+            minecraft: "1.21.1".into(),
+            loader: None,
+        };
+        (info, meta)
+    }
+
+    fn temp_root(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "blockfield-pack-check-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn write_indexed_mod(game_dir: &Path, bytes: &[u8]) {
+        use launcher_net::download::Downloader;
+        let file = game_dir.join("mods/a.jar");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, bytes).unwrap();
+        let hash = Downloader::sha256_file(&file).unwrap();
+        std::fs::write(
+            game_dir.join("packwiz.json"),
+            serde_json::to_vec(&serde_json::json!({ "cachedFiles": {
+                "a": {
+                    "cachedLocation": "mods/a.jar",
+                    "hash": { "type": "sha256", "value": hash }
+                }
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn matching_marker_with_broken_files_still_needs_update() {
+        if launcher_core::dev::freeze_pack() {
+            eprintln!("SKIP: frozen dev pack forces no update");
+            return;
+        }
+        let root = temp_root("heal");
+        let game = root.join("game");
+        let data = root.join("app-data");
+        std::fs::create_dir_all(&game).unwrap();
+        let config = LauncherConfig {
+            game_dir: game.to_string_lossy().to_string(),
+            ..LauncherConfig::default()
+        };
+        let state = test_state(data.clone(), config);
+        let (info, meta) = test_info_meta("2.0.0", "abc123");
+        std::fs::write(game.join(INSTALLED_VERSION_FILE), "abc123\n2.0.0\n").unwrap();
+        write_indexed_mod(&game, b"correct-bytes!");
+        let run =
+            |state: &LauncherAppState, info: LauncherInfo, meta: launcher_net::pack::PackMeta| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(resolve_check(
+                        state,
+                        ClientProfile::Game,
+                        "https://packs.example.com/blockfield".into(),
+                        info,
+                        meta,
+                        |_, _| true,
+                    ))
+            };
+        // Valid pack: matching marker + intact files => no update.
+        let ok = run(&state, info.clone(), meta.clone()).unwrap();
+        assert!(!ok.needs_update);
+        // Missing indexed mod forces the update screen so it heals.
+        std::fs::remove_file(game.join("mods/a.jar")).unwrap();
+        let missing = run(&state, info.clone(), meta.clone()).unwrap();
+        assert!(missing.needs_update);
+        // Same-size corruption forces it too (drop the stat cache so the
+        // rewrite is re-hashed, like a real edit later in time would be).
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::write(game.join("mods/a.jar"), b"corrupt-bytes!").unwrap();
+        let corrupt = run(&state, info, meta).unwrap();
+        assert!(corrupt.needs_update);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn loader_scan_runs_outside_operation_lock() {
+        let root = temp_root("nolock");
+        let game = root.join("game");
+        let data = root.join("app-data");
+        std::fs::create_dir_all(&game).unwrap();
+        let config = LauncherConfig {
+            game_dir: game.to_string_lossy().to_string(),
+            ..LauncherConfig::default()
+        };
+        let state = test_state(data, config);
+        let (info, meta) = test_info_meta("2.0.0", "abc123");
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(resolve_check(
+                &state,
+                ClientProfile::Game,
+                "https://packs.example.com/blockfield".into(),
+                info,
+                meta,
+                |_, _| {
+                    // The disk/runtime scan must not hold the operation gate,
+                    // or background checks starve Play / profile switch.
+                    assert!(state.operation.try_lock().is_ok());
+                    true
+                },
+            ));
+        assert!(result.is_ok());
+        assert!(state.pack.blocking_read().is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn profile_or_dir_change_mid_check_fails_closed() {
+        for (tag, switch) in [("profile", true), ("gamedir", false)] {
+            let root = temp_root(tag);
+            let game = root.join("game");
+            let data = root.join("app-data");
+            std::fs::create_dir_all(&game).unwrap();
+            let other = root.join("other-game");
+            std::fs::create_dir_all(&other).unwrap();
+            let config = LauncherConfig {
+                game_dir: game.to_string_lossy().to_string(),
+                active_profile: ClientProfile::Game,
+                ..LauncherConfig::default()
+            };
+            let state = test_state(data, config);
+            let (info, meta) = test_info_meta("2.0.0", "abc123");
+            let other_path = other.to_string_lossy().to_string();
+            let result = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(resolve_check(
+                    &state,
+                    ClientProfile::Game,
+                    "https://packs.example.com/blockfield".into(),
+                    info,
+                    meta,
+                    |_, _| {
+                        let mut config = state.config.try_write().expect("config free mid-scan");
+                        if switch {
+                            config.active_profile = ClientProfile::Workshop;
+                        } else {
+                            config.game_dir = other_path.clone();
+                        }
+                        true
+                    },
+                ));
+            let Err(err) = result else {
+                panic!("{tag}: stale scan must fail closed");
+            };
+            assert_eq!(
+                err,
+                if switch {
+                    "Профиль изменился. Повторите проверку."
+                } else {
+                    "Настройки изменились. Повторите проверку."
+                },
+                "{tag}"
+            );
+            assert!(state.pack.blocking_read().is_none(), "{tag}");
+            let _ = std::fs::remove_dir_all(root);
+        }
     }
 }
