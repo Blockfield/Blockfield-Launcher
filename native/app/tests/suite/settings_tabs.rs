@@ -20,7 +20,7 @@ fn press(app: &AppWindow, key: slint::platform::Key) {
 
 #[test]
 fn settings_controls_commit_reset_validate_and_keep_edits_across_tabs() {
-    i_slint_backend_testing::init_no_event_loop();
+    crate::init_slint();
     let app = AppWindow::new().unwrap();
     let (_host, _activity) = wire_app(&app, Backend::Fixtures).unwrap();
     settings_fixtures::apply(&app, "settings-general", "default").unwrap();

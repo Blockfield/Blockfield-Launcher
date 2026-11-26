@@ -21,17 +21,9 @@ use blockfield_native::{AppWindow, PreviewHost, fixtures, wire_app};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementQuery};
 use slint::{ComponentHandle, Model};
 
-fn init_once() {
-    use std::sync::Once;
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        i_slint_backend_testing::init_no_event_loop();
-    });
-}
-
 /// Given a fresh, fully wired app window for `state`/`scenario`.
 fn given_app(state: &str, scenario: &str) -> (AppWindow, Rc<PreviewHost>) {
-    init_once();
+    crate::init_slint();
     let app = AppWindow::new().expect("test window");
     let (host, _activity) =
         wire_app(&app, blockfield_native::backend::Backend::Fixtures).expect("wire test app");

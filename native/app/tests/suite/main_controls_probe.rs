@@ -5,7 +5,7 @@ use slint::{
 };
 
 slint::slint! {
-    import { ActionArea } from "../ui/controls.slint";
+    import { ActionArea } from "../../ui/controls.slint";
     export component ControlsProbe inherits Window {
         width: 100px; height: 100px;
         in property <bool> enabled: true;
@@ -22,7 +22,7 @@ slint::slint! {
 }
 
 slint::slint! {
-    import { StatusDot } from "../ui/controls.slint";
+    import { StatusDot } from "../../ui/controls.slint";
     export component PulseProbe inherits Window {
         width: 100px; height: 100px;
         out property <float> dot-opacity: dot.opacity;
@@ -32,7 +32,7 @@ slint::slint! {
 
 #[test]
 fn controls_input_contract() {
-    i_slint_backend_testing::init_no_event_loop();
+    crate::init_slint();
     let app = ControlsProbe::new().unwrap();
     app.show().unwrap();
     slint::platform::update_timers_and_animations();
@@ -98,7 +98,7 @@ fn controls_input_contract() {
 fn pulse_steps_down_at_thirty_fps() {
     // launcher#59: the 30 fps stepped triangle must actually advance and fade
     // (fail-before: integer division froze it at full opacity).
-    i_slint_backend_testing::init_no_event_loop();
+    crate::init_slint();
     let app = PulseProbe::new().unwrap();
     app.show().unwrap();
     slint::platform::update_timers_and_animations();

@@ -58,9 +58,21 @@ slint-build = "~1.18"
 lto = "thin"
 strip = true
 
-# Layer-1 CI profile: same opts as release (identical test semantics) but no
-# LTO, so linking the N test binaries of the huge Slint crate stays fast on
-# every OS. The shipped binary keeps [profile.release] (thin LTO).
+# Layer-1 CI profile: workspace code builds at opt-level 0 (fast codegen and
+# link) while every dependency keeps opt-level 2; debug-assertions stay off
+# so cfg!(debug_assertions) in fixtures.rs and update.rs matches release.
+# The shipped binary keeps [profile.release] (thin LTO).
 [profile.ci-test]
-inherits = "release"
+inherits = "dev"
+opt-level = 0
+debug = 0
+debug-assertions = false
+overflow-checks = false
+incremental = false
 lto = false
+strip = false
+codegen-units = 16
+
+[profile.ci-test.package."*"]
+opt-level = 2
+debug = 0
