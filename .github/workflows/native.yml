@@ -144,6 +144,24 @@ jobs:
         run: |
           cd native/app
           cargo build --locked --profile ci-test --bin blockfield-native
+      - name: Smoke-check Linux .deb packaging
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
+          out="$RUNNER_TEMP/native-deb-smoke"
+          rm -rf "$out"
+          deb=$(python3 scripts/package-native-deb.py \
+            --binary native/app/target/ci-test/blockfield-native \
+            --version "$version" \
+            --output "$out")
+          dpkg-deb --info "$deb"
+          contents=$(dpkg-deb --contents "$deb")
+          printf '%s\n' "$contents"
+          grep -F './usr/bin/blockfield-native' <<<"$contents"
+          grep -F './usr/share/applications/blockfield-native.desktop' <<<"$contents"
+          grep -F './usr/share/icons/hicolor/256x256/apps/blockfield-native.png' <<<"$contents"
       - name: Capture main and settings-skin
         timeout-minutes: 15
         env:

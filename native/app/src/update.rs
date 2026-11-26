@@ -917,12 +917,22 @@ pub mod self_update {
     /// error; anything else failing stays an error.
     pub async fn check_for_update() -> Result<Option<Release>, String> {
         let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-        let targets = platform_targets(&executable)?;
+        check_for_update_at(UPDATE_ENDPOINT, &executable, super::launcher_version()).await
+    }
+
+    /// Check pipeline against an explicit endpoint, executable path and version
+    /// (used by production `check_for_update` and end-to-end self-update tests).
+    pub async fn check_for_update_at(
+        endpoint: &str,
+        executable: &Path,
+        current_version: &str,
+    ) -> Result<Option<Release>, String> {
+        let targets = platform_targets(executable)?;
         let client = http_client()?;
-        let Some(text) = fetch_manifest(&client, UPDATE_ENDPOINT).await? else {
+        let Some(text) = fetch_manifest(&client, endpoint).await? else {
             return Ok(None);
         };
-        check_manifest(&text, &targets, super::launcher_version())
+        check_manifest(&text, &targets, current_version)
     }
 
     async fn fetch_manifest(client: &reqwest::Client, url: &str) -> Result<Option<String>, String> {
@@ -1027,14 +1037,27 @@ pub mod self_update {
     pub async fn install_release(
         release: &Release,
         on_progress: impl FnMut(u64, Option<u64>),
+        on_stage: impl FnMut(InstallStage),
+    ) -> Result<(), String> {
+        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        install_release_with(release, UPDATE_PUBKEY, executable, on_progress, on_stage).await
+    }
+
+    /// Same download → verify → install pipeline with an explicit pinned
+    /// public key and target executable (production `install_release` plus
+    /// end-to-end tests with a throwaway key and temp install).
+    pub async fn install_release_with(
+        release: &Release,
+        pubkey_base64: &str,
+        executable: std::path::PathBuf,
+        on_progress: impl FnMut(u64, Option<u64>),
         mut on_stage: impl FnMut(InstallStage),
     ) -> Result<(), String> {
         let client = http_client()?;
         let bytes = download_bytes(&client, &release.url, on_progress).await?;
         on_stage(InstallStage::Verifying);
-        verify_signature(&bytes, &release.signature, &release.version)?;
+        verify_signature_with_key(&bytes, &release.signature, &release.version, pubkey_base64)?;
         on_stage(InstallStage::Installing);
-        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
         tokio::task::spawn_blocking(move || install_package(&bytes, &executable))
             .await
             .map_err(|e| e.to_string())?
@@ -1125,6 +1148,21 @@ pub mod self_update {
         }
     }
 
+    /// Sibling `.previous` backup path for `executable` (keeps dual-channel
+    /// `blockfield-native` and `blockfield-launcher` backups separate).
+    #[cfg(target_os = "linux")]
+    pub fn backup_path(executable: &Path) -> std::io::Result<std::path::PathBuf> {
+        let directory = executable
+            .parent()
+            .ok_or_else(|| std::io::Error::other("No install directory"))?;
+        let name = executable
+            .file_name()
+            .ok_or_else(|| std::io::Error::other("No executable name"))?;
+        let mut backup = name.to_os_string();
+        backup.push(".previous");
+        Ok(directory.join(backup))
+    }
+
     /// Restore the `.previous` backup over the executable (Linux; the backup
     /// is written by every install before the running binary is replaced).
     /// Re-validates the backup format first so rollback never installs a
@@ -1138,7 +1176,7 @@ pub mod self_update {
         let directory = executable
             .parent()
             .ok_or_else(|| "No install directory".to_string())?;
-        let backup = directory.join("blockfield-launcher.previous");
+        let backup = backup_path(executable).map_err(|e| e.to_string())?;
         let previous =
             std::fs::read(&backup).map_err(|e| format!("No rollback backup available: {e}"))?;
         validate_binary(&previous).map_err(|e| format!("Rollback backup is invalid: {e}"))?;
@@ -1162,9 +1200,9 @@ pub mod self_update {
         Err("Rollback is handled by the OS installer on this platform".into())
     }
 
-    /// Same deb layout the Tauri `native_update` installs: `data.tar.gz` must
-    /// carry exactly one regular `usr/bin/blockfield-launcher` file holding a
-    /// native executable for this CPU (AppImages rejected).
+    /// Debian payload extraction: `data.tar.gz` must carry exactly one regular
+    /// `usr/bin/blockfield-native` (or cutover `usr/bin/blockfield-launcher`)
+    /// file holding a native ELF executable for this CPU (AppImages rejected).
     #[cfg(target_os = "linux")]
     fn extract_binary(package: &[u8]) -> Result<Vec<u8>, String> {
         use std::io::{Cursor, Read as _};
@@ -1187,7 +1225,9 @@ pub mod self_update {
                 let mut entry = entry.map_err(|e| e.to_string())?;
                 let path = entry.path().map_err(|e| e.to_string())?;
                 let path = path.strip_prefix(".").unwrap_or(&path);
-                if path != Path::new("usr/bin/blockfield-launcher") {
+                if path != Path::new("usr/bin/blockfield-native")
+                    && path != Path::new("usr/bin/blockfield-launcher")
+                {
                     continue;
                 }
                 if binary.is_some()
@@ -1203,7 +1243,7 @@ pub mod self_update {
             }
         }
         binary.ok_or_else(|| {
-            "Update does not contain usr/bin/blockfield-launcher in data.tar.gz".into()
+            "Update does not contain usr/bin/blockfield-native in data.tar.gz".into()
         })
     }
 
@@ -1273,7 +1313,7 @@ pub mod self_update {
         let backup = tempfile::NamedTempFile::new_in(directory)?;
         std::fs::copy(executable, backup.path())?;
         backup.as_file().sync_all()?;
-        let previous = directory.join("blockfield-launcher.previous");
+        let previous = backup_path(executable)?;
         backup.persist(&previous)?;
         staged.persist(executable)?;
         std::fs::File::open(directory)?.sync_all()?;
@@ -1676,6 +1716,28 @@ pub mod self_update {
                     ),
                 ]);
                 assert_eq!(extract_binary(&deb).unwrap(), binary);
+                let deb = package(&[
+                    ("usr/share/ignored", tar::EntryType::Regular, b"ignore"),
+                    (
+                        "usr/bin/blockfield-native",
+                        tar::EntryType::Regular,
+                        &binary,
+                    ),
+                ]);
+                assert_eq!(extract_binary(&deb).unwrap(), binary);
+                let deb = package(&[
+                    (
+                        "usr/bin/blockfield-native",
+                        tar::EntryType::Regular,
+                        &binary,
+                    ),
+                    (
+                        "usr/bin/blockfield-launcher",
+                        tar::EntryType::Regular,
+                        &binary,
+                    ),
+                ]);
+                assert!(extract_binary(&deb).is_err());
                 assert!(extract_binary(b"not a deb").is_err());
                 let deb = package(&[("usr/bin/blockfield-launcher", tar::EntryType::Symlink, b"")]);
                 assert!(extract_binary(&deb).is_err());

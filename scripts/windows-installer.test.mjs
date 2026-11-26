@@ -68,3 +68,33 @@ test('Restart Manager checks the installed executable during install and cleanup
     }
   }
 })
+
+test('native Windows NSIS and WiX installers register schemes and delegate safe uninstall cleanup', () => {
+  const nativePkg = new URL('../native/packaging/windows/', import.meta.url)
+  const nativeNsis = readFileSync(new URL('installer.nsi', nativePkg), 'utf8')
+  const nativeWxs = readFileSync(new URL('installer.wxs', nativePkg), 'utf8')
+
+  assert.doesNotMatch(nativeNsis, /\bRmDir\s+\/r\b/i)
+  assert.match(nativeNsis, /\$UpdateMode <> 1[\s\S]*ExecWait[^\n]*--uninstall-cleanup/)
+  assert.match(nativeNsis, /\$0 <> 0[\s\S]*Abort/)
+  assert.match(nativeNsis, /!insertmacro RegisterScheme "blockfield"/)
+  assert.match(nativeNsis, /!insertmacro RegisterScheme "discord-\$\{DISCORD_APP_ID\}"/)
+  assert.match(nativeNsis, /!define DISCORD_APP_ID "1548300877125779456"/)
+  assert.match(nativeNsis, /!insertmacro UnregisterScheme "blockfield"/)
+  assert.match(nativeNsis, /!insertmacro UnregisterScheme "discord-\$\{DISCORD_APP_ID\}"/)
+  assert.match(nativeNsis, /LangString BlockfieldCleanupFailed \$\{LANG_RUSSIAN\}/)
+
+  assert.match(nativeWxs, /InstallScope="perUser"/)
+  assert.match(nativeWxs, /<MajorUpgrade\b/)
+  assert.match(nativeWxs, /<MediaTemplate\s+EmbedCab="yes"\s*\/>/)
+  assert.match(nativeWxs, /Key="Software\\Classes\\blockfield"/)
+  assert.match(nativeWxs, /Key="Software\\Classes\\discord-\$\(var\.DiscordAppId\)"/)
+  assert.match(
+    nativeWxs,
+    /<CustomAction\s+Id="RunUninstallCleanup"[\s\S]*FileKey="MainExecutable"[\s\S]*ExeCommand="--uninstall-cleanup"[\s\S]*Execute="deferred"[\s\S]*Impersonate="yes"[\s\S]*Return="check"/,
+  )
+  assert.match(
+    nativeWxs,
+    /<Custom\s+Action="RunUninstallCleanup"\s+Before="RemoveFiles">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE<\/Custom>/,
+  )
+})

@@ -62,7 +62,21 @@ fn gl_forced_software() -> bool {
     )
 }
 
+fn run_uninstall_cleanup() -> Result<(), String> {
+    let base = dirs::data_dir().ok_or("Cannot resolve app data")?;
+    launcher_net::installed_files::uninstall_from(&base)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--uninstall-cleanup") {
+        match run_uninstall_cleanup() {
+            Ok(()) => std::process::exit(0),
+            Err(error) => {
+                eprintln!("Uninstall cleanup failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
     if std::env::args().nth(1).as_deref() == Some("--renderer-probe") {
         println!(
             "{}",
