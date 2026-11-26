@@ -68,6 +68,7 @@ opt-level = 0
 debug = 0
 debug-assertions = false
 overflow-checks = false
+incremental = false
 lto = false
 strip = false
 codegen-units = 16

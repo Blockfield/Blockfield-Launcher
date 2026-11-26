@@ -4,20 +4,11 @@
 //! One `#[test]` walk like the other Layer-1 suites: window creation races
 //! when `#[test]` fns run in parallel in one binary.
 
-use std::sync::Once;
-
 use blockfield_native::{AppWindow, avatars, fixtures};
 use slint::Model;
 
-fn init_once() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        i_slint_backend_testing::init_no_event_loop();
-    });
-}
-
 fn test_app() -> AppWindow {
-    init_once();
+    crate::init_slint();
     AppWindow::new().expect("test window")
 }
 

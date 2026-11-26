@@ -12,7 +12,7 @@ fn button(app: &AppWindow, label: &str) -> ElementHandle {
 
 #[test]
 fn main_pager_join_verify_and_status_contract() {
-    i_slint_backend_testing::init_no_event_loop();
+    crate::init_slint();
     let app = AppWindow::new().unwrap();
     let (_host, _activity) = wire_app(&app, Backend::Fixtures).unwrap();
     app.global::<MainMotion>().set_enabled(false);

@@ -32,7 +32,7 @@ slint::slint! {
 
 #[test]
 fn controls_input_contract() {
-    i_slint_backend_testing::init_no_event_loop();
+    crate::init_slint();
     let app = ControlsProbe::new().unwrap();
     app.show().unwrap();
     slint::platform::update_timers_and_animations();
@@ -98,7 +98,7 @@ fn controls_input_contract() {
 fn pulse_steps_down_at_thirty_fps() {
     // launcher#59: the 30 fps stepped triangle must actually advance and fade
     // (fail-before: integer division froze it at full opacity).
-    i_slint_backend_testing::init_no_event_loop();
+    crate::init_slint();
     let app = PulseProbe::new().unwrap();
     app.show().unwrap();
     slint::platform::update_timers_and_animations();

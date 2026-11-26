@@ -2,11 +2,20 @@
 //! twelve, so the huge Slint link happens once per OS (was ~15 links).
 //!
 //! Everything here shares the `init_no_event_loop` testing backend (the
-//! platform is thread-local and libtest runs each `#[test]` on its own
-//! thread, so every test installs its own backend) or uses no Slint backend
-//! at all. Kept as separate binaries: the `HOME`-mutating tests
-//! (process-global env races) and the `init_integration_test_with_system_time`
+//! platform is thread-local, so every thread installs its own backend once)
+//! or uses no Slint backend at all. Kept as separate binaries: the `HOME`-mutating
+//! tests (process-global env races) and the `init_integration_test_with_system_time`
 //! event-loop tests (one event-loop proxy per process).
+
+pub(crate) fn init_slint() {
+    thread_local! { static INIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+    INIT.with(|init| {
+        if !init.get() {
+            i_slint_backend_testing::init_no_event_loop();
+            init.set(true);
+        }
+    });
+}
 
 mod avatars;
 mod chrome;

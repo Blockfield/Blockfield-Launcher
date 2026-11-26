@@ -4,20 +4,11 @@
 //! the TSX `Место` cell shows the plain rank (`3`), `#{rank}` lives only in
 //! the header code.
 
-use std::sync::Once;
-
 use blockfield_native::{AppWindow, fixtures, stats};
 use slint::{Model, ModelRc};
 
-fn init_once() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        i_slint_backend_testing::init_no_event_loop();
-    });
-}
-
 fn test_app() -> AppWindow {
-    init_once();
+    crate::init_slint();
     AppWindow::new().expect("test window")
 }
 

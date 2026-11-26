@@ -5,7 +5,7 @@ use blockfield_native::{AppWindow, backend};
 
 #[test]
 fn init_failure_shows_main_with_error() {
-    i_slint_backend_testing::init_no_event_loop();
+    crate::init_slint();
     let app = AppWindow::new().unwrap();
     assert!(!app.get_show_main());
     backend::apply_init_error(&app, "Cannot initialize launcher: boom".into());
