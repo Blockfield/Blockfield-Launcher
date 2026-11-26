@@ -43,15 +43,15 @@ jobs:
           node-version: '24.21.0'
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # Python 3.12 security releases have no Windows builds in setup-python.
-          python-version: ${{ runner.os == 'Linux' && '3.12.15' || '3.14.8' }}
+          # Preinstalled 3.12 bootstraps scripts/toolchain.py --ci (pinned 3.12.15).
+          python-version: '3.12'
       - name: Cache pinned project tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .cache/quality
             .dev/jdk
-          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
+          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
@@ -61,7 +61,7 @@ jobs:
         with:
           # An Ubuntu 24.04 cache broke Ubuntu 22.04 clippy with "can't find crate".
           # Keep runner images separate.
-          key: ${{ runner.os == 'Linux' && 'gh2204' || format('quality-{0}', matrix.os) }}
+          shared-key: tauri-quality-${{ matrix.os }}
           workspaces: . -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
@@ -179,24 +179,22 @@ jobs:
           node-version: '24.21.0'
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ runner.os == 'Windows' && '3.14.8' || '3.12.15' }}
+          python-version: '3.12'
       - name: Cache pinned project tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .cache/quality
             .dev/jdk
-          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
+          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: 1.99.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: github-${{ matrix.os }}-${{ matrix.name }}
-          workspaces: |
-            . -> target
-            src-tauri -> src-tauri/target
+          shared-key: tauri-release-${{ matrix.os }}
+          workspaces: . -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Linux build deps
         if: runner.os == 'Linux'
@@ -272,14 +270,14 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.12.15'
+          python-version: '3.12'
       - name: Cache pinned project tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .cache/quality
             .dev/jdk
-          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
+          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
       - name: Release text
         uses: Blockfield/blockfield-workspace/.github/actions/release-text@cdb1c24c5b88a18221c2d927d3df684c64c4472d
@@ -360,14 +358,14 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.12.15'
+          python-version: '3.12'
       - name: Cache pinned project tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .cache/quality
             .dev/jdk
-          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
+          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
       - name: Publish the rolling native-channel manifest
         env:
