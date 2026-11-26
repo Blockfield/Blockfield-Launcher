@@ -16,13 +16,29 @@ pub fn schemes() -> Vec<String> {
     vec!["blockfield".to_string(), discord_scheme()]
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn desktop_file_name() -> &'static str {
     if launcher_core::dev::is_dev_build() {
-        "blockfield-launcher-dev.desktop"
+        "blockfield-native-dev.desktop"
     } else {
-        "blockfield-launcher.desktop"
+        "blockfield-native.desktop"
     }
+}
+
+/// Escape string-value control characters (`\\`, `\n`, `\t`, `\r`) per the
+/// desktop-entry spec so a value never breaks the `Key=Value` line.
+fn escape_desktop_value(raw: &str) -> String {
+    let mut value = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        match ch {
+            '\\' => value.push_str("\\\\"),
+            '\n' => value.push_str("\\n"),
+            '\t' => value.push_str("\\t"),
+            '\r' => value.push_str("\\r"),
+            _ => value.push(ch),
+        }
+    }
+    value
 }
 
 /// Quote one `Exec` argument per the desktop-entry spec, in the order the spec
@@ -45,23 +61,27 @@ fn quote_exec_arg(arg: &str) -> String {
         }
     }
     quoted.push('"');
-    // String-value layer: newline/tab/CR would otherwise break the key=value line.
-    let mut value = String::with_capacity(quoted.len());
-    for ch in quoted.chars() {
-        match ch {
-            '\\' => value.push_str("\\\\"),
-            '\n' => value.push_str("\\n"),
-            '\t' => value.push_str("\\t"),
-            '\r' => value.push_str("\\r"),
-            _ => value.push(ch),
-        }
+    escape_desktop_value(&quoted)
+}
+
+/// Prefer a sibling `icon.png` (user install via `install-linux.sh --native`),
+/// otherwise fall back to the themed `blockfield-native` icon installed by the
+/// `.deb` package.
+fn desktop_icon(exec: &str) -> String {
+    if let Some(icon) = std::path::Path::new(exec)
+        .parent()
+        .map(|dir| dir.join("icon.png"))
+        .filter(|path| path.is_file())
+    {
+        return escape_desktop_value(&icon.to_string_lossy());
     }
-    value
+    "blockfield-native".to_string()
 }
 
 /// Linux desktop entry: `Exec` is the current binary, `%U` receives the URL.
 pub fn desktop_entry(exec: &str) -> String {
     let quoted = quote_exec_arg(exec);
+    let icon = desktop_icon(exec);
     let mime = schemes()
         .iter()
         .map(|scheme| format!("x-scheme-handler/{scheme}"))
@@ -73,10 +93,28 @@ pub fn desktop_entry(exec: &str) -> String {
          Name=Blockfield Launcher\n\
          Comment=Blockfield game launcher\n\
          Exec={quoted} %U\n\
+         Icon={icon}\n\
          Terminal=false\n\
          Categories=Game;\n\
+         StartupWMClass=blockfield-native\n\
          MimeType={mime};\n"
     )
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn packaged_desktop_matches(path: &std::path::Path, exec: &str) -> bool {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let quoted_exec = format!("Exec={} %U", quote_exec_arg(exec));
+    let plain_exec = format!("Exec={exec} %U");
+    let has_exec = contents
+        .lines()
+        .any(|line| line == quoted_exec || line == plain_exec);
+    has_exec
+        && schemes()
+            .iter()
+            .all(|scheme| contents.contains(&format!("x-scheme-handler/{scheme}")))
 }
 
 /// `reg add` argv per scheme (HKCU, no elevation). Kept as data so tests pin
@@ -140,14 +178,21 @@ fn register_linux() -> std::io::Result<()> {
     let Some(data_dir) = dirs::data_dir() else {
         return Ok(());
     };
+    let name = desktop_file_name();
     let dir = data_dir.join("applications");
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join(desktop_file_name()), desktop_entry(&exe))?;
+    let user_desktop = dir.join(name);
+    let system_desktop = std::path::Path::new("/usr/share/applications").join(name);
+    // Avoid shadowing an already matching packaged .deb desktop entry when no
+    // user override exists; otherwise write/refresh the user entry.
+    if user_desktop.exists() || !packaged_desktop_matches(&system_desktop, &exe) {
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(&user_desktop, desktop_entry(&exe))?;
+    }
     for scheme in schemes() {
         let mime = format!("x-scheme-handler/{scheme}");
         if let Err(error) = std::process::Command::new("xdg-mime")
             .arg("default")
-            .arg(desktop_file_name())
+            .arg(name)
             .arg(&mime)
             .status()
         {
@@ -197,8 +242,11 @@ mod tests {
 
     #[test]
     fn desktop_entry_advertises_both_handlers() {
-        let entry = desktop_entry("/opt/blockfield/blockfield-launcher");
-        assert!(entry.contains("Exec=\"/opt/blockfield/blockfield-launcher\" %U"));
+        assert_eq!(desktop_file_name(), "blockfield-native.desktop");
+        let entry = desktop_entry("/opt/blockfield/blockfield-native");
+        assert!(entry.contains("Exec=\"/opt/blockfield/blockfield-native\" %U\n"));
+        assert!(entry.contains("Icon=blockfield-native\n"));
+        assert!(entry.contains("StartupWMClass=blockfield-native\n"));
         for scheme in schemes() {
             assert!(entry.contains(&format!("x-scheme-handler/{scheme}")));
         }
@@ -210,6 +258,44 @@ mod tests {
             );
         }
         assert!(asset.contains("%U"));
+    }
+
+    #[test]
+    fn desktop_entry_uses_sibling_icon_and_matches_packaged_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("blockfield-native");
+        let icon = dir.path().join("icon.png");
+        std::fs::write(&exe, b"elf").unwrap();
+        std::fs::write(&icon, b"png").unwrap();
+
+        let entry = desktop_entry(&exe.to_string_lossy());
+        assert!(entry.contains(&format!(
+            "Icon={}\n",
+            escape_desktop_value(&icon.to_string_lossy())
+        )));
+        assert!(entry.contains("StartupWMClass=blockfield-native\n"));
+
+        let packaged = dir.path().join("blockfield-native.desktop");
+        let mime = schemes()
+            .iter()
+            .map(|scheme| format!("x-scheme-handler/{scheme}"))
+            .collect::<Vec<_>>()
+            .join(";");
+        std::fs::write(
+            &packaged,
+            format!(
+                "[Desktop Entry]\nExec=/usr/bin/blockfield-native %U\nIcon=blockfield-native\nMimeType={mime};\n"
+            ),
+        )
+        .unwrap();
+        assert!(packaged_desktop_matches(
+            &packaged,
+            "/usr/bin/blockfield-native"
+        ));
+        assert!(!packaged_desktop_matches(
+            &packaged,
+            "/opt/other/blockfield-native"
+        ));
     }
 
     #[test]

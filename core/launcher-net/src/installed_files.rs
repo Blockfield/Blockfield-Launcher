@@ -556,7 +556,6 @@ fn save(path: &Path, record: &Record) -> Result<(), String> {
     crate::download::activate_partial(&partial, path).map_err(|e| e.to_string())
 }
 
-#[cfg(any(windows, test))]
 fn clean_downloads(record: &Record) -> Result<(), String> {
     for (root, files) in &record.directories {
         if !root.is_absolute() || root.parent().is_none() || !root.exists() {
@@ -599,8 +598,7 @@ pub fn uninstall() -> Result<(), String> {
     uninstall_from(base.data_dir())
 }
 
-#[cfg(any(windows, test))]
-fn uninstall_from(data_dir: &Path) -> Result<(), String> {
+pub fn uninstall_from(data_dir: &Path) -> Result<(), String> {
     let app_data = data_dir.join(if launcher_core::dev::is_dev_build() {
         "com.blockfield.launcher.dev"
     } else {

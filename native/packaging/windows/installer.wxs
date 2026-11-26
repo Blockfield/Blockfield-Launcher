@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Blockfield Launcher"
+           Language="1033"
+           Version="$(var.MsiVersion)"
+           Manufacturer="Blockfield"
+           UpgradeCode="7B2C4A91-6D1E-4F3A-9C82-E5A14B0F3D89">
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perUser"
+             Description="Blockfield Native Launcher" />
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+                  Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://blockfield.pro" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="INSTALLFOLDER" Name="blockfield-native" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Blockfield Launcher" />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="MainExecutableComponent" Guid="4D8F1E22-9A5C-4B73-8E16-2C9F0A6D4E11">
+        <File Id="MainExecutable" Name="blockfield-native.exe" Source="$(var.BinaryPath)" />
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\Blockfield\blockfield-native"
+                       Name="InstallDir"
+                       Type="string"
+                       Value="[INSTALLFOLDER]"
+                       KeyPath="yes" />
+      </Component>
+
+      <Component Id="UriSchemesComponent" Guid="9E3B6C14-2F8A-4D51-B740-6A1E8D3C5F22">
+        <RegistryKey Root="HKCU" Key="Software\Classes\blockfield">
+          <RegistryValue Type="string" Value="URL:com.blockfield.launcher protocol" />
+          <RegistryValue Name="URL Protocol" Type="string" Value="" />
+          <RegistryValue Key="DefaultIcon" Type="string" Value="&quot;[INSTALLFOLDER]blockfield-native.exe&quot;,0" />
+          <RegistryValue Key="shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]blockfield-native.exe&quot; &quot;%1&quot;" />
+        </RegistryKey>
+        <RegistryKey Root="HKCU" Key="Software\Classes\discord-$(var.DiscordAppId)">
+          <RegistryValue Type="string" Value="URL:com.blockfield.launcher protocol" />
+          <RegistryValue Name="URL Protocol" Type="string" Value="" />
+          <RegistryValue Key="DefaultIcon" Type="string" Value="&quot;[INSTALLFOLDER]blockfield-native.exe&quot;,0" />
+          <RegistryValue Key="shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]blockfield-native.exe&quot; &quot;%1&quot;" />
+        </RegistryKey>
+        <RegistryValue Root="HKCU"
+                       Key="Software\Blockfield\blockfield-native"
+                       Name="UriSchemes"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="StartMenuShortcutComponent" Guid="C17A5D90-3E4B-48F2-A915-7D2E4B8C6A33">
+        <Shortcut Id="StartMenuShortcut"
+                  Name="Blockfield Launcher"
+                  Description="Blockfield game launcher"
+                  Target="[INSTALLFOLDER]blockfield-native.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="AppIcon.ico" />
+        <RemoveFolder Id="RemoveProgramMenuDir" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\Blockfield\blockfield-native"
+                       Name="StartMenuShortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="MainApplication" Title="Blockfield Launcher" Level="1">
+      <ComponentRef Id="MainExecutableComponent" />
+      <ComponentRef Id="UriSchemesComponent" />
+      <ComponentRef Id="StartMenuShortcutComponent" />
+    </Feature>
+
+    <!-- Ownership-aware cleanup on true uninstall only; upgrades set UPGRADINGPRODUCTCODE. -->
+    <CustomAction Id="RunUninstallCleanup"
+                  FileKey="MainExecutable"
+                  ExeCommand="--uninstall-cleanup"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RunUninstallCleanup" Before="RemoveFiles">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>
