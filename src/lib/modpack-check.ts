@@ -56,10 +56,11 @@ export function checkModpack(verify = false): Promise<VersionCheckResult> {
       if (requestedGeneration !== generation)
         throw new Error('Профиль изменён. Повторите проверку.')
       if (game.phase !== 'idle') throw new Error('Закройте игру перед проверкой файлов')
-      const failed = await invoke<string[]>('verify_files', {
+      // `verify_files` returns the paths it already healed; only `Err`
+      // (an invoke rejection) is a failure, so a non-empty list is success.
+      await invoke<string[]>('verify_files', {
         profile: config.activeProfile ?? 'game',
       })
-      if (failed.length) throw new Error(`Не удалось проверить файлы: ${failed.join(', ')}`)
     }
     if (requestedGeneration !== generation) throw new Error('Профиль изменён. Повторите проверку.')
     setCached(result)

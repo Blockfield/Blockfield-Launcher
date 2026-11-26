@@ -52,7 +52,11 @@ pub(crate) fn pack_phase_complete(app_data: &Path, game_dir: &Path, index_hash: 
 
 /// Blocking pack hash check, designed for `spawn_blocking`: a corrupt pack
 /// must not survive a launch, so the check runs off the async worker.
-async fn pack_phase_done(app_data: PathBuf, game_dir: PathBuf, index_hash: String) -> bool {
+pub(crate) async fn pack_phase_done(
+    app_data: PathBuf,
+    game_dir: PathBuf,
+    index_hash: String,
+) -> bool {
     tokio::task::spawn_blocking(move || pack_phase_complete(&app_data, &game_dir, &index_hash))
         .await
         .unwrap_or(false)
