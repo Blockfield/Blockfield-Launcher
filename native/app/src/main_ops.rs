@@ -1,4 +1,5 @@
 //! Main-screen operations run on the core runtime; only property updates return to Slint.
+use std::path::Path;
 use std::sync::Arc;
 
 use launcher_app::{
@@ -281,23 +282,53 @@ pub async fn check(state: &LauncherAppState, verify: bool) -> Result<VersionChec
     if verify && !version.needs_update && version.java_ok && version.loader_ok {
         // `verify_files` returns the runtime files it already healed; only
         // `Err` is a failure. A non-empty list must not fail the check.
+        let game_dir =
+            std::path::PathBuf::from(state.config.read().await.active().game_dir.clone());
         let repaired = install::verify_files(state, Some(profile)).await;
-        handle_verify_result(repaired)?;
+        handle_verify_result(repaired, &game_dir)?;
     }
     Ok(version)
 }
 
 /// `verify_files` reports healed runtime paths via `Ok`; only `Err` fails verification.
-fn handle_verify_result(repaired: Result<Vec<String>, String>) -> Result<(), String> {
+fn handle_verify_result(repaired: Result<Vec<String>, String>, game_dir: &Path) -> Result<(), String> {
     let repaired = repaired?;
     if !repaired.is_empty() {
         eprintln!(
             "[check] repaired {} runtime files: {}",
             repaired.len(),
-            repaired.join(", ")
+            format_repaired(game_dir, &repaired),
         );
     }
     Ok(())
+}
+
+/// Log-friendly repaired list: no absolute home paths, capped at 10 entries.
+fn format_repaired(game_dir: &Path, repaired: &[String]) -> String {
+    const LIMIT: usize = 10;
+    let shown: Vec<String> = repaired
+        .iter()
+        .take(LIMIT)
+        .map(|path| display_repaired_path(game_dir, path))
+        .collect();
+    if repaired.len() > LIMIT {
+        format!("{} (+{} more)", shown.join(", "), repaired.len() - LIMIT)
+    } else {
+        shown.join(", ")
+    }
+}
+
+/// Strip the game dir so logs keep relative paths; fall back to the file
+/// name so an unexpected absolute path never leaks the OS home dir.
+fn display_repaired_path(game_dir: &Path, path: &str) -> String {
+    let parsed = Path::new(path);
+    if let Ok(relative) = parsed.strip_prefix(game_dir) {
+        return relative.to_string_lossy().to_string();
+    }
+    parsed
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
 }
 
 fn apply_version(data: &mut MainData, version: VersionCheckResult) {
@@ -359,12 +390,28 @@ mod tests {
     #[test]
     fn repaired_files_do_not_fail_verification() {
         // `verify_files` returns healed runtime paths via `Ok`; only `Err`
-        // is a failure. A non-empty repaired list must still verify.
-        assert!(super::handle_verify_result(Ok(vec![])).is_ok());
-        assert!(super::handle_verify_result(Ok(vec!["mods/a.jar".to_string()])).is_ok());
+        // is a failure. A non-empty repaired list still verifies.
+        use std::path::PathBuf;
+        let game_dir = PathBuf::from("/tmp/game-profile");
+        assert!(super::handle_verify_result(Ok(vec![]), &game_dir).is_ok());
+        assert!(super::handle_verify_result(Ok(vec!["mods/a.jar".to_string()]), &game_dir).is_ok());
         assert_eq!(
-            super::handle_verify_result(Err("boom".to_string())).unwrap_err(),
+            super::handle_verify_result(Err("boom".to_string()), &game_dir).unwrap_err(),
             "boom"
         );
+        // Absolute paths lose the game-dir prefix so logs keep no home dir.
+        assert_eq!(
+            super::format_repaired(&game_dir, &["/tmp/game-profile/libraries/a.jar".to_string()]),
+            "libraries/a.jar"
+        );
+        assert_eq!(
+            super::format_repaired(&game_dir, &["/other/home/x.jar".to_string()]),
+            "x.jar"
+        );
+        // Long lists cap at 10 entries with a remainder count.
+        let many: Vec<String> = (0..12).map(|i| format!("mods/{i}.jar")).collect();
+        let formatted = super::format_repaired(&PathBuf::from("game"), &many);
+        assert!(formatted.contains("(+2 more)"), "{formatted}");
+        assert_eq!(formatted.split(", ").count(), 10);
     }
 }

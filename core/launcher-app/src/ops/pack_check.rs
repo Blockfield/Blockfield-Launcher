@@ -103,9 +103,9 @@ async fn resolve_check(
     meta: PackMeta,
     loader_ok: impl FnOnce(&Path, &PackMeta) -> bool,
 ) -> Result<VersionCheckResult, String> {
-    // No operation lock across the checks below either: they (re-)hash
-    // changed files on the blocking pool, and a background check must not
-    // starve Play or profile clicks while it does. The lock only guards
+    // No operation lock across the checks below either: pack_phase_done runs
+    // on the blocking pool, and a background check must not starve Play or
+    // profile clicks while it does. The lock only guards
     // the pack-state write at the end; the profile is re-verified there, so a
     // switch mid-check fails closed instead of binding a stale game dir.
     // Snapshot the dir first (failing closed if the profile already switched
@@ -522,6 +522,40 @@ mod tests {
             ));
         assert!(result.is_ok());
         assert!(state.pack.blocking_read().is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pre_scan_profile_mismatch_skips_loader_check() {
+        // The config already switched before the scan: resolve_check fails
+        // closed before invoking loader_ok.
+        let root = temp_root("prescan");
+        let game = root.join("game");
+        std::fs::create_dir_all(&game).unwrap();
+        let config = LauncherConfig {
+            game_dir: game.to_string_lossy().to_string(),
+            active_profile: ClientProfile::Workshop,
+            ..LauncherConfig::default()
+        };
+        let state = test_state(root.join("app-data"), config);
+        let (info, meta) = test_info_meta("2.0.0", "abc123");
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(resolve_check(
+                &state,
+                ClientProfile::Game,
+                "https://packs.example.com/blockfield".into(),
+                info,
+                meta,
+                |_, _| panic!("loader_ok must not run after a pre-scan profile switch"),
+            ));
+        let Err(err) = result else {
+            panic!("pre-scan profile switch must fail closed");
+        };
+        assert_eq!(err, "Профиль изменился. Повторите проверку.");
+        assert!(state.pack.blocking_read().is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -590,11 +590,29 @@ fn confined_under(game_dir: &Path, path: &Path) -> bool {
     true
 }
 
+/// One corrupt runtime file delete, confined to `game_dir`: a symlink at
+/// `path` deletes only the link, never its target. `NotFound` (a racing
+/// re-download already healed it) still counts as healed; any other delete
+/// error fails closed so an unhealed file never reports `Ok`.
+fn remove_corrupt_file(game_dir: &Path, path: &Path) -> Result<PathBuf, String> {
+    if !confined_under(game_dir, path) {
+        return Err(format!(
+            "Не удалось удалить {}: вне игровой папки",
+            path.display()
+        ));
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(path.to_path_buf()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+        Err(error) => Err(format!("Не удалось удалить {}: {error}", path.display())),
+    }
+}
+
 /// Blocking hash scan plus deletion, designed for `spawn_blocking`: removes
 /// every same-size-corrupt runtime file and returns what was removed.
 /// Re-checks confinement at delete time, so a path built without
 /// `confined_path` (or a symlink planted after the scan) can never pull a
-/// delete outside `game_dir`: it is skipped and logged, not removed.
+/// delete outside `game_dir`: an unhealed file returns `Err`, never `Ok`.
 pub fn heal_corrupt_runtime_files(
     game_dir: &Path,
     minecraft_version: &str,
@@ -603,12 +621,7 @@ pub fn heal_corrupt_runtime_files(
     let corrupt = find_corrupt_runtime_files(game_dir, minecraft_version, loader_version_id)?;
     let mut removed = Vec::new();
     for path in &corrupt {
-        if !confined_under(game_dir, path) {
-            log::warn!("heal: skipping delete outside game dir: {}", path.display());
-            continue;
-        }
-        let _ = std::fs::remove_file(path);
-        removed.push(path.clone());
+        removed.push(remove_corrupt_file(game_dir, path)?);
     }
     Ok(removed)
 }
@@ -1920,6 +1933,38 @@ mod tests {
         assert!(heal_corrupt_runtime_files(root, version, None)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn unremovable_corrupt_file_fails_closed() {
+        // `remove_file` on a non-empty directory fails on Linux and Windows
+        // alike (unlike permission bits, which Windows ignores), so this pins
+        // the fail-closed delete path on both CI targets.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("game");
+        std::fs::create_dir_all(&root).unwrap();
+        let blocked = root.join("libraries").join("blocked.jar");
+        std::fs::create_dir_all(&blocked).unwrap();
+        std::fs::write(blocked.join("child"), b"x").unwrap();
+        let error = super::remove_corrupt_file(&root, &blocked).unwrap_err();
+        assert!(
+            error.contains("Не удалось удалить"),
+            "unexpected error: {error}"
+        );
+        assert!(blocked.exists());
+        // A path outside the game dir never reports `Ok` either.
+        let outside = dir.path().join("outside.jar");
+        let error = super::remove_corrupt_file(&root, &outside).unwrap_err();
+        assert!(
+            error.contains("вне игровой папки"),
+            "unexpected error: {error}"
+        );
+        // A file that vanished between scan and delete counts as healed.
+        let missing = root.join("libraries").join("gone.jar");
+        assert_eq!(
+            super::remove_corrupt_file(&root, &missing).unwrap(),
+            missing
+        );
     }
 
     #[tokio::test]

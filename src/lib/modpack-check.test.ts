@@ -65,6 +65,16 @@ it('does not cache failed verification and retries successfully', async () => {
   await expect(checkModpack(true)).resolves.toMatchObject({ needsUpdate: false })
 })
 
+it('treats repaired verify_files paths as success', async () => {
+  const implementation = invoke.getMockImplementation()!
+  invoke.mockImplementation(async (command: string) => {
+    if (command === 'verify_files') return ['libraries/com/example/lib.jar']
+    return implementation(command)
+  })
+  const { checkModpack } = await import('./modpack-check')
+  await expect(checkModpack(true)).resolves.toMatchObject({ needsUpdate: false })
+})
+
 it('rechecks after settings or an installation changes', async () => {
   const { checkModpack, invalidateModpackCheck } = await import('./modpack-check')
   await checkModpack()
