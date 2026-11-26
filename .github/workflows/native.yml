@@ -280,13 +280,14 @@ jobs:
                       fail = True
           sys.exit(1 if fail else 0)
           PYEOF
+          status=0
           for renderer in default software; do
             for scale in 1 1.5; do
               for state in main settings-skin; do
                 printf '%s|%s|%s\n' "$renderer" "$scale" "$state"
               done
             done
-          status=0; done | python3 "$RUNNER_TEMP/parrun_captures.py" "$out" "./$exe" "$RUNNER_TEMP/runguarded.py" || status=$?
+          done | python3 "$RUNNER_TEMP/parrun_captures.py" "$out" "./$exe" "$RUNNER_TEMP/runguarded.py" || status=$?
           # PPM (P6) -> PNG with stdlib only; no ffmpeg/magick on runners.
           python3 - "$out" <<'PYEOF'
           import struct, sys, zlib
