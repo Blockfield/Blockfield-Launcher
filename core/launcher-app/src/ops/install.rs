@@ -13,7 +13,7 @@ use super::pack_check::{installed_pack, require_pack_profile, INSTALLED_VERSION_
 use crate::{DownloadMirrorPayload, EventSink, LauncherAppState, LauncherEvent};
 use launcher_core::config::ClientProfile;
 use launcher_net::download::Downloader;
-use launcher_net::pack::{Artifact, JavaInfo};
+use launcher_net::pack::{Artifact, JavaInfo, PackMeta};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -68,6 +68,55 @@ async fn pack_files_valid_blocking(app_data: PathBuf, game_dir: PathBuf) -> bool
     })
     .await
     .unwrap_or(false)
+}
+
+/// Reject a resolved mirror whose Minecraft or Fabric version disagrees with
+/// the cached `pack.meta` used to prepare loader and runtime files.
+fn ensure_compatible_pack_meta(expected: &PackMeta, resolved: &PackMeta) -> Result<(), String> {
+    if resolved.minecraft != expected.minecraft || resolved.loader != expected.loader {
+        return Err(format!(
+            "Pack metadata changed (expected Minecraft {}/{}, mirror served {}/{}). Check for updates and retry.",
+            expected.minecraft,
+            expected.loader.as_deref().unwrap_or("none"),
+            resolved.minecraft,
+            resolved.loader.as_deref().unwrap_or("none"),
+        ));
+    }
+    Ok(())
+}
+
+/// Interruptible wrapper around `resolve_reachable_pack_url` so `cancel_download`
+/// aborts a slow mirror probe without waiting for network timeouts or launching the JVM.
+async fn resolve_pack_url_cancelable(
+    info: &launcher_net::pack::LauncherInfo,
+    cancel: &AtomicBool,
+) -> Result<(String, PackMeta), String> {
+    resolve_with_cancel(cancel, launcher_net::pack::resolve_reachable_pack_url(info)).await
+}
+
+async fn resolve_with_cancel<T, F>(cancel: &AtomicBool, fut: F) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, String>>,
+{
+    if cancel.load(Ordering::SeqCst) {
+        return Err("Download cancelled".to_string());
+    }
+    let cancel_wait = async {
+        while !cancel.load(Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    };
+    tokio::select! {
+        biased;
+        () = cancel_wait => Err("Download cancelled".to_string()),
+        res = fut => {
+            if cancel.load(Ordering::SeqCst) {
+                Err("Download cancelled".to_string())
+            } else {
+                res
+            }
+        }
+    }
 }
 
 pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
@@ -203,7 +252,9 @@ pub async fn download_modpack(state: &LauncherAppState) -> Result<(), String> {
         let (pack_url, installed_meta) = if frozen {
             (pack.info.pack.clone(), pack.meta.clone())
         } else {
-            launcher_net::pack::resolve_reachable_pack_url(&pack.info).await?
+            let (url, resolved_meta) = resolve_pack_url_cancelable(&pack.info, &cancel).await?;
+            ensure_compatible_pack_meta(&pack.meta, &resolved_meta)?;
+            (url, resolved_meta)
         };
         let (java_for_installer, dir) = (java.clone(), game_dir.clone());
         tokio::task::spawn_blocking(move || {
@@ -636,9 +687,9 @@ pub async fn verify_files(
     let pack_url = if launcher_core::dev::freeze_pack() {
         pack.info.pack.clone()
     } else {
-        launcher_net::pack::resolve_reachable_pack_url(&pack.info)
-            .await?
-            .0
+        let (url, resolved_meta) = resolve_pack_url_cancelable(&pack.info, &cancel).await?;
+        ensure_compatible_pack_meta(&pack.meta, &resolved_meta)?;
+        url
     };
     tokio::task::spawn_blocking(move || {
         run_packwiz_installer(&events, &cancel, &java_for_verify, &dir, &pack_url)
@@ -1312,5 +1363,59 @@ mod tests {
         assert_eq!(hits.load(AtomicOrdering::SeqCst), 2);
         launcher_net::pack::default_health().mark_healthy(&url);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ensure_compatible_pack_meta_rejects_minecraft_or_loader_mismatch() {
+        let base = PackMeta {
+            version: "2.0.0".to_string(),
+            minecraft: "1.21.1".to_string(),
+            loader: Some("0.16.9".to_string()),
+            index_hash: "aaa".to_string(),
+        };
+        let same_runtime_new_index = PackMeta {
+            version: "2.0.1".to_string(),
+            index_hash: "bbb".to_string(),
+            ..base.clone()
+        };
+        assert!(ensure_compatible_pack_meta(&base, &same_runtime_new_index).is_ok());
+
+        let diff_mc = PackMeta {
+            minecraft: "1.21.4".to_string(),
+            ..base.clone()
+        };
+        assert!(ensure_compatible_pack_meta(&base, &diff_mc).is_err());
+
+        let diff_loader = PackMeta {
+            loader: Some("0.16.10".to_string()),
+            ..base.clone()
+        };
+        assert!(ensure_compatible_pack_meta(&base, &diff_loader).is_err());
+    }
+
+    #[test]
+    fn resolve_with_cancel_aborts_pending_resolution() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let flag = std::sync::Arc::new(AtomicBool::new(true));
+        let immediate = rt.block_on(resolve_with_cancel(&flag, async {
+            Ok::<_, String>("should-not-win")
+        }));
+        assert_eq!(immediate.unwrap_err(), "Download cancelled");
+
+        let flag = std::sync::Arc::new(AtomicBool::new(false));
+        let trigger = flag.clone();
+        let started = std::time::Instant::now();
+        let res = rt.block_on(async move {
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+                trigger.store(true, Ordering::SeqCst);
+            });
+            resolve_with_cancel(&flag, std::future::pending::<Result<(), String>>()).await
+        });
+        assert_eq!(res.unwrap_err(), "Download cancelled");
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 }
