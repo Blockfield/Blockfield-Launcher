@@ -1,7 +1,7 @@
 name: Code standards
 on:
   push:
-    branches: [main]
+    branches: [main, next, feat/native-slint]
   # PR CI starts on push to the PR branch: no bot approval needed to run.
   # The bot still posts its own `bot-review` commit status, which merge
   # protection may require alongside `check` (see task report).
@@ -46,7 +46,7 @@ jobs:
       # verify steps below are skipped only then.
       - name: Check for green run of the same tree
         id: same
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -90,15 +90,15 @@ jobs:
         with:
           shared-key: standards-${{ matrix.os }}
           workspaces: . -> target
-          save-if: true
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' }}
       - name: Cache apt .deb archives
         if: runner.os == 'Linux' && steps.same.outputs.tested != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/apt-archives
-          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-tauri-${{ hashFiles('scripts/install-tauri-deps.sh') }}
+          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-tauri-${{ hashFiles('scripts/install-tauri-deps.sh') }}
           restore-keys: |
+            apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-tauri-
             apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-tauri-
       - name: Install Tauri system dependencies
         if: runner.os == 'Linux' && steps.same.outputs.tested != 'true'

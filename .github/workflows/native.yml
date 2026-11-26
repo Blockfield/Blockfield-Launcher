@@ -55,16 +55,16 @@ jobs:
         with:
           shared-key: native-lint-ubuntu-24.04
           workspaces: native/app -> target
-          save-if: true
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/feat/native-slint' || github.ref == 'refs/heads/next' || github.ref == 'refs/heads/main') }}
       # Clippy compiles the same crates as the legs, so it needs their
       # system build libraries (fontconfig for yeslogic-fontconfig-sys).
       - name: Cache apt .deb archives
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/apt-archives
-          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-native-lint-${{ hashFiles('scripts/install-tauri-deps.sh') }}
+          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-native-lint-${{ hashFiles('scripts/install-tauri-deps.sh') }}
           restore-keys: |
+            apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-native-lint-
             apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-native-lint-
       - name: Linux build libraries
         timeout-minutes: 8
@@ -112,8 +112,7 @@ jobs:
         with:
           shared-key: native-e2e-${{ matrix.os }}
           workspaces: native/app -> target
-          save-if: true
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/feat/native-slint' || github.ref == 'refs/heads/next' || github.ref == 'refs/heads/main') }}
       # Ubuntu runners have no display server and no Vulkan ICD: Xvfb for the
       # winit window, lavapipe so the skin3d wgpu preview gets an adapter.
       # winit dlopens libxkbcommon-x11 at window creation (invisible to ldd).
@@ -122,8 +121,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/apt-archives
-          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-native-e2e-${{ hashFiles('scripts/install-tauri-deps.sh') }}
+          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-native-e2e-${{ hashFiles('scripts/install-tauri-deps.sh') }}
           restore-keys: |
+            apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-native-e2e-
             apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-native-e2e-
       - name: Linux display and software GL/Vulkan
         if: runner.os == 'Linux'
