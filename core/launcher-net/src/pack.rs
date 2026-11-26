@@ -431,6 +431,7 @@ async fn fetch_with_retries(
 /// candidate gets 2 attempts with 250ms backoff on `fallback_client`.
 /// On success after earlier failures, every earlier failed host is cooled
 /// down; a first-candidate success clears its cooldown.
+#[cfg(test)]
 pub async fn fetch_text_with_candidates(
     candidates: &[&str],
     health: &HostHealth,
@@ -444,6 +445,7 @@ pub async fn fetch_text_with_candidates(
 
 /// Same as [`fetch_text_with_candidates`], but also returns the URL that
 /// answered.
+#[cfg(test)]
 pub async fn fetch_reachable_text_with_candidates(
     candidates: &[&str],
     health: &HostHealth,
@@ -479,10 +481,11 @@ where
     let ordered = health.order_urls(candidates);
     let mut errors: Vec<(String, String)> = Vec::new();
     for (index, url) in ordered.iter().enumerate() {
-        let use_fast = health.is_cooled_down(url)
-            || ordered[index + 1..]
-                .iter()
-                .any(|next| !health.is_cooled_down(next));
+        let use_fast = ordered.len() > 1
+            && (health.is_cooled_down(url)
+                || ordered[index + 1..]
+                    .iter()
+                    .any(|next| !health.is_cooled_down(next)));
         let fetched = if use_fast {
             fetch_once(primary_client, url).await
         } else {
@@ -1233,6 +1236,50 @@ mod tests {
         assert!(err.contains(&dead_fallback_url), "{err}");
         assert_eq!(dead_fallback_hits.load(Ordering::SeqCst), 2);
         assert_eq!(primary_hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn lone_cooled_candidate_retries_with_fallback_budget() {
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let hits_clone = hits.clone();
+        let pack_toml = PACK_TOML.as_bytes().to_vec();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let _server = std::thread::spawn(move || {
+            for stream in listener.incoming().take(8) {
+                let Ok(mut stream) = stream else { break };
+                let mut head = [0u8; 1024];
+                let _ = stream.read(&mut head);
+                let hit = hits_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                if hit == 1 {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 3\r\nconnection: close\r\n\r\nbad",
+                    );
+                } else {
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        pack_toml.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.write_all(&pack_toml);
+                }
+            }
+        });
+        let url = format!("http://{address}/pack.toml");
+        let (primary_client, fallback_client) = test_clients();
+        let health = HostHealth::new();
+        health.mark_unhealthy(&url);
+        let (winning_url, meta) = block_on(fetch_parsed_with_candidates(
+            &[url.as_str()],
+            &health,
+            &primary_client,
+            &fallback_client,
+            parse_pack_toml,
+        ))
+        .expect("lone cooled candidate must retry and succeed");
+        assert_eq!(winning_url, url);
+        assert_eq!(meta.version, "9.9.9");
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
     }
 
     #[test]

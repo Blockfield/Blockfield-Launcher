@@ -336,10 +336,11 @@ async fn ensure_jar(
     let ordered = health.order_urls(&sources);
     let mut failed: Vec<String> = Vec::new();
     for (index, url) in ordered.iter().enumerate() {
-        let use_fast = health.is_cooled_down(url)
-            || ordered[index + 1..]
-                .iter()
-                .any(|next| !health.is_cooled_down(next));
+        let use_fast = ordered.len() > 1
+            && (health.is_cooled_down(url)
+                || ordered[index + 1..]
+                    .iter()
+                    .any(|next| !health.is_cooled_down(next)));
         let _ = std::fs::remove_file(&partial);
         let mut downloaded = 0;
         let download = if use_fast {
@@ -1238,6 +1239,73 @@ mod tests {
         assert_eq!(primary_hits.load(AtomicOrdering::SeqCst), 0);
         assert_eq!(fallback_hits.load(AtomicOrdering::SeqCst), 2);
         launcher_net::pack::default_health().mark_healthy(&primary_url);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ensure_jar_lone_cooled_artifact_retries_transient_failure() {
+        use std::io::{Read as _, Write as _};
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let payload = b"lone-cooled-jar-bytes";
+        let root = std::env::temp_dir().join(format!(
+            "blockfield-ensure-jar-lone-cooled-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let probe = root.join("probe.jar");
+        std::fs::write(&probe, payload).unwrap();
+        let sha256 = Downloader::sha256_file(&probe).unwrap();
+
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let hits_clone = hits.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _server = std::thread::spawn(move || {
+            for stream in listener.incoming().take(4) {
+                let Ok(mut stream) = stream else { break };
+                let mut head = [0u8; 1024];
+                let _ = stream.read(&mut head);
+                let hit = hits_clone.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+                if hit == 1 {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 3\r\nconnection: close\r\n\r\nbad",
+                    );
+                } else {
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        payload.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.write_all(payload);
+                }
+            }
+        });
+
+        let url = format!("http://{addr}/lone.jar");
+        launcher_net::pack::default_health().mark_unhealthy(&url);
+
+        let artifact = Artifact {
+            url: url.clone(),
+            sha256,
+            source: None,
+        };
+        let state = test_state(root.clone(), LauncherConfig::default());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(ensure_jar(&state, &game_dir, "lone.jar", &artifact))
+            .expect("lone cooled artifact must retry and succeed");
+
+        assert_eq!(std::fs::read(game_dir.join("lone.jar")).unwrap(), payload);
+        assert_eq!(hits.load(AtomicOrdering::SeqCst), 2);
+        launcher_net::pack::default_health().mark_healthy(&url);
         let _ = std::fs::remove_dir_all(root);
     }
 }
