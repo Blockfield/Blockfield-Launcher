@@ -79,6 +79,42 @@ class RollbackReleaseTests(unittest.TestCase):
         current = rollback.read_current_versions(root)
         self.assertEqual(set(current.values()), {"1.0.24"})
 
+    def test_apply_bumps_native_version_when_present(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "src-tauri").mkdir()
+        (root / "native" / "app").mkdir(parents=True)
+        (root / "package.json").write_text(json.dumps({"version": "1.0.22"}) + "\n")
+        (root / "src-tauri/Cargo.toml").write_text('[package]\nversion = "1.0.22"\n')
+        (root / "src-tauri/tauri.conf.json").write_text(
+            json.dumps({"version": "1.0.22"}) + "\n"
+        )
+        (root / "native/app/Cargo.toml").write_text(
+            '[package]\nname = "blockfield-native"\nversion = "1.0.22"\n'
+        )
+        changed = rollback.apply_version(root, "1.0.22", "1.0.24")
+        self.assertEqual(
+            changed, sorted(tuple(rollback.VERSION_FILES) + ("native/app/Cargo.toml",))
+        )
+        current = rollback.read_current_versions(root)
+        self.assertEqual(set(current.values()), {"1.0.24"})
+
+    def test_apply_refuses_disagreeing_native_version(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "src-tauri").mkdir()
+        (root / "native" / "app").mkdir(parents=True)
+        (root / "package.json").write_text(json.dumps({"version": "1.0.22"}) + "\n")
+        (root / "src-tauri/Cargo.toml").write_text('[package]\nversion = "1.0.22"\n')
+        (root / "src-tauri/tauri.conf.json").write_text(
+            json.dumps({"version": "1.0.22"}) + "\n"
+        )
+        (root / "native/app/Cargo.toml").write_text('[package]\nversion = "1.0.23"\n')
+        with self.assertRaisesRegex(ValueError, "disagree"):
+            rollback.apply_version(root, "1.0.22", "1.0.24")
+
     def test_apply_refuses_tree_at_bad_version(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

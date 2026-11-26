@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Blockfield Launcher
+Comment=Blockfield game launcher
+Exec=blockfield-launcher %U
+Terminal=false
+Categories=Game;
+MimeType=x-scheme-handler/blockfield;x-scheme-handler/discord-1548300877125779456;

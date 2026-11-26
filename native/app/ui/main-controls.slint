@@ -1,0 +1,47 @@
+import { Tokens } from "tokens.slint";
+import { ActionArea, WindowActivity } from "controls.slint";
+
+export global MainText { pure callback launch-sub(string, int) -> string; }
+
+export component Spinner inherits Rectangle {
+    private property <angle> turn: 0deg;
+    private property <bool> running: MainMotion.enabled && WindowActivity.live;
+    Image { x: 0px; y: 0px; width: parent.width; height: parent.height; source: @image-url("../assets/icons/loader-circle.svg"); colorize: Tokens.foreground; transform-rotation: root.turn; }
+    init => { if root.running && root.turn == 0deg { root.turn = 360deg; } }
+    changed running => { root.turn = root.running ? 360deg : 0deg; }
+    animate turn { duration: root.running ? 1000ms : 0ms; easing: linear; iteration-count: -1; }
+}
+
+export component MainButton inherits ActionArea {
+    in property <string> text: root.label;
+    in property <image> icon;
+    in property <bool> spinning: false;
+    in property <length> icon-size: 14px;
+    in property <length> text-size: 12px;
+    in property <length> tracking: 0px;
+    in property <bool> selected: false;
+    width: caption.preferred-width + (root.icon.width > 0 ? root.icon-size + (root.text != "" ? 8px : 0px) : 0px) + 26px;
+    height: 32px;
+    opacity: root.enabled ? 1 : 0.5;
+    private property <bool> visually-hovered: root.hovered || disabled-touch.has-hover;
+    disabled-touch := TouchArea { x: 0px; y: 0px; enabled: !root.enabled; mouse-cursor: not-allowed; }
+    border-width: 1phx;
+    border-color: root.visually-hovered ? Tokens.ring : (root.selected ? Tokens.primary.with-alpha(0.5) : Tokens.border);
+    animate border-color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+    HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: parent.height;
+        padding-left: 12px; padding-right: 12px; spacing: root.text != "" ? 8px : 0px; alignment: center;
+        if root.icon.width > 0: Rectangle {
+            width: root.icon-size; height: 32px;
+            if root.spinning: Spinner { x: 0px; y: (parent.height - self.height) / 2; width: root.icon-size; height: root.icon-size; }
+            if !root.spinning: Image { x: 0px; y: (parent.height - self.height) / 2; width: root.icon-size; height: root.icon-size; source: root.icon; colorize: Tokens.secondary-foreground; }
+        }
+        caption := Text {
+            text: root.text; font-weight: Tokens.weight-medium; color: root.visually-hovered || root.selected ? Tokens.foreground : Tokens.secondary-foreground;
+            font-size: root.text-size; letter-spacing: root.tracking;
+            vertical-alignment: center;
+            animate color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+        }
+    }
+}
+import { MainMotion } from "select.slint";
+export { MainMotion, SelectSearch, MainSelect } from "select.slint";

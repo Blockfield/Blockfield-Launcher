@@ -1,0 +1,29 @@
+import { Tokens } from "tokens.slint";
+
+// 1:1 port of Tauri `PlayerHead.tsx`: the bundled default head with the
+// resolved skin face (base layer plus hat overlay) on top. `face` is empty
+// until `avatars::request_faces` resolves it, exactly like the TSX `null`.
+export component PlayerHead inherits Rectangle {
+    in property <image> face;
+    width: 24px;
+    height: 24px;
+    clip: true;
+    Image {
+        x: 0px;
+        y: 0px;
+        width: 24px;
+        height: 24px;
+        source: @image-url("../assets/default-player-head.svg");
+        image-rendering: pixelated;
+        accessible-role: none;
+    }
+    if root.face.width > 0: Image {
+        x: 0px;
+        y: 0px;
+        width: 24px;
+        height: 24px;
+        source: root.face;
+        image-rendering: pixelated;
+        accessible-role: none;
+    }
+}

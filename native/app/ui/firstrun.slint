@@ -1,0 +1,280 @@
+import { Tokens } from "tokens.slint";
+import { ActionArea } from "controls.slint";
+import { GridBackdrop, TopoBackdrop } from "backdrop.slint";
+import { AuthHeader, ErrorText, FieldRow, FormButton, TextField } from "forms.slint";
+
+// Native port of src/app/components/FirstRunScreen.tsx: game dir, Java path
+// and RAM controls with the same defaults, presets and validation. File
+// pickers stay stubs (settings skin browse is a stub too; pickers are U11).
+component StepButton inherits ActionArea {
+    in property <string> text;
+    in property <string> tip;
+    accessible-role: button;
+    accessible-label: root.tip;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { root.clicked(); }
+    width: 36px;
+    height: 36px;
+    background: root.hovered ? Tokens.secondary : Tokens.chrome;
+    border-width: 1px;
+    border-color: root.hovered ? Tokens.ring : Tokens.border;
+    Text {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        font-size: 16px;
+        color: root.hovered ? Tokens.foreground : Tokens.secondary-foreground;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        accessible-role: none;
+    }
+}
+
+component RamSlider inherits Rectangle {
+    in-out property <int> value;
+    in property <int> minimum: 2;
+    in property <int> maximum;
+    callback changed(int);
+    function set-value(v: int) {
+        if v != root.value {
+            root.value = Math.max(root.minimum, Math.min(root.maximum, v));
+            root.changed(root.value);
+        }
+    }
+    function apply-x(x: length) {
+        root.set-value(root.minimum + Math.round((root.maximum - root.minimum) * x / Math.max(1px, bar.width)));
+    }
+    accessible-role: slider;
+    accessible-label: "Выделенная память, ГБ";
+    accessible-value: "\{root.value}";
+    height: 36px;
+    clip: true;
+    bar := Rectangle {
+        x: 0px;
+        y: (parent.height - 6px) / 2;
+        width: parent.width;
+        height: 6px;
+        background: Tokens.chrome;
+        border-width: 1px;
+        border-color: Tokens.border;
+        fill := Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width * (root.value - root.minimum) / Math.max(1, root.maximum - root.minimum);
+            height: parent.height;
+            background: @linear-gradient(90deg, #8a571c, #f5a524);
+        }
+        Rectangle {
+            x: parent.width * (root.value - root.minimum) / Math.max(1, root.maximum - root.minimum) - 6px;
+            y: (parent.height - 12px) / 2;
+            width: 12px;
+            height: 12px;
+            background: Tokens.primary;
+            border-width: 1px;
+            border-color: #070604;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: #f5a524.with-alpha(0.6);
+        }
+    }
+    touch := TouchArea {
+        x: 0px;
+        y: 0px;
+        mouse-cursor: pointer;
+        clicked => { root.apply-x(self.mouse-x); }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.move && self.pressed {
+                root.apply-x(self.mouse-x);
+            }
+        }
+    }
+}
+
+component PresetButton inherits ActionArea {
+    in property <string> text;
+    in property <bool> current;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+    height: 28px;
+    horizontal-stretch: 1;
+    background: root.current ? Tokens.primary : Tokens.chrome;
+    border-width: 1px;
+    border-color: root.current ? Tokens.primary : (root.hovered ? Tokens.ring : Tokens.border);
+    Text {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        font-family: Tokens.mono;
+        font-size: 10px;
+        letter-spacing: 1.4px;
+        color: root.current ? #070604 : (parent.hovered ? Tokens.foreground : Tokens.secondary-foreground);
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        accessible-role: none;
+    }
+}
+
+export component FirstRunScreen inherits Rectangle {
+    in-out property <string> game-dir;
+    in-out property <string> java-path;
+    in-out property <int> ram;
+    in property <int> maxram;
+    in property <[int]> presets;
+    in property <bool> saving;
+    in property <string> error;
+    callback browse-dir();
+    callback browse-java();
+    callback ram-text-edited(string);
+    callback continue();
+    background: Tokens.background;
+    TopoBackdrop { x: 0px; y: 0px; }
+    GridBackdrop { x: 0px; y: 0px; intensity: 0.4; }
+    VerticalLayout {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: Math.min(640px, parent.width - 32px);
+        alignment: center;
+        spacing: 16px;
+        AuthHeader {
+            title: "ПЕРВЫЙ ЗАПУСК";
+            hint: "Проверьте параметры игры. Их можно изменить позже в настройках.";
+        }
+        Rectangle {
+            background: Tokens.card;
+            border-width: 1px;
+            border-color: Tokens.border;
+            // 16px padding + two 65px rows + the RAM row below.
+            height: 146px + ram-row.height;
+            inner := VerticalLayout {
+                x: 12px;
+                y: 8px;
+                width: parent.width - 24px;
+                FieldRow {
+                    label: "ПАПКА ИГРЫ";
+                    hint: "Рекомендуемое значение по умолчанию — можно изменить.";
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.game-dir;
+                            font-family: Tokens.mono;
+                            font-size: 12px;
+                            color: Tokens.neutral-200;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        FormButton {
+                            text: "ОБЗОР";
+                            horizontal-padding: 12px;
+                            height: 40px;
+                            primary: false;
+                            clicked => { root.browse-dir(); }
+                        }
+                    }
+                }
+                FieldRow {
+                    label: "СРЕДА JAVA";
+                    hint: "Путь необязателен — лаунчер выберет Java автоматически.";
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.java-path == "" ? "Автоматически" : root.java-path;
+                            font-family: Tokens.mono;
+                            font-size: 12px;
+                            color: root.java-path == "" ? Tokens.faint : Tokens.neutral-200;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        FormButton {
+                            text: "ОБЗОР";
+                            horizontal-padding: 12px;
+                            height: 40px;
+                            primary: false;
+                            clicked => { root.browse-java(); }
+                        }
+                    }
+                }
+                ram-row := FieldRow {
+                    label: "ВЫДЕЛЕНИЕ RAM";
+                    hint: "\{root.ram} ГБ выделено · по умолчанию 4 ГБ";
+                    content-height: root.maxram < 2 ? 40px : 150px;
+                    if root.maxram < 2: Text {
+                        text: "Недостаточно памяти: для игры нужно выделить минимум 2 ГБ.";
+                        font-size: 11px;
+                        color: #c98b8b;
+                        vertical-alignment: center;
+                    }
+                    if root.maxram >= 2: VerticalLayout {
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 12px;
+                            StepButton {
+                                text: "−";
+                                tip: "Уменьшить память";
+                                enabled: root.ram > 2;
+                                clicked => { root.ram -= 1; }
+                            }
+                            RamSlider {
+                                horizontal-stretch: 1;
+                                value <=> root.ram;
+                                minimum: 2;
+                                maximum: root.maxram;
+                            }
+                            StepButton {
+                                text: "+";
+                                tip: "Увеличить память";
+                                enabled: root.ram < root.maxram;
+                                clicked => { root.ram += 1; }
+                            }
+                            HorizontalLayout {
+                                spacing: 4px;
+                                ram-number := TextField {
+                                    width: 56px;
+                                    field-height: 36px;
+                                    field-label: "Память, ГБ";
+                                    value: "\{root.ram}";
+                                    edited => { root.ram-text-edited(ram-number.value); }
+                                }
+                                Text {
+                                    text: "GB";
+                                    font-size: 10px;
+                                    letter-spacing: 1.8px;
+                                    color: Tokens.muted-foreground;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            for preset in root.presets: PresetButton {
+                                text: "\{preset}G";
+                                current: preset == root.ram;
+                                clicked => { root.ram = preset; }
+                            }
+                        }
+                        Text {
+                            text: "Доступно для игры: 2–\{root.maxram} ГБ";
+                            font-size: 10px;
+                            color: #a89373;
+                            horizontal-alignment: right;
+                        }
+                    }
+                }
+            }
+        }
+        if root.error != "": ErrorText { message: root.error; }
+        HorizontalLayout {
+            alignment: end;
+            FormButton {
+                text: "ПРОДОЛЖИТЬ";
+                enabled: !root.saving && root.maxram >= 2;
+                clicked => { root.continue(); }
+            }
+        }
+    }
+}

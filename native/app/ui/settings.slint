@@ -1,0 +1,381 @@
+import { Tokens } from "tokens.slint";
+import { SettingRow, PathField, SettingsToggle, SettingsButton } from "settings-fields.slint";
+import { SettingsGeneral } from "settings-general.slint";
+import { SettingsRuntime } from "settings-runtime.slint";
+import { SettingsCommands } from "settings-commands.slint";
+import { SettingsForm } from "settings-model.slint";
+import { FormButton, FormError } from "settings-inputs.slint";
+import { Spinner } from "main-controls.slint";
+import { ScrollView } from "std-widgets.slint";
+import { GridBackdrop, TopoBackdrop } from "backdrop.slint";
+import { SkinPreview } from "../../skin3d/src/slint_preview.slint";
+import { LauncherUpdatePanel, LauncherUpdateData } from "update.slint";
+import { DevPanel, DevData } from "dev.slint";
+
+component SettingsTabButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> current;
+    in property <bool> focused;
+    callback chosen();
+    // e2e hook only: exposes the tab to the Slint testing tree, no pixels change.
+    accessible-role: tab;
+    accessible-label: root.label;
+    accessible-action-default => { root.chosen(); }
+    height: 44px;
+    background: root.current ? Tokens.secondary : (press-touch.has-hover ? Tokens.card : transparent);
+    tab-text := Text {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height - 2px;
+        text: root.label;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.88px;
+        color: root.current ? Tokens.foreground : (press-touch.has-hover ? Tokens.foreground : Tokens.secondary-foreground);
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if root.current: Rectangle { x: 0px; y: parent.height - 2px; width: parent.width; height: 2px; background: Tokens.primary; }
+    press-touch := TouchArea {
+        x: 0px;
+        y: 0px;
+        mouse-cursor: pointer;
+        clicked => { root.chosen(); }
+    }
+    if root.current && root.focused: Rectangle {
+        x: 2px;
+        y: 2px;
+        width: root.width - 4px;
+        height: root.height - 4px;
+        border-width: 2px;
+        border-color: Tokens.primary;
+    }
+}
+
+export component SettingsScreen inherits Rectangle {
+    in property <[string]> tabs;
+    in-out property <int> tab: 3;
+    in property <string> username;
+    in property <string> title;
+    in property <string> subtitle;
+    in property <string> skin-path;
+    in property <string> cape-path;
+    in-out property <bool> slim: false;
+    in property <image> skin-frame;
+    in property <string> skin-error;
+    in property <string> caption;
+    in property <string> skin-message;
+    in property <string> skin-raw-error;
+    in-out property <bool> skin-busy: false;
+    in property <LauncherUpdateData> launcher-data;
+    in property <DevData> dev-data;
+    callback browse-skin();
+    callback browse-cape();
+    callback upload();
+    callback toggle-slim(bool);
+    callback reset();
+    callback save();
+    callback tab-changed(int);
+    callback drag-state(bool);
+    callback drag-by(float, float);
+    callback check();
+    callback install();
+    callback restart();
+    // WebKit floors CSS borders after zoom; phx preserves that at fractional DPI.
+    private property <length> edge: Math.floor(1px / 1phx) * 1phx;
+    private property <length> label-leading: Math.floor(16.5px / 1phx) * 1phx;
+    private property <length> hint-leading: Math.floor(15.125px / 1phx) * 1phx;
+    private property <length> skin-row-height: root.label-leading + 3 * root.hint-leading + 28px + root.edge;
+    private property <length> cape-row-height: 64px + root.edge;
+    private property <length> model-row-height: root.label-leading + root.hint-leading + 28px + root.edge;
+    background: Tokens.background;
+    TopoBackdrop { x: 0px; y: 0px; }
+    GridBackdrop { x: 0px; y: 0px; intensity: 0.4; }
+    content := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 20px;
+        width: Math.min(1600px, parent.width) - 40px;
+        height: parent.height - 40px;
+        title-text := Text {
+            x: 0px;
+            // Taller than the 26px line box so semibold ascenders (Й breve) are not
+            // clipped; symmetric around y13 keeps glyph and panel geometry fixed.
+            y: -4px;
+            height: 34px;
+            text: root.title;
+            font-size: 26px;
+            font-weight: 600;
+            letter-spacing: 1.56px;
+            color: #fafafa;
+            vertical-alignment: center;
+        }
+        Text {
+            x: title-text.preferred-width + 12px;
+            y: 0px;
+            height: 26px;
+            text: root.subtitle;
+            font-size: 10px;
+            letter-spacing: 1.8px;
+            color: Tokens.muted-foreground;
+            vertical-alignment: bottom;
+        }
+        panel := Rectangle {
+            x: 0px;
+            y: Math.floor(26px / 1phx) * 1phx + 16px;
+            width: parent.width;
+            height: parent.height - self.y;
+            background: Tokens.card;
+            border-width: Math.floor(1px / 1phx) * 1phx;
+            border-color: Tokens.border;
+            tabbar := Rectangle {
+                x: root.edge;
+                y: root.edge;
+                width: parent.width - 2 * root.edge;
+                height: 44px + root.edge;
+                background: Tokens.chrome;
+                Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Tokens.border; }
+                tab-keys := FocusScope {
+                    key-pressed(event) => {
+                        if event.text == Key.RightArrow { root.tab = Math.mod(root.tab + 1, root.tabs.length); }
+                        else if event.text == Key.LeftArrow { root.tab = Math.mod(root.tab + root.tabs.length - 1, root.tabs.length); }
+                        else if event.text == Key.Home { root.tab = 0; }
+                        else if event.text == Key.End { root.tab = root.tabs.length - 1; }
+                        else { return reject; }
+                        return accept;
+                    }
+                }
+                HorizontalLayout {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: parent.height;
+                    alignment: start;
+                    spacing: 0px;
+                    for entry[index] in root.tabs: SettingsTabButton {
+                        width: tabbar.width / root.tabs.length;
+                        label: entry;
+                        current: root.tab == index;
+                        focused: tab-keys.has-focus;
+                        chosen => {
+                            tab-keys.focus();
+                            root.tab = index;
+                            root.tab-changed(index);
+                        }
+                    }
+                }
+            }
+            body := Rectangle {
+                x: root.edge;
+                y: 44px + 2 * root.edge;
+                width: parent.width - 2 * root.edge;
+                height: actions.y - self.y;
+                clip: true;
+                if root.tab == 0: ScrollView {
+                    x: 0px; y: 0px; width: parent.width; height: parent.height;
+                    content-width: self.visible-width; content-height: general-page.height + 16px;
+                    general-page := SettingsGeneral { x: 20px; y: 8px; width: parent.width - 40px; username: root.username; }
+                }
+                if root.tab == 1: ScrollView {
+                    x: 0px; y: 0px; width: parent.width; height: parent.height;
+                    content-width: self.visible-width; content-height: runtime-page.height + 16px;
+                    runtime-page := SettingsRuntime { x: 20px; y: 8px; width: parent.width - 40px;  }
+                }
+                if root.tab == 2: ScrollView {
+                    x: 0px; y: 0px; width: parent.width; height: parent.height;
+                    content-width: self.visible-width; content-height: commands-page.height + 16px;
+                    commands-page := SettingsCommands { x: 20px; y: 8px; width: parent.width - 40px;  }
+                }
+                if root.tab == 3: skin-content := Rectangle {
+                    x: 20px;
+                    y: 8px;
+                    width: parent.width - 40px;
+                    height: parent.height - 16px;
+                    form := Rectangle {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width - 260px - 2 * root.edge;
+                        height: parent.height;
+                        SettingRow {
+                            y: 0px;
+                            width: parent.width;
+                            icon: @image-url("../assets/icons/shirt.svg");
+                            label: "СКИН";
+                            hint: ["PNG 64×64. Без загрузки на сервере", "остаётся скин лицензионного аккаунта с", "таким ником."];
+                            row-height: root.skin-row-height;
+                            PathField {
+                                x: 0px;
+                                y: (parent.height - 24px - root.edge - self.height) / 2;
+                                width: parent.width - 284px;
+                                label: "СКИН";
+                                value: root.skin-path;
+                                browse => { root.browse-skin(); }
+                            }
+                        }
+                        SettingRow {
+                            y: root.skin-row-height;
+                            width: parent.width;
+                            icon: @image-url("../assets/icons/shirt.svg");
+                            label: "ПЛАЩ";
+                            hint: ["PNG 64×32. Необязательно."];
+                            row-height: root.cape-row-height;
+                            PathField {
+                                x: 0px;
+                                y: (parent.height - 24px - root.edge - self.height) / 2;
+                                width: parent.width - 284px;
+                                label: "ПЛАЩ";
+                                value: root.cape-path;
+                                browse => { root.browse-cape(); }
+                            }
+                        }
+                        SettingRow {
+                            y: root.skin-row-height + root.cape-row-height;
+                            width: parent.width;
+                            icon: @image-url("../assets/icons/user-round.svg");
+                            label: "ТОНКИЕ РУКИ";
+                            hint: ["Модель Alex (3px) вместо Steve (4px)."];
+                            row-height: root.model-row-height;
+                            SettingsToggle {
+                                x: 0px;
+                                y: (parent.height - 24px - root.edge - self.height) / 2;
+                                label: "ТОНКИЕ РУКИ";
+                                on: root.slim;
+                                on-label: "ВКЛ";
+                                off-label: "ВЫКЛ";
+                                toggled(value) => { root.toggle-slim(value); }
+                            }
+                        }
+                        upload-row := Rectangle {
+                            y: root.skin-row-height + root.cape-row-height + root.model-row-height;
+                            width: parent.width;
+                            height: 56px;
+                            SettingsButton {
+                                x: parent.width - self.width;
+                                y: 12px;
+                                text: root.skin-busy ? "ЗАГРУЗКА..." : "ЗАГРУЗИТЬ";
+                                icon: @image-url("../assets/icons/upload.svg");
+                                primary: true;
+                                enabled: (root.skin-path != "" || root.cape-path != "") && !root.skin-busy;
+                                clicked => { root.upload(); }
+                            }
+                            if root.skin-message != "": Text {
+                                x: 0px;
+                                y: 44px;
+                                width: parent.width;
+                                height: 12px;
+                                text: root.skin-message;
+                                font-size: 11px;
+                                color: #F5A524;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                    preview-panel := Rectangle {
+                        x: parent.width - self.width;
+                        y: 0px;
+                        width: 236px + 2 * root.edge;
+                        height: 339px + 2 * root.edge;
+                        background: #0b0906;
+                        border-width: Math.floor(1px / 1phx) * 1phx;
+                        border-color: Tokens.border;
+                        SkinPreview {
+                            x: 8px + root.edge;
+                            y: 8px + root.edge;
+                            frame: root.skin-frame;
+                            drag-state(active) => { root.drag-state(active); }
+                            drag-by(dx, dy) => { root.drag-by(dx, dy); }
+                            accessible-role: image;
+                            accessible-label: "Анимированный скин Minecraft; вращайте перетаскиванием";
+                        }
+                        Text {
+                            x: 8px + root.edge;
+                            y: 316px + root.edge;
+                            width: 220px;
+                            height: 14px;
+                            text: root.caption;
+                            font-size: 10px;
+                            letter-spacing: 1.8px;
+                            color: Tokens.muted-foreground;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        if root.skin-error != "": Text {
+                            x: 9px;
+                            y: 330px;
+                            width: 220px;
+                            height: 12px;
+                            text: root.skin-error;
+                            font-size: 10px;
+                            color: #c98b8b;
+                            horizontal-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+                if root.tab == 4: Rectangle {
+                    x: 20px;
+                    y: 8px;
+                    width: parent.width - 40px;
+                    height: parent.height - 16px;
+                    update-panel := LauncherUpdatePanel {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height - (root.dev-data.server != "" ? 120px : 0px);
+                        data: root.launcher-data;
+                        check => { root.check(); }
+                        install => { root.install(); }
+                        restart => { root.restart(); }
+                    }
+                    if root.dev-data.server != "": DevPanel {
+                        x: 0px;
+                        y: update-panel.y + update-panel.height + 8px;
+                        width: parent.width;
+                        data: root.dev-data;
+                    }
+                }
+            }
+            actions := Rectangle {
+                // A wrapped save error grows the footer (Tauri wraps its actions
+                // row the same way); the body above shrinks, nothing overpaints.
+                // footer-main stays instantiated so its error height is readable.
+                property <length> row-height: Math.max(40px, footer-error.height);
+                x: root.edge;
+                y: parent.height - self.height - root.edge;
+                width: parent.width - 2 * root.edge;
+                height: 24px + self.row-height + root.edge;
+                background: Tokens.chrome;
+                Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: #18130d; }
+                footer-main := Rectangle {
+                    x: 20px; width: parent.width - 40px; y: 12px; height: parent.height - 24px - root.edge;
+                    save-button := FormButton {
+                        x: parent.width - self.width; y: (parent.height - 40px) / 2;
+                        footer: true; busy: SettingsForm.saving;
+                        text: SettingsForm.saving ? "СОХРАНЕНИЕ..." : SettingsForm.saved ? "СОХРАНЕНО" : "СОХРАНИТЬ";
+                        icon: @image-url("../assets/icons/save.svg"); horizontal-padding: 24px;
+                        primary: SettingsForm.dirty;
+                        enabled: SettingsForm.dirty && !SettingsForm.saving && !SettingsForm.blocked;
+                        clicked => { SettingsForm.save(); }
+                    }
+                    footer-error := FormError {
+                        x: save-button.x - 12px - self.width; y: (parent.height - self.height) / 2;
+                        width: SettingsForm.error == "" ? 0px : 320px;
+                        message: SettingsForm.error; raw: SettingsForm.raw-error;
+                    }
+                    FormButton {
+                        x: footer-error.x - 12px - self.width; y: (parent.height - 40px) / 2;
+                        text: "СБРОС"; footer: true; horizontal-padding: 20px; clicked => { SettingsForm.reset(); }
+                    }
+                }
+            }
+        }
+    }
+    if SettingsForm.loading: Rectangle {
+        width: parent.width; height: parent.height; background: Tokens.background;
+        TouchArea {}
+        Spinner { x: (parent.width - 24px) / 2; y: (parent.height - 24px) / 2; width: 24px; height: 24px; }
+    }
+    changed tab => { root.tab-changed(root.tab); }
+}

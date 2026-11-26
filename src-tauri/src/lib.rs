@@ -2,28 +2,77 @@ mod account;
 mod commands;
 mod config;
 mod dev;
-mod discord_ipc;
 mod download;
 mod game;
+#[cfg(target_os = "linux")]
 mod host_env;
 mod installed_files;
-mod launch_hooks;
 mod minecraft;
 #[cfg(target_os = "linux")]
 mod native_update;
-mod pack;
 mod presence;
 mod rooms;
 mod skins;
 mod status;
-mod tcp_fallback;
 use tauri_plugin_deep_link::DeepLinkExt;
 mod updater;
 
 use commands::LauncherAppState;
+use launcher_app::LauncherEvent;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
+/// Names of the commands served through Tauri `invoke`, in `generate_handler!`
+/// order below. `generate_handler!` cannot be introspected, so this adjacent
+/// fixed-size list is the testable copy: the size forces a compile error when
+/// a command is added or removed, and `tests/adapter_contract.rs` fails CI if
+/// the contents drift from either side (macro or frontend `invoke()` calls).
+pub const REGISTERED_COMMANDS: [&str; 28] = [
+    "check_launcher_update",
+    "install_launcher_update",
+    "account_status",
+    "login",
+    "register",
+    "logout",
+    "change_password",
+    "load_settings",
+    "save_settings",
+    "select_profile",
+    "check_modpack_version",
+    "download_modpack",
+    "verify_files",
+    "cancel_download",
+    "launch_game",
+    "game_status",
+    "server_status",
+    "stats_leaderboard",
+    "stats_seasons",
+    "stats_player",
+    "open_url",
+    "open_player_profile",
+    "dev_status",
+    "upload_skin",
+    "preview_skin",
+    "pending_room",
+    "select_room",
+    "join_running_room",
+];
+
+/// Frontend event name for a [`LauncherEvent`], exactly as emitted today.
+pub fn event_name(event: &LauncherEvent) -> &'static str {
+    match event {
+        LauncherEvent::Status(_) => "launcher://status",
+        LauncherEvent::DownloadProgress(_) => "download://progress",
+        LauncherEvent::DownloadMirror(_) => "download://mirror",
+        LauncherEvent::GameStatus(_) => "game://status",
+        LauncherEvent::RoomPending => "room://pending",
+        LauncherEvent::AccountExpired => "account://expired",
+    }
+}
+
+// Frontend payloads stay exactly as on the base: each sink arm below emits
+// the same typed value under the same name (key order is not contracted —
+// the frontend uses `JSON.parse` — so tests compare parsed JSON).
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(windows)]
@@ -93,9 +142,72 @@ pub fn run() {
                 loaded_config.lang
             );
 
-            // Bootstrap managed state
-            let app_handle = app.handle().clone();
-            let downloader = download::Downloader::new(app_handle);
+            // Phase 2 event seam: core state emits LauncherEvent; the adapter maps
+            // each variant back to today's exact event name and payload.
+            let sink_app = app.handle().clone();
+            let events: launcher_app::EventSink = Arc::new(move |event| {
+                use launcher_app::LauncherEvent::*;
+                // `event_name` returns the exact literals below; the name is
+                // resolved once so the tested mapping is the emitted one.
+                let name = event_name(&event);
+                match event {
+                    Status(payload) => {
+                        if let Err(e) = sink_app.emit(name, payload) {
+                            log::error!("Failed to emit launcher status: {e}");
+                        }
+                    }
+                    DownloadProgress(payload) => {
+                        let _ = sink_app.emit(name, payload);
+                    }
+                    DownloadMirror(mirror) => {
+                        let _ = sink_app.emit(
+                            name,
+                            serde_json::json!({
+                                "name": mirror.name,
+                                "speed": mirror.speed,
+                            }),
+                        );
+                    }
+                    GameStatus(status) => {
+                        let _ = sink_app.emit(name, status);
+                    }
+                    RoomPending => {
+                        // The rooms bridge showed the window before emitting;
+                        // every core RoomPending (deep link or Discord join)
+                        // restores it here so the shell mapping stays exact.
+                        crate::game::show_launcher(&sink_app);
+                        let _ = sink_app.emit(name, ());
+                    }
+                    AccountExpired => {
+                        let _ = sink_app.emit(name, ());
+                    }
+                }
+            });
+            let progress_app = app.handle().clone();
+            let progress_sink: download::ProgressSink =
+                std::sync::Arc::new(move |payload: download::DownloadProgressPayload| {
+                    if let Err(e) = progress_app.emit("download://progress", payload) {
+                        log::error!("Failed to emit progress event: {e}");
+                    }
+                });
+            let retry_app = app.handle().clone();
+            let retry_sink: download::RetrySink =
+                std::sync::Arc::new(move |file_path: String, attempt: u64| {
+                    let _ = retry_app.emit(
+                        "launcher://status",
+                        serde_json::json!({
+                            "phase": "retry",
+                            "message": format!("Retrying {file_path} ({attempt}/3)"),
+                            "cancelable": true,
+                        }),
+                    );
+                });
+            let guard_sink: download::GuardSink = std::sync::Arc::new(|path: &std::path::Path| {
+                let guard = crate::installed_files::Write::new(path);
+                let finish: download::WriteFinish = Box::new(move || guard.finish());
+                finish
+            });
+            let downloader = download::Downloader::new(progress_sink, retry_sink, guard_sink);
             // Share the atomic cancel flag so cancel_download can set it
             // without locking the downloader.
             let cancel_flag = downloader.cancel_flag.clone();
@@ -105,6 +217,7 @@ pub fn run() {
                 downloader,
                 cancel_flag,
                 operation: tokio::sync::Mutex::new(()),
+                events,
                 game: Arc::new(game::GameState::new({
                     let app = app.handle().clone();
                     move |status| {

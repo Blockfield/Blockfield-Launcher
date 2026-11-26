@@ -1,0 +1,260 @@
+{
+  "base": "b4583ca",
+  "suite": "stats.ts:164-180 formatMmr/formatMmrRange/formatKd/formatScore/formatBattles/displayRank",
+  "cases": [
+    {
+      "fn": "format_mmr",
+      "input": null,
+      "expected": "—"
+    },
+    {
+      "fn": "format_mmr",
+      "expected": "—"
+    },
+    {
+      "fn": "format_mmr",
+      "input": {
+        "rating": 1500,
+        "rd": 50,
+        "ratedCampaigns": 10,
+        "provisional": false
+      },
+      "expected": "1500"
+    },
+    {
+      "fn": "format_mmr",
+      "input": {
+        "rating": 1500.4,
+        "rd": 50,
+        "ratedCampaigns": 10,
+        "provisional": false
+      },
+      "expected": "1500"
+    },
+    {
+      "fn": "format_mmr",
+      "input": {
+        "rating": 1500.5,
+        "rd": 50,
+        "ratedCampaigns": 10,
+        "provisional": false
+      },
+      "expected": "1501"
+    },
+    {
+      "fn": "format_mmr",
+      "input": {
+        "rating": 0,
+        "rd": 100,
+        "ratedCampaigns": 0,
+        "provisional": true
+      },
+      "expected": "0?"
+    },
+    {
+      "fn": "format_mmr",
+      "input": {
+        "rating": 1723.49,
+        "rd": 12.35,
+        "ratedCampaigns": 3,
+        "provisional": true
+      },
+      "expected": "1723?"
+    },
+    {
+      "fn": "format_mmr_range",
+      "input": null,
+      "expected": "—"
+    },
+    {
+      "fn": "format_mmr_range",
+      "expected": "—"
+    },
+    {
+      "fn": "format_mmr_range",
+      "input": {
+        "rating": 1500,
+        "rd": 50,
+        "ratedCampaigns": 10,
+        "provisional": false
+      },
+      "expected": "1500 ± 100"
+    },
+    {
+      "fn": "format_mmr_range",
+      "input": {
+        "rating": 1500.4,
+        "rd": 50,
+        "ratedCampaigns": 10,
+        "provisional": false
+      },
+      "expected": "1500 ± 100"
+    },
+    {
+      "fn": "format_mmr_range",
+      "input": {
+        "rating": 1500.5,
+        "rd": 50,
+        "ratedCampaigns": 10,
+        "provisional": false
+      },
+      "expected": "1501 ± 100"
+    },
+    {
+      "fn": "format_mmr_range",
+      "input": {
+        "rating": 0,
+        "rd": 100,
+        "ratedCampaigns": 0,
+        "provisional": true
+      },
+      "expected": "0? ± 200"
+    },
+    {
+      "fn": "format_mmr_range",
+      "input": {
+        "rating": 1723.49,
+        "rd": 12.35,
+        "ratedCampaigns": 3,
+        "provisional": true
+      },
+      "expected": "1723? ± 25"
+    },
+    {
+      "fn": "format_kd",
+      "input": {
+        "kills": 0,
+        "deaths": 0
+      },
+      "expected": "0 / 0"
+    },
+    {
+      "fn": "format_kd",
+      "input": {
+        "kills": 5,
+        "deaths": 3
+      },
+      "expected": "5 / 3"
+    },
+    {
+      "fn": "format_kd",
+      "input": {
+        "kills": 10,
+        "deaths": 0
+      },
+      "expected": "10 / 0"
+    },
+    {
+      "fn": "format_score",
+      "input": 0,
+      "expected": "0"
+    },
+    {
+      "fn": "format_score",
+      "input": 1,
+      "expected": "1"
+    },
+    {
+      "fn": "format_score",
+      "input": 1.2,
+      "expected": "1.2"
+    },
+    {
+      "fn": "format_score",
+      "input": 1.234,
+      "expected": "1.23"
+    },
+    {
+      "fn": "format_score",
+      "input": 1.235,
+      "expected": "1.24"
+    },
+    {
+      "fn": "format_score",
+      "input": 1.005,
+      "expected": "1"
+    },
+    {
+      "fn": "format_score",
+      "input": 2.675,
+      "expected": "2.68"
+    },
+    {
+      "fn": "format_score",
+      "input": -1.5,
+      "expected": "-1.5"
+    },
+    {
+      "fn": "format_score",
+      "input": 100,
+      "expected": "100"
+    },
+    {
+      "fn": "format_score",
+      "input": 99.995,
+      "expected": "100"
+    },
+    {
+      "fn": "format_battles",
+      "input": {
+        "matches": 10,
+        "wins": 3
+      },
+      "expected": "10 / 3"
+    },
+    {
+      "fn": "format_battles",
+      "input": {
+        "matches": 0,
+        "wins": 0
+      },
+      "expected": "0 / 0"
+    },
+    {
+      "fn": "display_rank",
+      "input": {
+        "row": {
+          "rank": 5
+        },
+        "index": 0,
+        "page": 1,
+        "limit": 25
+      },
+      "expected": 5
+    },
+    {
+      "fn": "display_rank",
+      "input": {
+        "row": {
+          "rank": null
+        },
+        "index": 0,
+        "page": 1,
+        "limit": 25
+      },
+      "expected": 1
+    },
+    {
+      "fn": "display_rank",
+      "input": {
+        "row": {},
+        "index": 24,
+        "page": 2,
+        "limit": 25
+      },
+      "expected": 50
+    },
+    {
+      "fn": "display_rank",
+      "input": {
+        "row": {
+          "rank": 0
+        },
+        "index": 3,
+        "page": 1,
+        "limit": 10
+      },
+      "expected": 0
+    }
+  ]
+}
