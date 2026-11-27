@@ -26,7 +26,10 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
     let mut retry = false;
     let mut game_became_idle = false;
     match event {
-        LauncherEvent::Status(status) => data.launch_status = status.message.into(),
+        LauncherEvent::Status(status) => {
+            data.launch_status = status.message.clone().into();
+            crate::update::apply_status(app, &status);
+        }
         LauncherEvent::GameStatus(status) => {
             data.phase = match status.phase {
                 GamePhase::Idle => "idle",
@@ -41,6 +44,7 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
                 data.progress = -1;
             }
             game_became_idle = was_busy && status.phase == GamePhase::Idle;
+            crate::update::apply_game_status(app, &status);
             retry = true;
         }
         LauncherEvent::DownloadProgress(progress) => {
@@ -50,8 +54,13 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
             };
             data.progress = percent(done, total);
             if !progress.file_path.is_empty() {
-                data.launch_status = progress.file_path.into();
+                data.launch_status = progress.file_path.clone().into();
             }
+            crate::update::apply_progress(app, &progress);
+        }
+        LauncherEvent::DownloadMirror(mirror) => {
+            crate::update::apply_mirror(app, &mirror);
+            return;
         }
         LauncherEvent::RoomPending => {
             data.pending_room = true;
@@ -68,10 +77,6 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
             data.profile_blocked = false;
             data.profile_error = "".into();
             crate::auth::show_login_expired(app);
-        }
-        event => {
-            eprintln!("Launcher event has no native UI target yet: {event:?}");
-            return;
         }
     }
     app.set_main_data(data);
