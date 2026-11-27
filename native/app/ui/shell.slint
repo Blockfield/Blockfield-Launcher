@@ -89,6 +89,7 @@ export component Shell inherits Rectangle {
     in property <string> support-label;
     in property <string> network-label;
     in property <bool> dev-build;
+    in-out property <string> command-error;
     callback navigate(int);
     callback launcher-update();
     callback support();
@@ -184,6 +185,48 @@ export component Shell inherits Rectangle {
         height: parent.height - Tokens.header-height - Tokens.footer-height;
         clip: true;
         @children
+        if root.command-error != "": Rectangle {
+            x: 16px;
+            y: parent.height - self.height - 16px;
+            width: parent.width - 32px;
+            height: Math.max(48px, cmd-err-text.preferred-height + 32px);
+            background: Tokens.card;
+            border-width: 1phx;
+            border-color: #c98b8b;
+            cmd-err-text := Text {
+                x: 16px;
+                y: 16px;
+                width: parent.width - 32px - cmd-err-close.width - 16px;
+                text: root.command-error;
+                font-size: 12px;
+                color: Tokens.foreground;
+                wrap: word-wrap;
+            }
+            cmd-err-close := ActionArea {
+                x: parent.width - self.width - 16px;
+                y: 16px;
+                width: cmd-err-close-text.preferred-width;
+                height: 18px;
+                label: "Закрыть";
+                clicked => { root.command-error = ""; }
+                cmd-err-close-text := Text {
+                    x: 0px;
+                    y: 0px;
+                    height: parent.height;
+                    text: "Закрыть";
+                    font-size: 12px;
+                    color: parent.hovered ? Tokens.primary : Tokens.foreground;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    x: 0px;
+                    y: parent.height - 1px;
+                    width: parent.width;
+                    height: 1px;
+                    background: parent.hovered ? Tokens.primary : Tokens.foreground;
+                }
+            }
+        }
     }
     footer := Rectangle {
         y: parent.height - Tokens.footer-height;

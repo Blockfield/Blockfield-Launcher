@@ -72,10 +72,18 @@ export component FormButton inherits ActionArea {
 export component EditablePath inherits Rectangle {
     in property <string> label;
     in property <string> placeholder;
+    in property <bool> marks-dirty: true;
     in-out property <string> value;
     callback browse();
+    callback edited();
     height: 40px;
-    FormInput { x: 0px; width: parent.width - 66px; value <=> root.value; label: root.label; placeholder: root.placeholder; edited => { SettingsForm.edited(); } }
+    FormInput {
+        x: 0px; width: parent.width - 66px; value <=> root.value; label: root.label; placeholder: root.placeholder;
+        edited => {
+            if root.marks-dirty { SettingsForm.edited(); }
+            root.edited();
+        }
+    }
     FormButton { x: parent.width - self.width; width: 67px; text: "ОБЗОР"; clicked => { root.browse(); } }
 }
 

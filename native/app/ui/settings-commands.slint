@@ -8,7 +8,7 @@ export component SettingsCommands inherits Rectangle {
     SettingRow {
         x: 0px; y: 0px; width: parent.width; row-height: 105px;
         icon: @image-url("../assets/icons/terminal.svg"); label: "ПЕРЕД ЗАПУСКОМ";
-        hint: ["Выполняется перед Minecraft. При", "ошибке запуск игры отменяется."];
+        hint: ["Выполняется перед Minecraft. Ошибка", "команды не отменяет запуск."];
         FormInput { x: 0px; y: 0px; width: parent.width - 284px; label: "ПЕРЕД ЗАПУСКОМ"; multiline: true; placeholder: "Не выполнять команду"; value <=> SettingsForm.data.pre-launch; edited => { SettingsForm.edited(); } }
     }
     SettingRow {
@@ -18,7 +18,8 @@ export component SettingsCommands inherits Rectangle {
         FormInput { x: 0px; y: 0px; width: parent.width - 284px; label: "ПОСЛЕ ВЫХОДА ИЗ ИГРЫ"; multiline: true; placeholder: "Не выполнять команду"; value <=> SettingsForm.data.post-exit; edited => { SettingsForm.edited(); } }
     }
     Text {
-        y: 218px; width: parent.width; height: 36px; font-size: 11px; color: Tokens.secondary-foreground; wrap: word-wrap;
-        text: "Команды выполняются в папке игры через sh (Linux/macOS) или cmd (Windows). Доступны INST_DIR, INST_MC_DIR, INST_JAVA и INST_EXIT_CODE после выхода. Обращение к переменным: $INST_DIR в sh, %INST_DIR% в cmd. Вывод: logs/launcher-hooks.log.";
+        y: 218px; width: parent.width; height: 42px; font-size: 11px; color: Tokens.secondary-foreground; wrap: word-wrap;
+        line-height-factor: 1.625 * 2048 / 2478;
+        text: "Команды выполняются в папке игры через sh (Linux) или cmd (Windows). Доступны INST_DIR, INST_MC_DIR, INST_JAVA и INST_EXIT_CODE после выхода. Обращение к переменным: $INST_DIR в sh, %INST_DIR% в cmd. Вывод: logs/launcher-hooks.log.";
     }
 }

@@ -513,7 +513,7 @@ fn scenario_dev_panel() {
     assert_eq!(app.get_settings_tab(), 4, "launcher tab selects");
     // …then the DEV panel shows every variable row.
     for label in [
-        "DEV-СБОРКА",
+        "DEV-сборка",
         "BLOCKFIELD_DEV_SERVER",
         "BLOCKFIELD_DEV_FREEZE_PACK",
         "BLOCKFIELD_DEV_JVM_ARGS",

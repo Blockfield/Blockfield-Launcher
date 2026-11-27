@@ -406,6 +406,11 @@ pub fn apply_board(app: &AppWindow, outcome: &StatsOutcome, uuid: &str, page: i6
         app.set_stats_rows(ModelRc::default());
         return;
     }
+    let page = board
+        .get("page")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(page)
+        .max(1);
     let limit = board
         .get("limit")
         .and_then(|v| v.as_i64())
@@ -474,7 +479,7 @@ pub fn apply_self(app: &AppWindow, outcome: &StatsOutcome, uuid: &str) {
         }
         return;
     };
-    let totals = player.get("totals");
+    let totals = player.get("totals").filter(|v| v.is_object());
     let name: SharedString = player
         .get("profile")
         .map(|p| get_str(p, "name"))
@@ -490,7 +495,7 @@ pub fn apply_self(app: &AppWindow, outcome: &StatsOutcome, uuid: &str) {
     let mmr = player
         .get("mmr")
         .and_then(mmr_of)
-        .or_else(|| totals.and_then(mmr_of));
+        .or_else(|| totals.and_then(|t| t.get("mmr")).and_then(mmr_of));
     app.set_stats_self_mmr(fmt::format_mmr_range(mmr.as_ref()).into());
     let (battles, kd, captures) = match totals {
         Some(t) => (
