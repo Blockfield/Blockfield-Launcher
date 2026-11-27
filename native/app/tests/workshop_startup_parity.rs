@@ -105,6 +105,18 @@ fn workshop_startup_blocks_until_role_verified_and_footer_ignores_unsaved_draft(
     backend::enter_main(&app, state, rt.handle().clone());
     app.show().unwrap();
 
+    // Release-semantics builds (the CI `ci-test` profile, like a Tauri release
+    // build per `src-tauri/src/commands.rs::select_pack_base_url`) reject the
+    // plain-http pack host the CMS brand arrival below needs, so the staged
+    // flow only runs where plain http to localhost is permitted (debug builds —
+    // same shape as the `cfg!(debug_assertions)` live steps in
+    // `tests/skin_preview.rs`). Covered by debug `cargo test`.
+    if !cfg!(debug_assertions) {
+        rt.shutdown_timeout(Duration::from_secs(2));
+        let _ = std::fs::remove_dir_all(root);
+        return;
+    }
+
     let weak = app.as_weak();
     let stage = Rc::new(Cell::new(0u8));
     let poll = slint::Timer::default();

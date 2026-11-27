@@ -147,6 +147,19 @@ fn core_boot_has_real_version_cms_no_fixture_leaks_and_resyncs_profile() {
         "MainScreen must not hardcode '/ 100' when players_max is absent"
     );
 
+    // Release-semantics builds (the CI `ci-test` profile, like a Tauri release
+    // build per `src-tauri/src/commands.rs::select_pack_base_url`) reject a
+    // plain-http pack host, so the CMS/profile stages below only run where
+    // plain http to localhost is permitted (debug builds — same shape as the
+    // `cfg!(debug_assertions)` live steps in `tests/skin_preview.rs`, and the
+    // debug-only contract in `core/launcher-net/src/account.rs::drasl_base`).
+    // The parity assertions above hold in both profiles.
+    if !cfg!(debug_assertions) {
+        rt.shutdown_timeout(Duration::from_secs(2));
+        let _ = std::fs::remove_dir_all(root);
+        return;
+    }
+
     let weak = app.as_weak();
     let stage = Rc::new(std::cell::Cell::new(0u8));
     let hits_before_focus = Rc::new(std::cell::Cell::new(0usize));
