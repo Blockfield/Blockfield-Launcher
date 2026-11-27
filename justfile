@@ -89,9 +89,8 @@ legacy-check *args:
     runpy.run_path("scripts/quality.py", run_name="__main__")
 
 cargo-audit *args:
-    import runpy, sys
+    import subprocess, sys
     audit_args = list(sys.argv[1:])
-    sys.argv = ["scripts/quality.py", "run", 'cargo', 'audit', *audit_args]
-    runpy.run_path("scripts/quality.py", run_name="__main__")
-    sys.argv = ["scripts/quality.py", "run", 'cargo', 'audit', '--file', 'native/app/Cargo.lock', *audit_args]
-    runpy.run_path("scripts/quality.py", run_name="__main__")
+    workspace = subprocess.run([sys.executable, "-I", "-X", "utf8", "scripts/quality.py", "run", "cargo", "audit", *audit_args]).returncode
+    native = subprocess.run([sys.executable, "-I", "-X", "utf8", "scripts/quality.py", "run", "cargo", "audit", "--file", "native/app/Cargo.lock", *audit_args]).returncode
+    raise SystemExit(workspace or native)
