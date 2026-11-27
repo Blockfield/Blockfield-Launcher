@@ -8,7 +8,7 @@ on:
   push:
     branches: [native/**, feat/native-slint, next, main]
   pull_request:
-    branches: [feat/native-slint, next, main]
+    branches: [native/**, feat/native-slint, next, main]
     paths-ignore: ['**.md', 'docs/**', 'release-notes/**']
   workflow_dispatch:
     inputs:
