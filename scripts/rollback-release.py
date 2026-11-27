@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Plan and stage a launcher rollback release.
 
-The Tauri updater only moves forward: it offers an update when the feed
-version in latest.json is higher than the installed version, never a
-downgrade. Rolling back a bad release therefore means publishing a HIGHER
-version built from the last-good code, so every client (on the bad or the
-good build) updates forward onto good code.
+The updater only moves forward: it offers an update when the feed version in
+latest.json is higher than the installed version, never a downgrade. Rolling
+back a bad release therefore means publishing a HIGHER version built from the
+last-good code, so every client (on the bad or the good build) updates forward
+onto good code.
 """
 
 import argparse
@@ -16,18 +16,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION_FILES = (
+VERSION_FILES = ("native/app/Cargo.toml",)
+
+# Pre-cutover tags (<= v2.0.0) also carried Tauri/Node version files; keep
+# bumping and verifying them whenever a rollback restores an older tag.
+OPTIONAL_VERSION_FILES = (
     "package.json",
     "src-tauri/Cargo.toml",
     "src-tauri/tauri.conf.json",
 )
 
-# Newer trees also sync the native shell version; older tags predate it, so
-# it is only bumped and checked when the file exists.
-OPTIONAL_VERSION_FILES = ("native/app/Cargo.toml",)
-
-# Rollback tooling that must survive a rollback. The good tag predates it, so
-# the restore step excludes these paths and verify allows them to differ.
+# Rollback tooling that must survive a rollback. The good tag may predate it,
+# so the restore step excludes these paths and verify allows them to differ.
 PRESERVED_TOOLING = (
     "justfile",
     "scripts/rollback-release.py",
@@ -60,7 +60,7 @@ def parse_version(text):
 
 
 def update_available(installed, feed):
-    """Model of the Tauri updater: forward-only, version-ordered."""
+    """Model of the updater: forward-only, version-ordered."""
     return parse_version(feed) > parse_version(installed)
 
 
@@ -83,7 +83,7 @@ def plan_rollback(good, bad, new):
             f"{restore} "
             "# tree now equals the good tag except the preserved rollback tooling",
             f"scripts/rollback-release.py --good {good} --bad {bad} --new {new} --apply",
-            "pnpm version:check",
+            "just version-check",
             f"git commit -am 'Rollback launcher to {good} code as v{new}'",
             f"git push -u origin rollback/launcher-v{new}  # open a PR to main and merge it",
             "git checkout main && git pull  # main now carries the rollback commit",
@@ -99,28 +99,52 @@ def plan_rollback(good, bad, new):
     }
 
 
+def _read_version_file(root, rel):
+    path = root / rel
+    if rel.endswith(".json"):
+        return json.loads(path.read_text())["version"]
+    return re.search(r'^version\s*=\s*"([^"]+)"', path.read_text(), re.M).group(1)
+
+
+def _write_version_file(root, rel, new):
+    path = root / rel
+    if rel == "package.json":
+        path.write_text(
+            re.sub(
+                r'"version":\s*"[^"]+"',
+                f'"version": "{new}"',
+                path.read_text(),
+                count=1,
+            )
+        )
+    elif rel.endswith(".json"):
+        data = json.loads(path.read_text())
+        data["version"] = new
+        path.write_text(json.dumps(data, indent=2) + "\n")
+    else:
+        path.write_text(
+            re.sub(
+                r'^version\s*=\s*"[^"]+"',
+                f'version = "{new}"',
+                path.read_text(),
+                count=1,
+                flags=re.M,
+            )
+        )
+
+
 def read_current_versions(root):
-    package = json.loads((root / "package.json").read_text())["version"]
-    cargo = re.search(
-        r'^version\s*=\s*"([^"]+)"', (root / "src-tauri/Cargo.toml").read_text(), re.M
-    ).group(1)
-    tauri = json.loads((root / "src-tauri/tauri.conf.json").read_text())["version"]
-    versions = {
-        "package.json": package,
-        "src-tauri/Cargo.toml": cargo,
-        "src-tauri/tauri.conf.json": tauri,
-    }
-    for optional in OPTIONAL_VERSION_FILES:
-        path = root / optional
-        if path.is_file():
-            versions[optional] = re.search(
-                r'^version\s*=\s*"([^"]+)"', path.read_text(), re.M
-            ).group(1)
+    versions = {}
+    for rel in (*VERSION_FILES, *OPTIONAL_VERSION_FILES):
+        if (root / rel).is_file():
+            versions[rel] = _read_version_file(root, rel)
+    if not versions:
+        raise ValueError(f"No version files found in {root}")
     return versions
 
 
 def apply_version(root, good, new):
-    """Bump the version files from `good` to `new`; refuse otherwise."""
+    """Bump the present version files from `good` to `new`; refuse otherwise."""
     parse_version(good)
     parse_version(new)
     current = read_current_versions(root)
@@ -131,43 +155,9 @@ def apply_version(root, good, new):
             f"Tree is at {next(iter(current.values()))}, not the good version"
             f" {good}: refusing"
         )
-    (root / "package.json").write_text(
-        re.sub(
-            r'"version":\s*"[^"]+"',
-            f'"version": "{new}"',
-            (root / "package.json").read_text(),
-            count=1,
-        )
-    )
-    cargo = root / "src-tauri/Cargo.toml"
-    cargo.write_text(
-        re.sub(
-            r'^version\s*=\s*"[^"]+"',
-            f'version = "{new}"',
-            cargo.read_text(),
-            count=1,
-            flags=re.M,
-        )
-    )
-    conf = root / "src-tauri/tauri.conf.json"
-    data = json.loads(conf.read_text())
-    data["version"] = new
-    conf.write_text(json.dumps(data, indent=2) + "\n")
-    bumped = list(VERSION_FILES)
-    for optional in OPTIONAL_VERSION_FILES:
-        path = root / optional
-        if path.is_file():
-            path.write_text(
-                re.sub(
-                    r'^version\s*=\s*"[^"]+"',
-                    f'version = "{new}"',
-                    path.read_text(),
-                    count=1,
-                    flags=re.M,
-                )
-            )
-            bumped.append(optional)
-    return sorted(bumped)
+    for rel in current:
+        _write_version_file(root, rel, new)
+    return sorted(current)
 
 
 def verify_rollback_tree(root, good):

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["shared", "src-tauri", "core/launcher-core", "core/launcher-net", "core/launcher-app"]
+members = ["shared", "core/launcher-core", "core/launcher-net", "core/launcher-app", "tools/sign"]
 
 [workspace.package]
 edition = "2021"

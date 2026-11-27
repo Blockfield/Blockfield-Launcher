@@ -1,9 +1,9 @@
-//! G8: End-to-end signed self-update and rollback test for the native launcher.
+//! End-to-end signed self-update and rollback tests for the native launcher.
 //!
 //! Exercises the real packaging (`scripts/package-native-deb.py`), manifest
-//! generation (`scripts/prepare-updater.py native`), minisign signing/verify
-//! with version pinning, HTTP fetch, tamper rejection, `.deb` extraction,
-//! atomic replacement + `.previous` backup, and rollback.
+//! generation (`scripts/prepare-updater.py`), minisign signing/verify with
+//! version pinning, HTTP fetch, tamper rejection, `.deb` extraction, AppImage
+//! in-place replacement, atomic `.previous` backup, and rollback.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,15 +23,16 @@ fn python_bin() -> &'static str {
 }
 
 #[test]
-fn prepare_updater_native_manifest_parses_in_check_manifest() {
+fn prepare_updater_manifest_parses_in_check_manifest() {
     let tmp = tempfile::tempdir().unwrap();
     let release_dir = tmp.path().join("release");
     std::fs::create_dir_all(&release_dir).unwrap();
-    let version = "1.0.99";
+    let version = "2.0.99";
     for name in [
-        format!("blockfield-native_{version}_amd64.deb"),
-        format!("blockfield-native_{version}_x64_en-US.msi"),
-        format!("blockfield-native_{version}_x64-setup.exe"),
+        format!("blockfield-launcher_{version}_amd64.AppImage"),
+        format!("blockfield-launcher_{version}_amd64.deb"),
+        format!("blockfield-launcher_{version}_x64_en-US.msi"),
+        format!("blockfield-launcher_{version}_x64-setup.exe"),
     ] {
         std::fs::write(release_dir.join(&name), b"artifact").unwrap();
         std::fs::write(release_dir.join(format!("{name}.sig")), "c2ln\n").unwrap();
@@ -40,36 +41,47 @@ fn prepare_updater_native_manifest_parses_in_check_manifest() {
     let script = repo_root().join("scripts").join("prepare-updater.py");
     let out = Command::new(python_bin())
         .arg(&script)
-        .arg("native")
         .arg(&release_dir)
         .arg(version)
         .output()
-        .expect("run prepare-updater.py native");
+        .expect("run prepare-updater.py");
     assert!(
         out.status.success(),
         "prepare-updater.py failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let manifest = std::fs::read_to_string(release_dir.join("latest-native.json")).unwrap();
-    let linux = self_update::check_manifest(&manifest, &["linux-x86_64-deb".into()], "1.0.31")
+    let manifest = std::fs::read_to_string(release_dir.join("latest.json")).unwrap();
+    let linux_appimage = self_update::check_manifest(
+        &manifest,
+        &["linux-x86_64-appimage".into(), "linux-x86_64".into()],
+        "2.0.0",
+    )
+    .unwrap()
+    .expect("linux AppImage release available");
+    assert_eq!(linux_appimage.version, version);
+    assert!(linux_appimage.url.ends_with(&format!(
+        "/launcher-v{version}/blockfield-launcher_{version}_amd64.AppImage"
+    )));
+
+    let linux_deb = self_update::check_manifest(&manifest, &["linux-x86_64-deb".into()], "2.0.0")
         .unwrap()
-        .expect("linux release available");
-    assert_eq!(linux.version, version);
-    assert!(linux.url.ends_with(&format!(
-        "/launcher-v{version}/blockfield-native_{version}_amd64.deb"
+        .expect("linux deb release available");
+    assert_eq!(linux_deb.version, version);
+    assert!(linux_deb.url.ends_with(&format!(
+        "/launcher-v{version}/blockfield-launcher_{version}_amd64.deb"
     )));
 
     let windows = self_update::check_manifest(
         &manifest,
         &["windows-x86_64".into(), "windows-x86_64-nsis".into()],
-        "1.0.31",
+        "2.0.0",
     )
     .unwrap()
     .expect("windows release available");
     assert_eq!(windows.version, version);
     assert!(windows.url.ends_with(&format!(
-        "/launcher-v{version}/blockfield-native_{version}_x64_en-US.msi"
+        "/launcher-v{version}/blockfield-launcher_{version}_x64_en-US.msi"
     )));
 }
 
@@ -227,6 +239,22 @@ print(sig_b64)
             .block_on(future)
     }
 
+    fn fake_appimage(tag: &[u8]) -> Vec<u8> {
+        let machine: u16 = if cfg!(target_arch = "aarch64") {
+            183
+        } else {
+            62
+        };
+        let mut bytes = vec![0u8; 64];
+        bytes[..4].copy_from_slice(b"\x7fELF");
+        bytes[4] = 2;
+        bytes[5] = 1;
+        bytes[8..11].copy_from_slice(b"AI\x02");
+        bytes[18..20].copy_from_slice(&machine.to_le_bytes());
+        bytes.extend_from_slice(tag);
+        bytes
+    }
+
     #[test]
     fn signed_deb_self_update_tamper_reject_and_rollback_e2e() {
         let tmp = tempfile::tempdir().unwrap();
@@ -241,12 +269,12 @@ print(sig_b64)
         let v2_bytes = std::fs::read("/bin/false").unwrap();
         assert_ne!(v1_bytes, v2_bytes);
 
-        let installed_exe = install_dir.join("blockfield-native");
+        let installed_exe = install_dir.join("blockfield-launcher");
         std::fs::write(&installed_exe, &v1_bytes).unwrap();
         std::fs::set_permissions(&installed_exe, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         // 1. Package real .deb containing v2 via scripts/package-native-deb.py.
-        let version = "1.0.32";
+        let version = "2.0.1";
         let deb_out = Command::new("python3")
             .arg(repo_root().join("scripts/package-native-deb.py"))
             .args(["--binary", "/bin/false", "--version", version, "--output"])
@@ -258,7 +286,7 @@ print(sig_b64)
             "package-native-deb.py failed: {}",
             String::from_utf8_lossy(&deb_out.stderr)
         );
-        let deb_name = format!("blockfield-native_{version}_amd64.deb");
+        let deb_name = format!("blockfield-launcher_{version}_amd64.deb");
         let deb_path = release_dir.join(&deb_name);
         assert!(deb_path.is_file(), "expected packaged deb at {deb_path:?}");
         let deb_bytes = std::fs::read(&deb_path).unwrap();
@@ -271,30 +299,30 @@ print(sig_b64)
         )
         .unwrap();
 
-        // Stub Windows siblings so prepare-updater.py validates the complete 3-asset set.
-        for win in [
-            format!("blockfield-native_{version}_x64_en-US.msi"),
-            format!("blockfield-native_{version}_x64-setup.exe"),
+        // Stub sibling assets so prepare-updater.py validates the complete 4-asset set.
+        for sibling in [
+            format!("blockfield-launcher_{version}_amd64.AppImage"),
+            format!("blockfield-launcher_{version}_x64_en-US.msi"),
+            format!("blockfield-launcher_{version}_x64-setup.exe"),
         ] {
-            std::fs::write(release_dir.join(&win), b"stub-windows").unwrap();
-            std::fs::write(release_dir.join(format!("{win}.sig")), "c3R1Yg==\n").unwrap();
+            std::fs::write(release_dir.join(&sibling), b"stub-sibling").unwrap();
+            std::fs::write(release_dir.join(format!("{sibling}.sig")), "c3R1Yg==\n").unwrap();
         }
 
-        // 3. Build latest-native.json via scripts/prepare-updater.py native.
+        // 3. Build latest.json via scripts/prepare-updater.py.
         let prep_out = Command::new("python3")
             .arg(repo_root().join("scripts/prepare-updater.py"))
-            .arg("native")
             .arg(&release_dir)
             .arg(version)
             .output()
-            .expect("run prepare-updater.py native");
+            .expect("run prepare-updater.py");
         assert!(
             prep_out.status.success(),
             "prepare-updater.py failed: {}",
             String::from_utf8_lossy(&prep_out.stderr)
         );
         let mut manifest_json: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(release_dir.join("latest-native.json")).unwrap(),
+            &std::fs::read_to_string(release_dir.join("latest.json")).unwrap(),
         )
         .unwrap();
         assert_eq!(manifest_json["version"], version);
@@ -310,7 +338,7 @@ print(sig_b64)
         let last = tampered_deb.len() - 1;
         tampered_deb[last] ^= 0xff;
 
-        let manifest_path = "/latest-native.json";
+        let manifest_path = "/latest.json";
         let deb_route = format!("/{deb_name}");
         let tampered_route = "/tampered.deb";
 
@@ -334,20 +362,20 @@ print(sig_b64)
             block_on(self_update::check_for_update_at(
                 &manifest_url,
                 &installed_exe,
-                "1.0.31"
+                "2.0.0"
             ))
             .is_err()
         );
 
-        // 6. Add marker -> check_for_update_at discovers 1.0.32 (and 1.0.32 sees None).
+        // 6. Add marker -> check_for_update_at discovers 2.0.1 (and 2.0.1 sees None).
         std::fs::write(install_dir.join(".blockfield-native-install"), b"1\n").unwrap();
         let release = block_on(self_update::check_for_update_at(
             &manifest_url,
             &installed_exe,
-            "1.0.31",
+            "2.0.0",
         ))
         .unwrap()
-        .expect("update 1.0.32 must be offered");
+        .expect("update 2.0.1 must be offered");
         assert_eq!(release.version, version);
         assert!(
             block_on(self_update::check_for_update_at(
@@ -379,7 +407,7 @@ print(sig_b64)
 
         // 8. Repaired manifest with wrong version must fail signed version pin.
         let mut wrong_version = release.clone();
-        wrong_version.version = "1.0.33".into();
+        wrong_version.version = "2.0.2".into();
         let err = block_on(self_update::install_release_with(
             &wrong_version,
             &pubkey_b64,
@@ -422,11 +450,126 @@ print(sig_b64)
         assert_eq!(mode, 0o755);
 
         let backup = self_update::backup_path(&installed_exe).unwrap();
-        assert_eq!(backup.file_name().unwrap(), "blockfield-native.previous");
+        assert_eq!(backup.file_name().unwrap(), "blockfield-launcher.previous");
         assert_eq!(std::fs::read(&backup).unwrap(), v1_bytes);
 
         // 10. Rollback restores original v1 binary atomically.
         self_update::rollback(&installed_exe).unwrap();
         assert_eq!(std::fs::read(&installed_exe).unwrap(), v1_bytes);
+    }
+
+    #[test]
+    fn signed_appimage_self_update_tamper_reject_and_rollback_e2e() {
+        let tmp = tempfile::tempdir().unwrap();
+        let install_dir = tmp.path().join("Applications");
+        let release_dir = tmp.path().join("release");
+        let keys_dir = tmp.path().join("keys");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        std::fs::create_dir_all(&release_dir).unwrap();
+        std::fs::create_dir_all(&keys_dir).unwrap();
+
+        let v1_bytes = fake_appimage(b"SQUASHFS_V1");
+        let v2_bytes = fake_appimage(b"SQUASHFS_V2");
+
+        let installed_appimage = install_dir.join("blockfieldlauncher.appimage");
+        std::fs::write(&installed_appimage, &v1_bytes).unwrap();
+        std::fs::set_permissions(&installed_appimage, std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+
+        let version = "2.0.1";
+        let appimage_name = format!("blockfield-launcher_{version}_amd64.AppImage");
+        let appimage_path = release_dir.join(&appimage_name);
+        std::fs::write(&appimage_path, &v2_bytes).unwrap();
+        let (pubkey_b64, sig_b64) = sign_artifact_ephemeral(&keys_dir, &appimage_path, version);
+        std::fs::write(
+            release_dir.join(format!("{appimage_name}.sig")),
+            format!("{sig_b64}\n"),
+        )
+        .unwrap();
+
+        for sibling in [
+            format!("blockfield-launcher_{version}_amd64.deb"),
+            format!("blockfield-launcher_{version}_x64_en-US.msi"),
+            format!("blockfield-launcher_{version}_x64-setup.exe"),
+        ] {
+            std::fs::write(release_dir.join(&sibling), b"stub-sibling").unwrap();
+            std::fs::write(release_dir.join(format!("{sibling}.sig")), "c3R1Yg==\n").unwrap();
+        }
+
+        let prep_out = Command::new("python3")
+            .arg(repo_root().join("scripts/prepare-updater.py"))
+            .arg(&release_dir)
+            .arg(version)
+            .output()
+            .expect("run prepare-updater.py");
+        assert!(
+            prep_out.status.success(),
+            "prepare-updater.py failed: {}",
+            String::from_utf8_lossy(&prep_out.stderr)
+        );
+        let mut manifest_json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(release_dir.join("latest.json")).unwrap(),
+        )
+        .unwrap();
+
+        let mut tampered = v2_bytes.clone();
+        *tampered.last_mut().unwrap() ^= 0xff;
+        let appimage_route = format!("/{appimage_name}");
+        let tampered_route = "/tampered.AppImage";
+        let server = StubServer::start(|base| {
+            let url = serde_json::Value::String(format!("{base}{appimage_route}"));
+            manifest_json["platforms"]["linux-x86_64"]["url"] = url.clone();
+            manifest_json["platforms"]["linux-x86_64-appimage"]["url"] = url;
+            HashMap::from([
+                (
+                    "/latest.json".to_string(),
+                    serde_json::to_vec(&manifest_json).unwrap(),
+                ),
+                (appimage_route.clone(), v2_bytes.clone()),
+                (tampered_route.to_string(), tampered),
+            ])
+        });
+        let manifest_url = format!("{}/latest.json", server.base_url);
+
+        // AppImage needs no .blockfield-native-install marker.
+        let release = block_on(self_update::check_for_update_at(
+            &manifest_url,
+            &installed_appimage,
+            "2.0.0",
+        ))
+        .unwrap()
+        .expect("AppImage update 2.0.1 must be offered");
+        assert_eq!(release.version, version);
+
+        // Tampered AppImage rejected cleanly.
+        let mut bad = release.clone();
+        bad.url = format!("{}{tampered_route}", server.base_url);
+        assert!(
+            block_on(self_update::install_release_with(
+                &bad,
+                &pubkey_b64,
+                installed_appimage.clone(),
+                |_, _| {},
+                |_| {},
+            ))
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&installed_appimage).unwrap(), v1_bytes);
+
+        // Valid signed AppImage replaces in place with backup and supports rollback.
+        block_on(self_update::install_release_with(
+            &release,
+            &pubkey_b64,
+            installed_appimage.clone(),
+            |_, _| {},
+            |_| {},
+        ))
+        .unwrap();
+        assert_eq!(std::fs::read(&installed_appimage).unwrap(), v2_bytes);
+        let backup = self_update::backup_path(&installed_appimage).unwrap();
+        assert_eq!(std::fs::read(&backup).unwrap(), v1_bytes);
+
+        self_update::rollback(&installed_appimage).unwrap();
+        assert_eq!(std::fs::read(&installed_appimage).unwrap(), v1_bytes);
     }
 }

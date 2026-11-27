@@ -195,34 +195,25 @@ class ToolCacheTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "posix", "Linux shell wrapper")
 class RustEnvironmentTests(unittest.TestCase):
-    def run_wrapper(self, compiler=False, podman=False, configured_compiler=False):
+    def run_wrapper(self, compiler=False, configured_compiler=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             record = root / "arguments"
             scripts = {
                 "uname": "echo Linux",
-                "pkg-config": "exit 0",
-                "mkdir": "exit 0",
                 "cargo": 'printf "%s\\n" "$@" > "$CALL_RECORD"',
             }
             if compiler:
                 scripts["custom-cc" if configured_compiler else "cc"] = "exit 0"
-            if podman:
-                scripts["podman"] = (
-                    'if [ "$1 $2" = "image exists" ]; then exit 0; fi\n'
-                    'printf "%s\\n" "$@" > "$CALL_RECORD"'
-                )
             for name, body in scripts.items():
                 executable = root / name
                 executable.write_text("#!/bin/sh\n" + body + "\n")
                 executable.chmod(0o755)
-            (root / "dirname").symlink_to(shutil.which("dirname"))
             env = os.environ.copy()
             env.pop("CC", None)
             env.update(
                 PATH=str(root),
                 CALL_RECORD=str(record),
-                BLOCKFIELD_CARGO_TARGET=str(root / "target"),
             )
             if configured_compiler:
                 env["CC"] = str(root / "custom-cc")
@@ -250,16 +241,10 @@ class RustEnvironmentTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(args, ["check", "--locked"])
 
-    def test_missing_compiler_uses_existing_container_image(self):
-        result, args = self.run_wrapper(podman=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(args[0], "run")
-        self.assertEqual(args[-3:], ["cargo", "check", "--locked"])
-
     def test_unavailable_build_environment_fails_instead_of_skipping_checks(self):
         result, args = self.run_wrapper()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("native Tauri build environment", result.stderr)
+        self.assertIn("Missing C compiler", result.stderr)
         self.assertEqual(args, [])
 
 

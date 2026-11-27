@@ -19,9 +19,9 @@ pub fn schemes() -> Vec<String> {
 #[cfg(any(target_os = "linux", test))]
 fn desktop_file_name() -> &'static str {
     if launcher_core::dev::is_dev_build() {
-        "blockfield-native-dev.desktop"
+        "blockfield-launcher-dev.desktop"
     } else {
-        "blockfield-native.desktop"
+        "blockfield-launcher.desktop"
     }
 }
 
@@ -64,9 +64,9 @@ fn quote_exec_arg(arg: &str) -> String {
     escape_desktop_value(&quoted)
 }
 
-/// Prefer a sibling `icon.png` (user install via `install-linux.sh --native`),
-/// otherwise fall back to the themed `blockfield-native` icon installed by the
-/// `.deb` package.
+/// Prefer a sibling `icon.png` (user install via `install-linux.sh`),
+/// otherwise fall back to the themed `blockfield-launcher` icon installed by
+/// the `.deb` package.
 fn desktop_icon(exec: &str) -> String {
     if let Some(icon) = std::path::Path::new(exec)
         .parent()
@@ -75,7 +75,7 @@ fn desktop_icon(exec: &str) -> String {
     {
         return escape_desktop_value(&icon.to_string_lossy());
     }
-    "blockfield-native".to_string()
+    "blockfield-launcher".to_string()
 }
 
 /// Linux desktop entry: `Exec` is the current binary, `%U` receives the URL.
@@ -161,8 +161,12 @@ pub fn reg_commands(exe: &str) -> Vec<Vec<String>> {
 }
 
 /// Best-effort registration at startup: never fail the launch, report to
-/// stderr like the Tauri `register_all` warning path.
+/// stderr. DEV builds skip registration so they never overwrite the
+/// production `blockfield://` handler.
 pub fn register() -> std::io::Result<()> {
+    if launcher_core::dev::is_dev_build() {
+        return Ok(());
+    }
     #[cfg(target_os = "linux")]
     return register_linux();
     #[cfg(target_os = "windows")]
@@ -171,9 +175,26 @@ pub fn register() -> std::io::Result<()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn resolve_linux_exec(
+    current_exe: &std::path::Path,
+    appimage: Option<&std::ffi::OsStr>,
+) -> std::path::PathBuf {
+    if let Some(path) = appimage
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_file())
+    {
+        return path;
+    }
+    current_exe.to_path_buf()
+}
+
 #[cfg(target_os = "linux")]
 fn register_linux() -> std::io::Result<()> {
-    let exe = std::env::current_exe()?;
+    let current = std::env::current_exe()?;
+    let appimage = std::env::var_os("APPIMAGE");
+    let exe = resolve_linux_exec(&current, appimage.as_deref());
     let exe = exe.to_string_lossy();
     let Some(data_dir) = dirs::data_dir() else {
         return Ok(());
@@ -220,19 +241,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schemes_match_the_shipping_tauri_conf() {
-        let conf: serde_json::Value =
-            serde_json::from_str(include_str!("../../../src-tauri/tauri.conf.json")).unwrap();
-        let tauri = conf["plugins"]["deep-link"]["desktop"]["schemes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|value| value.as_str().unwrap().to_string())
-            .collect::<Vec<_>>();
-        // Default build: the env override for the Discord app id is unset.
-        assert_eq!(tauri, schemes());
+    fn schemes_include_blockfield_and_discord_app_id() {
         assert_eq!(
-            tauri,
+            schemes(),
             vec![
                 "blockfield".to_string(),
                 format!("discord-{}", launcher_app::presence::APPLICATION_ID),
@@ -241,11 +252,24 @@ mod tests {
     }
 
     #[test]
+    fn linux_exec_prefers_appimage_path_over_ephemeral_mount() {
+        let dir = tempfile::tempdir().unwrap();
+        let appimage = dir.path().join("blockfield-launcher.AppImage");
+        std::fs::write(&appimage, b"appimage").unwrap();
+        let mounted = std::path::Path::new("/tmp/.mount_bf/usr/bin/blockfield-launcher");
+        assert_eq!(
+            resolve_linux_exec(mounted, Some(appimage.as_os_str())),
+            appimage
+        );
+        assert_eq!(resolve_linux_exec(mounted, None), mounted.to_path_buf());
+    }
+
+    #[test]
     fn desktop_entry_advertises_both_handlers() {
-        assert_eq!(desktop_file_name(), "blockfield-native.desktop");
-        let entry = desktop_entry("/opt/blockfield/blockfield-native");
-        assert!(entry.contains("Exec=\"/opt/blockfield/blockfield-native\" %U\n"));
-        assert!(entry.contains("Icon=blockfield-native\n"));
+        assert_eq!(desktop_file_name(), "blockfield-launcher.desktop");
+        let entry = desktop_entry("/opt/blockfield/blockfield-launcher");
+        assert!(entry.contains("Exec=\"/opt/blockfield/blockfield-launcher\" %U\n"));
+        assert!(entry.contains("Icon=blockfield-launcher\n"));
         assert!(entry.contains("StartupWMClass=blockfield-native\n"));
         for scheme in schemes() {
             assert!(entry.contains(&format!("x-scheme-handler/{scheme}")));
@@ -263,7 +287,7 @@ mod tests {
     #[test]
     fn desktop_entry_uses_sibling_icon_and_matches_packaged_entry() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("blockfield-native");
+        let exe = dir.path().join("blockfield-launcher");
         let icon = dir.path().join("icon.png");
         std::fs::write(&exe, b"elf").unwrap();
         std::fs::write(&icon, b"png").unwrap();
@@ -275,7 +299,7 @@ mod tests {
         )));
         assert!(entry.contains("StartupWMClass=blockfield-native\n"));
 
-        let packaged = dir.path().join("blockfield-native.desktop");
+        let packaged = dir.path().join("blockfield-launcher.desktop");
         let mime = schemes()
             .iter()
             .map(|scheme| format!("x-scheme-handler/{scheme}"))
@@ -284,17 +308,17 @@ mod tests {
         std::fs::write(
             &packaged,
             format!(
-                "[Desktop Entry]\nExec=/usr/bin/blockfield-native %U\nIcon=blockfield-native\nMimeType={mime};\n"
+                "[Desktop Entry]\nExec=/usr/bin/blockfield-launcher %U\nIcon=blockfield-launcher\nMimeType={mime};\n"
             ),
         )
         .unwrap();
         assert!(packaged_desktop_matches(
             &packaged,
-            "/usr/bin/blockfield-native"
+            "/usr/bin/blockfield-launcher"
         ));
         assert!(!packaged_desktop_matches(
             &packaged,
-            "/opt/other/blockfield-native"
+            "/opt/other/blockfield-launcher"
         ));
     }
 

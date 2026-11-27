@@ -50,12 +50,12 @@ compile-check *args:
 
 build *args:
     import runpy, sys
-    sys.argv = ["scripts/quality.py", "build", *sys.argv[1:]]
+    sys.argv = ["scripts/quality.py", "run", 'cargo', 'build', '--manifest-path', 'native/app/Cargo.toml', '--locked', '--release', '--bin', 'blockfield-native', *sys.argv[1:]]
     runpy.run_path("scripts/quality.py", run_name="__main__")
 
 dev *args:
     import runpy, sys
-    sys.argv = ["scripts/quality.py", "dev", *sys.argv[1:]]
+    sys.argv = ["scripts/quality.py", "run", 'cargo', 'run', '--manifest-path', 'native/app/Cargo.toml', '--bin', 'blockfield-native', *sys.argv[1:]]
     runpy.run_path("scripts/quality.py", run_name="__main__")
 
 python *args:
@@ -63,19 +63,9 @@ python *args:
     sys.argv = ["scripts/quality.py", "run", 'python', *sys.argv[1:]]
     runpy.run_path("scripts/quality.py", run_name="__main__")
 
-tauri *args:
-    import runpy, sys
-    sys.argv = ["scripts/quality.py", "run", 'pnpm', 'run', 'tauri', *sys.argv[1:]]
-    runpy.run_path("scripts/quality.py", run_name="__main__")
-
-tauri-dev *args:
-    import runpy, sys
-    sys.argv = ["scripts/quality.py", "run", 'pnpm', 'run', 'tauri:dev', *sys.argv[1:]]
-    runpy.run_path("scripts/quality.py", run_name="__main__")
-
 version-check *args:
     import runpy, sys
-    sys.argv = ["scripts/quality.py", "run", 'pnpm', 'run', 'version:check', *sys.argv[1:]]
+    sys.argv = ["scripts/quality.py", "run", 'python', 'scripts/check-version.py', *sys.argv[1:]]
     runpy.run_path("scripts/quality.py", run_name="__main__")
 
 rollback *args:
@@ -85,20 +75,22 @@ rollback *args:
 
 config-check *args:
     import runpy, sys
-    sys.argv = ["scripts/quality.py", "run", 'pnpm', 'run', 'config:check', *sys.argv[1:]]
+    sys.argv = ["scripts/quality.py", "run", 'python', 'scripts/validate-production-config.py', *sys.argv[1:]]
     runpy.run_path("scripts/quality.py", run_name="__main__")
 
 config-test *args:
     import runpy, sys
-    sys.argv = ["scripts/quality.py", "run", 'pnpm', 'run', 'config:test', *sys.argv[1:]]
+    sys.argv = ["scripts/quality.py", "run", 'python', '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_*.py', '-v', *sys.argv[1:]]
     runpy.run_path("scripts/quality.py", run_name="__main__")
 
-audit *args:
+legacy-check *args:
     import runpy, sys
-    sys.argv = ["scripts/quality.py", "run", 'pnpm', 'audit', '--audit-level', 'high', *sys.argv[1:]]
+    sys.argv = ["scripts/quality.py", "run", 'python', 'scripts/check-legacy-cleanup.py', *sys.argv[1:]]
     runpy.run_path("scripts/quality.py", run_name="__main__")
 
 cargo-audit *args:
-    import runpy, sys
-    sys.argv = ["scripts/quality.py", "run", 'cargo', 'audit', *sys.argv[1:]]
-    runpy.run_path("scripts/quality.py", run_name="__main__")
+    import subprocess, sys
+    audit_args = list(sys.argv[1:])
+    workspace = subprocess.run([sys.executable, "-I", "-X", "utf8", "scripts/quality.py", "run", "cargo", "audit", *audit_args]).returncode
+    native = subprocess.run([sys.executable, "-I", "-X", "utf8", "scripts/quality.py", "run", "cargo", "audit", "--file", "native/app/Cargo.lock", *audit_args]).returncode
+    raise SystemExit(workspace or native)

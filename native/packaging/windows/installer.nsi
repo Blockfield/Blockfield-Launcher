@@ -1,6 +1,7 @@
 ; Standalone NSIS installer for the Blockfield Native (Slint) launcher.
-; Reuses the Tauri installer's branding assets, localization and ownership-aware
-; uninstall cleanup contract without depending on Tauri's bundler plugins.
+; Supports in-place upgrades over legacy Tauri NSIS installs (same per-user
+; install directory, executable name, and uninstall registry key) and
+; side-by-side DEV installs via -DDEV_BUILD=1.
 Unicode true
 ManifestDPIAware true
 SetCompressor /SOLID lzma
@@ -13,10 +14,10 @@ SetCompressor /SOLID lzma
 !define /ifndef ERROR_MORE_DATA 234
 
 !ifndef VERSION
-  !error "VERSION must be defined (e.g. -DVERSION=1.0.31)"
+  !error "VERSION must be defined (e.g. -DVERSION=2.0.1)"
 !endif
 !ifndef VERSION_QUAD
-  !error "VERSION_QUAD must be defined (e.g. -DVERSION_QUAD=1.0.31.0)"
+  !error "VERSION_QUAD must be defined (e.g. -DVERSION_QUAD=2.0.1.0)"
 !endif
 !ifndef BINARY_PATH
   !error "BINARY_PATH must be defined"
@@ -38,16 +39,23 @@ SetCompressor /SOLID lzma
 !endif
 
 !define MANUFACTURER "Blockfield"
-!define PRODUCTNAME "blockfield-native"
-!define DISPLAYNAME "Blockfield Launcher"
-!define MAINBINARYNAME "blockfield-native"
-!define BUNDLEID "com.blockfield.launcher"
+!ifdef DEV_BUILD
+  !define PRODUCTNAME "blockfield-launcher-dev"
+  !define DISPLAYNAME "Blockfield Launcher DEV"
+  !define MAINBINARYNAME "blockfield-launcher-dev"
+  !define BUNDLEID "com.blockfield.launcher.dev"
+!else
+  !define PRODUCTNAME "blockfield-launcher"
+  !define DISPLAYNAME "Blockfield Launcher"
+  !define MAINBINARYNAME "blockfield-launcher"
+  !define BUNDLEID "com.blockfield.launcher"
+!endif
 !define HOMEPAGE "https://blockfield.pro"
 !define COPYRIGHT "Blockfield"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCTNAME}"
 !define MANUPRODUCTKEY "Software\${MANUFACTURER}\${PRODUCTNAME}"
 
-; Dark theme matching src-tauri/windows/hooks.nsh.
+; Dark theme matching Blockfield branding.
 !define MUI_BGCOLOR "070604"
 !define MUI_TEXTCOLOR "F3E7D0"
 !define MUI_INSTFILESPAGE_COLORS "F3E7D0 11100D"
@@ -228,8 +236,29 @@ Section Install
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe"
   File "/oname=${MAINBINARYNAME}.exe" "${BINARY_PATH}"
 
-  !insertmacro RegisterScheme "blockfield"
-  !insertmacro RegisterScheme "discord-${DISCORD_APP_ID}"
+  !ifndef DEV_BUILD
+    ; Migrate legacy native v2.0.0 NSIS installs (`blockfield-native`) into
+    ; `blockfield-launcher` without touching user game data.
+    ReadRegStr $R8 HKCU "Software\${MANUFACTURER}\blockfield-native" ""
+    ${If} $R8 == ""
+      ${If} ${FileExists} "$LOCALAPPDATA\blockfield-native\blockfield-native.exe"
+        StrCpy $R8 "$LOCALAPPDATA\blockfield-native"
+      ${EndIf}
+    ${EndIf}
+    ${If} $R8 != ""
+      !insertmacro CheckIfAppIsRunning "$R8\blockfield-native.exe"
+      Delete "$R8\blockfield-native.exe"
+      ${If} $R8 != "$INSTDIR"
+        Delete "$R8\uninstall.exe"
+        RMDir "$R8"
+      ${EndIf}
+      DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\blockfield-native"
+      DeleteRegKey HKCU "Software\${MANUFACTURER}\blockfield-native"
+    ${EndIf}
+
+    !insertmacro RegisterScheme "blockfield"
+    !insertmacro RegisterScheme "discord-${DISCORD_APP_ID}"
+  !endif
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
   WriteRegStr HKCU "${MANUPRODUCTKEY}" "" "$INSTDIR"
@@ -250,9 +279,17 @@ Section Install
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${UNINSTKEY}" "EstimatedSize" "$0"
 
+  ; Refresh Start Menu shortcut on installs and legacy native migrations; also
+  ; refresh an existing Desktop shortcut so migrated installs do not keep
+  ; pointing at the removed `blockfield-native.exe`.
   ${If} $UpdateMode <> 1
+  ${OrIf} ${FileExists} "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk"
     CreateDirectory "$SMPROGRAMS\${DISPLAYNAME}"
     CreateShortcut "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  ${EndIf}
+  ${If} $UpdateMode = 1
+  ${AndIf} ${FileExists} "$DESKTOP\${DISPLAYNAME}.lnk"
+    Call CreateDesktopShortcut
   ${EndIf}
 
   ${If} $PassiveMode = 1
@@ -269,7 +306,7 @@ SectionEnd
 Section Uninstall
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe"
 
-  ; Skip destructive cleanup during upgrades (exact parity with src-tauri/windows/hooks.nsh).
+  ; Skip destructive cleanup during upgrades.
   ${If} $UpdateMode <> 1
     ClearErrors
     ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --uninstall-cleanup' $0
@@ -280,8 +317,10 @@ Section Uninstall
     ${EndIf}
   ${EndIf}
 
-  !insertmacro UnregisterScheme "blockfield"
-  !insertmacro UnregisterScheme "discord-${DISCORD_APP_ID}"
+  !ifndef DEV_BUILD
+    !insertmacro UnregisterScheme "blockfield"
+    !insertmacro UnregisterScheme "discord-${DISCORD_APP_ID}"
+  !endif
 
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"
   Delete "$INSTDIR\uninstall.exe"

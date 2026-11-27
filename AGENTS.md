@@ -6,11 +6,11 @@ Changes to `main` must go through a pull request. Never push or update `main` di
 
 ## After every Rust change
 
-Run both, fix before claiming done:
+Run both in the root workspace and in `native/app/`, fix before claiming done:
 
 ```sh
-cargo fmt
-cargo clippy -- -D warnings
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --manifest-path native/app/Cargo.toml --all
+cargo clippy --manifest-path native/app/Cargo.toml --all-targets -- -D warnings
 ```
-
-Target: `src-tauri/`

@@ -76,14 +76,8 @@ pub fn build_state(events: EventSink) -> io::Result<Arc<LauncherAppState>> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn identifiers_match_tauri_build_flavours() {
-        for (dev, config) in [
-            (false, include_str!("../../../src-tauri/tauri.conf.json")),
-            (true, include_str!("../../../src-tauri/tauri.dev.conf.json")),
-        ] {
-            let config: serde_json::Value = serde_json::from_str(config).unwrap();
-            assert_eq!(config["identifier"], super::identifier(dev));
-            assert!(config["app"]["appDirectoriesOverride"].is_null());
-        }
+    fn identifiers_stay_stable_for_prod_and_dev() {
+        assert_eq!(super::identifier(false), "com.blockfield.launcher");
+        assert_eq!(super::identifier(true), "com.blockfield.launcher.dev");
     }
 }

@@ -54,8 +54,8 @@ pub struct SkinSource {
 #[must_use]
 pub fn default_source(slim: bool) -> SkinSource {
     SkinSource {
-        skin: include_bytes!("../../../src/lib/fixtures/skin.png").to_vec(),
-        cape: Some(include_bytes!("../../../src/lib/fixtures/cape.png").to_vec()),
+        skin: include_bytes!("../fixtures/skin.png").to_vec(),
+        cape: Some(include_bytes!("../fixtures/cape.png").to_vec()),
         slim,
     }
 }

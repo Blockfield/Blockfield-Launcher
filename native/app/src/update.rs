@@ -453,8 +453,9 @@ fn on_launcher_install(
     let weak = weak.clone();
     let pending = pending.clone();
     // Capture before the atomic replace: after Linux swaps the binary,
-    // `current_exe()` points at the deleted inode.
-    let exe_before = std::env::current_exe().ok();
+    // `current_exe()` points at the deleted inode (and inside an AppImage
+    // we must replace/relaunch `$APPIMAGE`, not the ephemeral FUSE mount).
+    let exe_before = self_update::current_install_target().ok();
     handle.spawn(async move {
         let progress = weak.clone();
         let stage_weak = weak.clone();
@@ -787,14 +788,11 @@ pub mod self_update {
     use std::collections::HashMap;
     use std::path::Path;
 
-    /// Pinned minisign public key. Source of truth:
-    /// `src-tauri/tauri.conf.json` `plugins.updater.pubkey`.
+    /// Pinned minisign public key matching the release signing keypair.
     pub const UPDATE_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0RTBFNTI0NUE1MjBGQTYKUldTbUQxSmFKT1hnbEY3SllsMkF0dm1BNTdBK1Bnc29KWVdVK2x6SG93RmJhWUUyaGYzaUpISmMK";
-    /// Native-only manifest endpoint: same format and signing key as the
-    /// Tauri `latest.json`, but served from the rolling `native-channel`
-    /// release the Tauri updater never reads, so a newer Tauri-only release
-    /// can neither stage over the native build nor hide a native update.
-    pub const UPDATE_ENDPOINT: &str = "https://github.com/Blockfield/Blockfield-Launcher/releases/download/native-channel/latest-native.json";
+    /// Canonical release updater manifest on the latest GitHub release.
+    pub const UPDATE_ENDPOINT: &str =
+        "https://github.com/Blockfield/Blockfield-Launcher/releases/latest/download/latest.json";
 
     const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
     const MAX_PACKAGE_BYTES: u64 = 256 * 1024 * 1024;
@@ -871,20 +869,45 @@ pub mod self_update {
         }
     }
 
-    /// Manifest platform keys to try in order. Linux installs from the
-    /// `linux-{arch}-deb` artifact exactly like the Tauri updater target, and
-    /// only from a marker install; Windows matches the installed flavor
+    /// Path to replace and relaunch on self-update: on Linux inside an
+    /// AppImage, `$APPIMAGE` is the real file on disk while `current_exe()`
+    /// points into the ephemeral `/tmp/.mount_*` mount.
+    pub fn current_install_target() -> Result<std::path::PathBuf, String> {
+        let current = std::env::current_exe().map_err(|e| e.to_string())?;
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(appimage) = std::env::var_os("APPIMAGE")
+                .filter(|value| !value.is_empty())
+                .map(std::path::PathBuf::from)
+                .filter(|path| path.is_file())
+            {
+                return Ok(appimage);
+            }
+        }
+        Ok(current)
+    }
+
+    /// Manifest platform keys to try in order. On Linux, an AppImage updates
+    /// via `linux-{arch}-appimage` / `linux-{arch}` while a marker install
+    /// updates via `linux-{arch}-deb`; Windows matches the installed flavor
     /// (NSIS vs MSI).
     pub fn platform_targets(executable: &Path) -> Result<Vec<String>, String> {
         #[cfg(target_os = "linux")]
         {
+            let arch = std::env::consts::ARCH;
+            if is_appimage_file(executable) {
+                return Ok(vec![
+                    format!("linux-{arch}-appimage"),
+                    format!("linux-{arch}"),
+                ]);
+            }
             let marker = executable
                 .parent()
                 .is_some_and(|dir| dir.join(MARKER).is_file());
             if !marker {
                 return Err("Эта установка не поддерживает встроенное обновление".into());
             }
-            Ok(vec![format!("linux-{}-deb", std::env::consts::ARCH)])
+            Ok(vec![format!("linux-{arch}-deb")])
         }
         #[cfg(target_os = "windows")]
         {
@@ -938,7 +961,7 @@ pub mod self_update {
     /// no native artifacts published yet) is quietly "no update", not an
     /// error; anything else failing stays an error.
     pub async fn check_for_update() -> Result<Option<Release>, String> {
-        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        let executable = current_install_target()?;
         check_for_update_at(UPDATE_ENDPOINT, &executable, super::launcher_version()).await
     }
 
@@ -1061,7 +1084,7 @@ pub mod self_update {
         on_progress: impl FnMut(u64, Option<u64>),
         on_stage: impl FnMut(InstallStage),
     ) -> Result<(), String> {
-        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        let executable = current_install_target()?;
         install_release_with(release, UPDATE_PUBKEY, executable, on_progress, on_stage).await
     }
 
@@ -1111,15 +1134,22 @@ pub mod self_update {
         Ok(())
     }
 
-    /// Restart into the freshly installed binary (Tauri `relaunch`).
+    /// Restart into the freshly installed binary.
     pub fn restart_launcher() -> Result<(), String> {
-        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        let executable = current_install_target()?;
         restart_launcher_with(&resolve_restart_path(None, &executable))
     }
 
-    /// Install verified bytes for this OS. Linux only: see below.
+    /// Install verified bytes for this OS. Linux supports both AppImage
+    /// in-place replacement and marker `.deb` binary extraction.
     #[cfg(target_os = "linux")]
     pub fn install_package(package: &[u8], executable: &Path) -> Result<(), String> {
+        if is_appimage_file(executable) {
+            validate_appimage(package)?;
+            return replace_executable(package, executable, false)
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+        }
         let binary = extract_binary(package)?;
         replace_binary(&binary, executable)
             .map(|_| ())
@@ -1203,7 +1233,9 @@ pub mod self_update {
         let backup = backup_path(executable).map_err(|e| e.to_string())?;
         let previous =
             std::fs::read(&backup).map_err(|e| format!("No rollback backup available: {e}"))?;
-        validate_binary(&previous).map_err(|e| format!("Rollback backup is invalid: {e}"))?;
+        if validate_binary(&previous).is_err() && validate_appimage(&previous).is_err() {
+            return Err("Rollback backup is invalid".into());
+        }
         let mut staged = tempfile::NamedTempFile::new_in(directory).map_err(|e| e.to_string())?;
         staged.write_all(&previous).map_err(|e| e.to_string())?;
         staged
@@ -1273,14 +1305,19 @@ pub mod self_update {
         })
     }
 
-    /// Same CPU/AppImage gate the Tauri `native_update` enforces.
+    #[cfg(target_os = "linux")]
+    fn host_elf_machine() -> Result<u16, String> {
+        match std::env::consts::ARCH {
+            "x86_64" => Ok(62),
+            "aarch64" => Ok(183),
+            _ => Err("Native updates are not supported on this CPU architecture".into()),
+        }
+    }
+
+    /// Native ELF gate for `.deb` marker installs (rejects AppImages).
     #[cfg(target_os = "linux")]
     fn validate_binary(bytes: &[u8]) -> Result<(), String> {
-        let machine = match std::env::consts::ARCH {
-            "x86_64" => 62u16,
-            "aarch64" => 183u16,
-            _ => return Err("Native updates are not supported on this CPU architecture".into()),
-        };
+        let machine = host_elf_machine()?;
         if bytes.len() < 64
             || &bytes[..4] != b"\x7fELF"
             || bytes[4] != 2
@@ -1295,9 +1332,40 @@ pub mod self_update {
         Ok(())
     }
 
-    /// Linked C libraries the new binary needs must already resolve (same
-    /// `ldd` gate as the Tauri side: a reboot into a broken launcher is worse
-    /// than refusing the update).
+    /// Type-2 AppImage gate for AppImage installs (requires host ELF + `AI\x02`).
+    #[cfg(target_os = "linux")]
+    fn validate_appimage(bytes: &[u8]) -> Result<(), String> {
+        let machine = host_elf_machine()?;
+        if bytes.len() as u64 > MAX_PACKAGE_BYTES
+            || bytes.len() < 64
+            || &bytes[..4] != b"\x7fELF"
+            || bytes[4] != 2
+            || bytes[5] != 1
+            || u16::from_le_bytes([bytes[18], bytes[19]]) != machine
+            || &bytes[8..11] != b"AI\x02"
+        {
+            return Err("Update must be a valid Type-2 AppImage for this CPU".into());
+        }
+        Ok(())
+    }
+
+    /// Inspect only the 64-byte ELF header of `path` to tell AppImages apart
+    /// from plain ELF marker binaries without reading the whole file.
+    #[cfg(target_os = "linux")]
+    fn is_appimage_file(path: &Path) -> bool {
+        use std::io::Read as _;
+        let Ok(mut file) = std::fs::File::open(path) else {
+            return false;
+        };
+        let mut header = [0u8; 64];
+        if file.read_exact(&mut header).is_err() {
+            return false;
+        }
+        validate_appimage(&header).is_ok()
+    }
+
+    /// Linked C libraries the new binary needs must already resolve (a reboot
+    /// into a broken launcher is worse than refusing the update).
     #[cfg(target_os = "linux")]
     fn ldd_ok(path: &Path) -> Result<(), String> {
         let check = launcher_core::host_env::command("ldd")
@@ -1318,24 +1386,28 @@ pub mod self_update {
         Ok(())
     }
 
-    /// Atomic replace with a `.previous` backup, same fsync discipline as the
-    /// Tauri side: a crash before the final rename leaves the running binary
-    /// (and the backup) intact.
+    /// Atomic replace with a `.previous` backup and fsync discipline: a crash
+    /// before the final rename leaves the running executable intact.
     #[cfg(target_os = "linux")]
-    fn replace_binary(binary: &[u8], executable: &Path) -> std::io::Result<std::path::PathBuf> {
+    fn replace_executable(
+        bytes: &[u8],
+        executable: &Path,
+        check_ldd: bool,
+    ) -> std::io::Result<std::path::PathBuf> {
         use std::io::Write as _;
         use std::os::unix::fs::PermissionsExt as _;
-        validate_binary(binary).map_err(std::io::Error::other)?;
         let directory = executable
             .parent()
             .ok_or_else(|| std::io::Error::other("No install directory"))?;
         let mut staged = tempfile::NamedTempFile::new_in(directory)?;
-        staged.write_all(binary)?;
+        staged.write_all(bytes)?;
         staged
             .as_file()
             .set_permissions(std::fs::Permissions::from_mode(0o755))?;
         staged.as_file().sync_all()?;
-        ldd_ok(staged.path()).map_err(std::io::Error::other)?;
+        if check_ldd {
+            ldd_ok(staged.path()).map_err(std::io::Error::other)?;
+        }
         let backup = tempfile::NamedTempFile::new_in(directory)?;
         std::fs::copy(executable, backup.path())?;
         backup.as_file().sync_all()?;
@@ -1344,6 +1416,12 @@ pub mod self_update {
         staged.persist(executable)?;
         std::fs::File::open(directory)?.sync_all()?;
         Ok(previous)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn replace_binary(binary: &[u8], executable: &Path) -> std::io::Result<std::path::PathBuf> {
+        validate_binary(binary).map_err(std::io::Error::other)?;
+        replace_executable(binary, executable, true)
     }
 
     #[cfg(test)]
@@ -1573,14 +1651,11 @@ pub mod self_update {
         }
 
         #[test]
-        fn native_channel_never_points_at_the_tauri_manifest() {
-            // Pinned: the rolling native-channel release, never the
-            // latest-release redirect a Tauri-only release would capture.
+        fn update_endpoint_points_at_latest_release_manifest() {
             assert_eq!(
                 UPDATE_ENDPOINT,
-                "https://github.com/Blockfield/Blockfield-Launcher/releases/download/native-channel/latest-native.json"
+                "https://github.com/Blockfield/Blockfield-Launcher/releases/latest/download/latest.json"
             );
-            assert!(!UPDATE_ENDPOINT.ends_with("/latest.json"));
         }
 
         #[test]
@@ -1728,12 +1803,47 @@ pub mod self_update {
                 // Host CPU passes; anything else is refused before install.
                 assert!(validate_binary(&elf(HOST_MACHINE)).is_ok());
                 assert!(validate_binary(&elf(FOREIGN_MACHINE)).is_err());
-                // AppImage masquerade, truncation and bad magic are refused.
+                // AppImage masquerade, truncation and bad magic are refused for .deb installs.
                 let mut appimage = elf(HOST_MACHINE);
-                appimage[8..10].copy_from_slice(b"AI");
+                appimage[8..11].copy_from_slice(b"AI\x02");
                 assert!(validate_binary(&appimage).is_err());
+                assert!(validate_appimage(&appimage).is_ok());
+                assert!(validate_appimage(&elf(HOST_MACHINE)).is_err());
+                assert!(validate_appimage(&elf(FOREIGN_MACHINE)).is_err());
                 assert!(validate_binary(&elf(HOST_MACHINE)[..63]).is_err());
                 assert!(validate_binary(b"not an elf at all, padding........").is_err());
+            }
+
+            #[test]
+            fn appimage_install_targets_appimage_and_rolls_back() {
+                let dir = tempfile::tempdir().unwrap();
+                let appimage = dir.path().join("blockfield-launcher.AppImage");
+                let mut v1 = elf(HOST_MACHINE);
+                v1[8..11].copy_from_slice(b"AI\x02");
+                v1.extend_from_slice(b"SQUASHFS_V1");
+                let mut v2 = elf(HOST_MACHINE);
+                v2[8..11].copy_from_slice(b"AI\x02");
+                v2.extend_from_slice(b"SQUASHFS_V2");
+                std::fs::write(&appimage, &v1).unwrap();
+
+                let arch = std::env::consts::ARCH;
+                assert_eq!(
+                    platform_targets(&appimage).unwrap(),
+                    vec![format!("linux-{arch}-appimage"), format!("linux-{arch}")]
+                );
+
+                // Non-AppImage bytes must be refused for an AppImage install.
+                assert!(install_package(&elf(HOST_MACHINE), &appimage).is_err());
+                assert_eq!(std::fs::read(&appimage).unwrap(), v1);
+
+                // Valid Type-2 AppImage replaces in place with a .previous backup.
+                install_package(&v2, &appimage).unwrap();
+                assert_eq!(std::fs::read(&appimage).unwrap(), v2);
+                assert_eq!(std::fs::read(backup_path(&appimage).unwrap()).unwrap(), v1);
+
+                // Rollback restores the backed-up AppImage.
+                rollback(&appimage).unwrap();
+                assert_eq!(std::fs::read(&appimage).unwrap(), v1);
             }
 
             #[test]
