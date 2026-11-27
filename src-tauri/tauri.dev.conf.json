@@ -1,0 +1,30 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "blockfield-launcher-dev",
+  "mainBinaryName": "blockfield-launcher-dev",
+  "identifier": "com.blockfield.launcher.dev",
+  "app": {
+    "windows": [
+      {
+        "title": "Blockfield Launcher DEV",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 1280,
+        "minHeight": 720,
+        "resizable": true,
+        "decorations": false,
+        "transparent": false
+      }
+    ]
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": []
+      }
+    }
+  }
+}

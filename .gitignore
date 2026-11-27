@@ -1,9 +1,9 @@
+# Dependencies
+node_modules/
+
 # Build output
 dist/
-dist-native/
-dist-dev/
 target/
-native/app/target/
 
 # Legacy local data: keep ignored after removing the retired server source.
 # Existing installations may still have these files. Never delete them automatically.

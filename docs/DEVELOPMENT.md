@@ -25,7 +25,7 @@ unconnected ping to the `raknet;` address gets no reply), the launcher hands the
 plain host. The client mod completes authentication through
 Drasl; the Velocity plugin verifies the session before routing the player.
 
-`core/launcher-app` combines a direct Server List Ping to the public server with room data
+`src-tauri/src/commands.rs` combines a direct Server List Ping to the public server with room data
 from the site's `/api/rooms`. The site queries the internal game server's SLP extension and the
 public proxy separately. The launcher polls this combined status every 10 seconds; rooms do not
 come from the public proxy's ping response.
@@ -60,25 +60,34 @@ Server region is resolved from the game server's public IP via HTTPS to `ipwho.i
 server IP's approximate location; failed/private-address lookups display a dash. Ping and player
 counts still come directly from Minecraft and do not depend on a successful location lookup.
 
-Linux installs (AppImage or non-root `scripts/install-linux.sh` installs marked with
-`.blockfield-native-install`) check for launcher releases at startup and show their status
-under Settings → Launcher and in the clickable footer version.
+Native Linux installs made with `scripts/install-linux.sh` check for launcher releases at startup
+and show their status under Settings → Launcher and in the clickable footer version.
 Installation starts with the Install button, reports downloaded bytes and signature/install
 phases, and leaves a result with a Restart button. Errors can be retried without closing the
-app; progress survives navigation between screens.
-The updater downloads the signed `linux-<arch>-appimage` (for AppImage) or `linux-<arch>-deb`
-(for marker installs) release asset, verifies the minisign signature and signed version pin
-against the pinned public key in `native/app/src/update.rs`, validates the ELF/AppImage header
-(plus `ldd` for `.deb` marker binaries), and atomically replaces the executable with a
-`.previous` backup for rollback. Windows installations hand the verified `.msi` or `-setup.exe`
-to the OS installer.
+app; progress survives navigation between screens. The `.blockfield-native-install` marker opts this
+installation into native updates; unmarked binaries and debug builds do not self-update.
+The updater downloads the existing signed `linux-<arch>-deb` release asset, verifies it with
+Tauri's configured public key, and reads only `usr/bin/blockfield-launcher` from `data.tar.gz`.
+It does not install a Debian package or replace system libraries. The native ELF/CPU and `ldd`
+dependency checks run before an atomic replacement; `blockfield-launcher.previous` keeps the
+previous binary for rollback. AppImage and Windows installations retain Tauri's standard updater.
 The game and file operations must finish before the launcher can install an update.
+
+A new version must be published in the existing public release feed before other installations
+can receive it; local edits and same-version builds are not updates. To exercise signature
+verification against the actual public Debian asset without replacing the installed launcher:
+
+```sh
+scripts/rust-env.sh cargo test -p blockfield-launcher --lib \
+  native_update::tests::published_deb_has_a_valid_signature_and_native_payload -- --ignored
+```
 
 ## DEV launcher builds
 
 `dev` starts at the same commit as `main`: both branches use the same source and version
-from `native/app/Cargo.toml`. DEV is a build variant selected by `BLOCKFIELD_DEV_BUILD=1`,
-not a separate version mechanism.
+from `package.json`, `tauri.conf.json`, and `Cargo.toml`. DEV is a build variant selected by
+`BLOCKFIELD_DEV_BUILD=1`, not a separate version mechanism. The existing `getVersion()`
+API supplies the displayed version in both builds.
 
 Pushing to `dev`, or running **Launcher DEV** with branch `dev`, builds Linux and Windows
 in parallel without waiting for the release quality gates. The build
@@ -146,25 +155,24 @@ Unit tests are not evidence of live RakNet handshakes, DNS or production deploym
 
 ## Active components
 
-| Component                | Location                           | Responsibility                                                               |
-| ------------------------ | ---------------------------------- | ---------------------------------------------------------------------------- |
-| Native Slint UI          | `native/app/`                      | Slint desktop UI, self-updater, deep links, single-instance, 3D skin preview |
-| Core launcher engine     | `core/`                            | Pack/runtime installation, launching, status, accounts, rooms, Discord RPC   |
-| Shared Rust contracts    | `shared/`                          | Shared types imported by `core/launcher-app`                                 |
-| Release signer           | `tools/sign/`                      | Minisign artifact signer for release builds                                  |
-| Static pack/content host | `Blockfield/blockfield-client`     | `pack.toml`, `index.toml`, `launcher.json`, `content.json`                   |
-| Accounts                 | Drasl at `skins.blockfield.pro`    | Yggdrasil sessions, account API, skins and capes                             |
-| Site API                 | `Blockfield/blockfield-site`       | `/api/rooms` and web accounts                                                |
-| Stats API                | Control plane `cp.blockfield.pro`  | Anonymous `/public/*`: seasons, leaderboard, player profiles                 |
-| Login and routing        | `Blockfield/blockfield-proxy`      | Drasl session verification, backend routing and login forwarding             |
-| Game bridge              | `Blockfield/blockfield-mod`        | Client authentication, room requests, presence and server SLP snapshot       |
-| Launcher update feed     | Releases in this public repository | Signed bundles and `latest.json`                                             |
+| Component                | Location                           | Responsibility                                                                |
+| ------------------------ | ---------------------------------- | ----------------------------------------------------------------------------- |
+| Desktop UI               | `src/`                             | Launcher screens, account/settings and UI state                               |
+| Native launcher          | `src-tauri/`                       | Pack/runtime installation, launching, status, integrations and signed updates |
+| Shared Rust contracts    | `shared/`                          | Types still imported by the native launcher; not a deployed service           |
+| Static pack/content host | `Blockfield/blockfield-client`     | `pack.toml`, `index.toml`, `launcher.json`, `content.json`                    |
+| Accounts                 | Drasl at `skins.blockfield.pro`    | Yggdrasil sessions, account API, skins and capes                              |
+| Site API                 | `Blockfield/blockfield-site`       | `/api/rooms` and web accounts                                                 |
+| Stats API                | Control plane `cp.blockfield.pro`  | Anonymous `/public/*`: seasons, leaderboard, player profiles                  |
+| Login and routing        | `Blockfield/blockfield-proxy`      | Drasl session verification, backend routing and login forwarding              |
+| Game bridge              | `Blockfield/blockfield-mod`        | Client authentication, room requests, presence and server SLP snapshot        |
+| Launcher update feed     | Releases in this public repository | Signed bundles and `latest.json`                                              |
 
 ## Local development
 
-Install Python 3.12.15+, Just 1.58.0, Rust 1.99.0, and the Linux build libraries (`libfontconfig-dev`, `libxkbcommon-x11-0`, plus `squashfs-tools` for AppImage packaging).
+Install Node.js 24.21.0 LTS (see `.nvmrc`), Python 3.12.15+, Just 1.58.0, Rust 1.99.0, and the platform dependencies required by Tauri.
 
-`just setup` installs the pinned formatters and linters into `.cache/quality`.
+`just setup` installs the pinned pnpm, formatters, and linters into `.cache/quality`.
 Версионированные хуки (`.githooks` через `core.hooksPath`): pre-commit форматирует
 staged-файлы теми же закреплёнными форматтерами и пере-stage'ит их, поэтому коммит
 всегда отформатирован (`just format-staged`); проверки хука и pre-push
@@ -180,13 +188,19 @@ versions are replaced automatically.
 
 ```sh
 just setup
-just dev
+just tauri-dev
 ```
 
 `VITE_BLOCKFIELD_PACK_URL` points at the pack and site API origin. Local `.env` files stay untracked.
-On Linux, `scripts/install-linux-deps.sh` installs the CI/build dependencies.
+`just dev` runs frontend-only development with the existing Tauri mocks. A real game launch requires
+a Drasl account; the frontend mocks do not.
+
+On Linux, `scripts/install-tauri-deps.sh` installs the build dependencies;
+`scripts/rust-env.sh` can use the existing local container-builder fallback.
 For game or mod development, use [blockfield-workspace](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/DEVELOPING.md).
-It owns the isolated server, direct Minecraft launch and testbot on Linux and Windows.
+It owns the isolated server, direct Minecraft launch and testbot on Linux and Windows. The old
+integration-profile dev-launcher releases are retired. The older integration-profile code in `src-tauri/src/dev.rs`
+remains in the source tree while that cleanup is completed.
 
 ## Content, accounts and integrations
 
@@ -195,7 +209,7 @@ publishing workflow, not in this launcher repository. Keep the installer
 and Java artifact hashes in `launcher.json` consistent with the pack.
 Do not use the retired CMS publication workflow.
 
-`core/launcher-net/src/account.rs` signs in through Drasl's Yggdrasil API and API v3. The Yggdrasil access
+`src-tauri/src/account.rs` signs in through Drasl's Yggdrasil API and API v3. The Yggdrasil access
 token is passed to Minecraft; the API v3 token is used for account, skin and cape changes. The
 client mod sends the game token only to Drasl's session service, then the proxy checks `hasJoined`.
 Players using an offline launcher can instead authenticate with `/login` in the proxy lobby and
@@ -233,20 +247,20 @@ Quality checks cover Linux and Windows. Checks, secret scanning, and platform bu
 
 CI generates `release-notes.md` and, when available, `announcement.json` from the last published launcher release and merged PRs. The public repository uses its pinned local copy of the shared `release-text` action; without an AI key, it produces validated notes from facts. New release notes are not committed in the release PR.
 
-The native release job packages and signs versioned bundles for both platforms
-(`blockfield-launcher_<version>_x64_en-US.msi`, `blockfield-launcher_<version>_x64-setup.exe`,
-`blockfield-launcher_<version>_amd64.AppImage`, and `blockfield-launcher_<version>_amd64.deb`).
-The publication check requires every installer and its nonempty signature before
-building `latest.json` (and the compatibility `native-channel/latest-native.json`) with public
-release download URLs.
+The pinned Tauri release action produces versioned updater archives
+for both platforms (`blockfield-launcher_<version>_x64_en-US.msi` and
+`blockfield-launcher_<version>_amd64.AppImage`, plus the NSIS, `.deb` and `.rpm`
+installers). The
+publication check requires every installer and its nonempty signature before
+rebuilding `latest.json` with public release download URLs.
 
-Actions caches are scoped per ref, so a tag run cannot read caches saved by earlier tags. The same workflow runs on `main` every Monday (and on demand via `workflow_dispatch`): it runs the checks and builds, publishes nothing and saves the Rust caches that tag runs restore read-only. Run it by hand after a dependency or Rust toolchain update.
+Actions caches are scoped per ref, so a tag run cannot read caches saved by earlier tags. The same workflow runs on `main` every Monday (and on demand via `workflow_dispatch`): it runs the checks and builds, publishes nothing and saves the Rust and pnpm caches that tag runs restore read-only. Run it by hand after a dependency or Rust toolchain update.
 
-Updater archives are signed with the existing minisign key (`tools/sign`). The hosted pack provides Java 21 downloads for Windows and Linux. The launcher selects, downloads, verifies and configures its runtime automatically; no manual Java installation or path selection is required.
+Updater archives are signed with the existing Tauri key. The hosted pack provides Java 21 downloads for Windows and Linux. The launcher selects, downloads, verifies and configures its runtime automatically; no manual Java installation or path selection is required.
 
-Versions follow the game: the minor (`2.1.0`) moves only for a major launcher update such as a new section or a redesign; fixes, dependency updates and small features are patches (`2.0.<n>`).
+Versions follow the game: the minor (`1.1.0`) moves only for a major launcher update such as a new section or a redesign; fixes, dependency updates and small features are patches (`1.0.<n>`).
 
-Before releasing, update `native/app/Cargo.toml`, then run `just version-check`. The signing secrets (`TAURI_PRIVATE_KEY`, `TAURI_KEY_PASSWORD`) and build variables remain in the existing GitHub environment named `dev`; its deployment policy must permit `main` and `launcher-v*` tags only. Tag builds also verify that the commit belongs to `main`. Publishing uses this repository’s `GITHUB_TOKEN`; no cross-repository token is needed.
+Before releasing, update `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together, then run `pnpm version:check`. The signing secrets (`TAURI_PRIVATE_KEY`, `TAURI_KEY_PASSWORD`) and build variables remain in the existing GitHub environment named `dev`; its deployment policy must permit `main` and `launcher-v*` tags only. Tag builds also verify that the commit belongs to `main`. Publishing uses this repository’s `GITHUB_TOKEN`; no cross-repository token is needed.
 
 ## Rollback of a bad launcher update
 
@@ -270,8 +284,9 @@ to end:
    gone from the branch. The tooling must survive: the good tag predates it,
    and a bare restore would delete `just rollback` itself mid-runbook.
 2. `just rollback --good <good> --bad <bad> --new <new> --apply` — refuses
-   unless the tree is at `<good>`, then bumps the version files to `<new>`.
-3. `just version-check`, commit, push the branch, open a PR to `main` and
+   unless the tree is at `<good>`, then bumps the three version files to
+   `<new>`.
+3. `pnpm version:check`, commit, push the branch, open a PR to `main` and
    merge it after review. The rollback must land on `main`: the release
    workflow only publishes tags whose commit belongs to `main`, and `main`
    must stop carrying the bad code.
@@ -280,7 +295,7 @@ to end:
    files and the preserved rollback tooling (`justfile`,
    `scripts/rollback-release.py`, `scripts/test-rollback-release.py`,
    `docs/DEVELOPMENT.md`) — then `git tag launcher-v<new>` and push the tag. The tag
-   must equal `native/app/Cargo.toml`'s version and the commit must belong to
+   must equal the `package.json` version and the commit must belong to
    `main` — the tag run checks both before it builds, signs and publishes.
 5. Download `latest.json` from the new release and confirm its `version` is
    `<new>`; the `--latest` move points the update channel at it.
