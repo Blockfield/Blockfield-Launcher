@@ -353,10 +353,12 @@ mod tests {
             "operation_name": "TOP_OP",
             "description": "   ",
             "serverName": "TOP_SERVER",
+            "season": "TOP_SEASON",
             "translations": {
                 "en": {
                     "content.operationName": "EN_OP",
                     "content.serverName": "EN_SERVER",
+                    "content.season": "EN_SEASON",
                     "content.description": "   "
                 },
                 "ru": {
@@ -374,7 +376,7 @@ mod tests {
             ),
             Some("RU_OP")
         );
-        // Blank ru value falls back to en before top-level keys.
+        // Matches Tauri `{ ...en, ...ru }`: blank ru key shadows en and falls back to top-level.
         assert_eq!(
             localized_content_text(
                 Some(&content),
@@ -382,7 +384,12 @@ mod tests {
                 "content.serverName",
                 &["serverName", "server_name"]
             ),
-            Some("EN_SERVER")
+            Some("TOP_SERVER")
+        );
+        // Missing ru key falls back to en before top-level.
+        assert_eq!(
+            localized_content_text(Some(&content), "ru", "content.season", &["season"]),
+            Some("EN_SEASON")
         );
         // Blank everywhere returns None.
         assert_eq!(
@@ -407,7 +414,7 @@ mod tests {
                 { "icon": "flag", "title": "ЗАХВАТ ТОЧЕК", "desc": "Desc 1" },
                 { "icon": "unknown", "title": "BAD_ICON", "desc": "Desc 2" },
                 { "icon": "swords", "title": "", "desc": "Skipped empty title" },
-                { "icon": "flag", "title": "ИГРОВОЕ МЕНЮ", "desc": "Выбирайте комнату, класс и точку появления через меню в игре." }
+                { "icon": "gamepad-2", "title": "ИГРОВОЕ МЕНЮ", "desc": "Выбирайте комнату, класс и точку появления через меню в игре." }
             ],
             "translations": {
                 "ru": {
@@ -424,6 +431,7 @@ mod tests {
         );
         assert_eq!(resolved.features.len(), 3);
         assert_eq!(resolved.features[1].icon, "flag");
+        assert_eq!(resolved.features[2].icon, "gamepad-2");
         assert_eq!(resolved.features[2].title, "МЕНЮ В ИГРЕ");
         assert_eq!(
             resolved.features[2].description,

@@ -1246,6 +1246,125 @@ mod tests {
     }
 
     #[test]
+    fn pending_profile_retry_only_fires_on_busy_to_idle_transition() {
+        use slint::ComponentHandle;
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let rt = crate::runtime::new().unwrap();
+        let app = crate::AppWindow::new().unwrap();
+        let temp_dir = std::env::temp_dir().join(format!("bf-bridge-retry-{}", std::process::id()));
+        let downloader = std::sync::Arc::new(launcher_net::download::Downloader::new(
+            std::sync::Arc::new(|_| {}),
+            std::sync::Arc::new(|_, _| {}),
+            launcher_net::download::noop_guard_sink(),
+        ));
+        let state = std::sync::Arc::new(launcher_app::LauncherAppState {
+            cancel_flag: downloader.cancel_flag.clone(),
+            downloader,
+            pack: tokio::sync::RwLock::new(None),
+            config: tokio::sync::RwLock::new(launcher_core::config::LauncherConfig::default()),
+            app_data_dir: temp_dir.clone(),
+            game: std::sync::Arc::new(launcher_core::game::GameState::new(|_| {})),
+            operation: tokio::sync::Mutex::new(()),
+            events: std::sync::Arc::new(|_| {}),
+        });
+        *super::active_session().lock().unwrap() = Some((state, rt.handle().clone()));
+        *super::pending_profile_retry().lock().unwrap() =
+            Some(launcher_core::config::ClientProfile::Workshop);
+        let form = app.global::<crate::SettingsForm>();
+        form.set_blocked(false);
+        form.set_data(crate::SettingsData::default());
+        let mut data = app.get_main_data();
+        data.phase = "idle".into();
+        data.can_workshop = true;
+        data.profile_error = "disk error".into();
+        data.profile_blocked = true;
+        app.set_main_data(data);
+
+        // RoomPending while already idle must not retry a failed profile switch.
+        crate::bridge::apply(&app, launcher_app::LauncherEvent::RoomPending);
+        assert!(
+            !app.get_main_data().profile_changing,
+            "RoomPending while idle must not retry a failed profile switch"
+        );
+
+        // Non-transition Idle event while already idle must not retry either.
+        crate::bridge::apply(
+            &app,
+            launcher_app::LauncherEvent::GameStatus(launcher_core::game::GameStatus {
+                phase: launcher_core::game::GamePhase::Idle,
+                revision: 1,
+            }),
+        );
+        assert!(
+            !app.get_main_data().profile_changing,
+            "non-transition Idle event must not retry a failed profile switch"
+        );
+
+        // Transitioning from running -> Idle must retry the pending profile switch.
+        let mut data = app.get_main_data();
+        data.phase = "running".into();
+        app.set_main_data(data);
+        crate::bridge::apply(
+            &app,
+            launcher_app::LauncherEvent::GameStatus(launcher_core::game::GameStatus {
+                phase: launcher_core::game::GamePhase::Idle,
+                revision: 2,
+            }),
+        );
+        assert!(
+            app.get_main_data().profile_changing,
+            "busy -> idle GameStatus transition must retry pending profile switch"
+        );
+
+        *super::pending_profile_retry().lock().unwrap() = None;
+        *super::active_session().lock().unwrap() = None;
+        rt.shutdown_timeout(std::time::Duration::from_secs(1));
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn manual_verify_invalidates_in_flight_silent_pack_probe() {
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let rt = crate::runtime::new().unwrap();
+        let app = crate::AppWindow::new().unwrap();
+        let temp_dir = std::env::temp_dir().join(format!("bf-verify-gen-{}", std::process::id()));
+        let downloader = std::sync::Arc::new(launcher_net::download::Downloader::new(
+            std::sync::Arc::new(|_| {}),
+            std::sync::Arc::new(|_, _| {}),
+            launcher_net::download::noop_guard_sink(),
+        ));
+        let state = std::sync::Arc::new(launcher_app::LauncherAppState {
+            cancel_flag: downloader.cancel_flag.clone(),
+            downloader,
+            pack: tokio::sync::RwLock::new(None),
+            config: tokio::sync::RwLock::new(launcher_core::config::LauncherConfig::default()),
+            app_data_dir: temp_dir.clone(),
+            game: std::sync::Arc::new(launcher_core::game::GameState::new(|_| {})),
+            operation: tokio::sync::Mutex::new(()),
+            events: std::sync::Arc::new(|_| {}),
+        });
+        crate::main_ops::attach(&app, state, rt.handle().clone());
+        let mut data = app.get_main_data();
+        data.phase = "idle".into();
+        data.checked = true;
+        data.checking = false;
+        app.set_main_data(data);
+
+        let before = super::pack_check_gen().load(std::sync::atomic::Ordering::Acquire);
+        app.invoke_verify();
+        let after = super::pack_check_gen().load(std::sync::atomic::Ordering::Acquire);
+        assert!(
+            after > before,
+            "manual Action::Verify must advance pack_check_gen to discard older in-flight probes"
+        );
+
+        rt.shutdown_timeout(std::time::Duration::from_secs(1));
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
     fn explicit_capture_and_test_flags_use_fixtures() {
         for flag in [
             "--state",
