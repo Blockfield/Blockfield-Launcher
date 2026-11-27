@@ -76,9 +76,9 @@ def main():
         timing = (directory / "timing.txt").read_text(encoding="utf-8")
         opened = int(
             next(
-                l.split("=")[1]
-                for l in timing.splitlines()
-                if l.startswith("window_open_s=")
+                line.split("=")[1]
+                for line in timing.splitlines()
+                if line.startswith("window_open_s=")
             )
         )
     except (FileNotFoundError, StopIteration, ValueError):
