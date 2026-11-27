@@ -35,7 +35,9 @@ export component AppWindow inherits Window {
     in property <bool> login-name-valid: true;
     in property <bool> login-busy: false;
     in property <string> login-error;
+    in property <string> login-raw-error;
     in property <bool> login-can-submit: false;
+    in property <int> login-focus-trigger: 0;
     in-out property <string> firstrun-game-dir;
     in-out property <string> firstrun-java-path;
     in-out property <int> firstrun-ram: 4;
@@ -43,6 +45,8 @@ export component AppWindow inherits Window {
     in property <[int]> firstrun-presets;
     in property <bool> firstrun-saving: false;
     in property <string> firstrun-error;
+    in property <string> firstrun-raw-error;
+    in-out property <bool> firstrun-pending: false;
     in property <MainData> main-data;
     in property <[Room]> rooms;
     in property <[string]> room-names;
@@ -301,7 +305,9 @@ export component AppWindow inherits Window {
             name-valid: root.login-name-valid;
             busy: root.login-busy;
             error: root.login-error;
+            raw-error: root.login-raw-error;
             can-submit: root.login-can-submit;
+            focus-trigger: root.login-focus-trigger;
             submit => { root.login-submit(); }
             toggle-mode => { root.login-toggle-mode(); }
             logout => { root.login-logout(); }
@@ -317,6 +323,7 @@ export component AppWindow inherits Window {
             presets: root.firstrun-presets;
             saving: root.firstrun-saving;
             error: root.firstrun-error;
+            raw-error: root.firstrun-raw-error;
             browse-dir => { root.firstrun-browse-dir(); }
             browse-java => { root.firstrun-browse-java(); }
             ram-text-edited(text) => { root.firstrun-ram-text-edited(text); }

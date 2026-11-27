@@ -126,6 +126,11 @@ fn first_login_runs_firstrun_with_bundled_java_friendly_errors_and_clean_logout(
                         "Выбранный файл Java не найден. Очистите поле для автоматического выбора или укажите существующий файл.",
                         "F12: FirstRun save error must pass through friendly_error"
                     );
+                    assert_eq!(
+                        app.get_firstrun_raw_error().as_str(),
+                        "Selected Java executable does not exist",
+                        "F12: FirstRun raw error must stay available for FormError spoiler"
+                    );
                     // Now save valid settings to finish first run.
                     app.set_firstrun_java_path(bundled_java_str.as_str().into());
                     app.invoke_firstrun_continue();

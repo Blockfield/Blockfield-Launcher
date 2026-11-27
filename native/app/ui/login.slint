@@ -1,9 +1,10 @@
 import { Tokens } from "tokens.slint";
 import { GridBackdrop, TopoBackdrop } from "backdrop.slint";
-import { AuthHeader, ErrorText, FieldRow, FormButton, LinkButton, TextField } from "forms.slint";
+import { AuthHeader, FieldRow, FormButton, LinkButton, TextField } from "forms.slint";
+import { FormError } from "settings-inputs.slint";
 
 // Native port of src/app/components/LoginScreen.tsx: same titles, hints,
-// fields and mode toggle, driven by native/app/src/auth.rs (core account ops).
+// fields, icons, focus and mode toggle, driven by native/app/src/auth.rs.
 export component LoginScreen inherits Rectangle {
     in property <string> mode: "login";
     in-out property <string> username;
@@ -12,7 +13,9 @@ export component LoginScreen inherits Rectangle {
     in property <bool> name-valid: true;
     in property <bool> busy;
     in property <string> error;
+    in property <string> raw-error;
     in property <bool> can-submit;
+    in property <int> focus-trigger: 0;
     callback submit();
     callback toggle-mode();
     callback logout();
@@ -24,8 +27,9 @@ export component LoginScreen inherits Rectangle {
     GridBackdrop { x: 0px; y: 0px; intensity: 0.4; }
     VerticalLayout {
         x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
+        y: Math.max(24px, (parent.height - self.preferred-height) / 2);
         width: Math.min(640px, parent.width - 32px);
+        height: self.preferred-height;
         alignment: center;
         spacing: 16px;
         AuthHeader {
@@ -36,13 +40,13 @@ export component LoginScreen inherits Rectangle {
             background: Tokens.card;
             border-width: 1px;
             border-color: Tokens.border;
-            // 16px padding + one 65px row per visible field.
-            height: 16px + (root.set-password ? 65px : 130px);
+            height: inner.preferred-height + 18px;
             inner := VerticalLayout {
-                x: 12px;
-                y: 8px;
-                width: parent.width - 24px;
+                x: 21px;
+                y: 9px;
+                width: parent.width - 42px;
                 if !root.set-password: FieldRow {
+                    icon: @image-url("../assets/icons/user-round.svg");
                     label: "НИКНЕЙМ";
                     hint: "3–16 латинских букв, цифр или _.";
                     name-field := TextField {
@@ -50,40 +54,58 @@ export component LoginScreen inherits Rectangle {
                         field-label: "НИКНЕЙМ";
                         value <=> root.username;
                         invalid: root.username != "" && !root.name-valid;
+                        auto-focus: !root.set-password && root.username == "";
+                        focus-trigger: root.focus-trigger;
                         edited => { root.username-edited(name-field.value); }
                         accepted => { root.accept(); }
                     }
                 }
                 FieldRow {
+                    icon: @image-url("../assets/icons/key-round.svg");
                     label: "ПАРОЛЬ";
                     hint: "Не меньше 8 символов.";
+                    last: true;
                     pass-field := TextField {
                         width: 100%;
                         field-label: "ПАРОЛЬ";
                         value <=> root.password;
                         password: true;
+                        auto-focus: root.set-password || root.username != "";
+                        focus-trigger: root.focus-trigger;
                         edited => { root.password-edited(pass-field.value); }
                         accepted => { root.accept(); }
                     }
                 }
             }
         }
-        if root.error != "": ErrorText { message: root.error; }
-        footer := HorizontalLayout {
-            alignment: space-between;
+        if root.error != "": FormError {
+            width: 100%;
+            message: root.error;
+            raw: root.raw-error;
+        }
+        footer := Rectangle {
+            height: 40px;
             if root.set-password: LinkButton {
+                x: 0px;
+                y: (parent.height - self.height) / 2;
                 text: "Выйти";
                 accessible-label: "Выйти";
                 enabled: !root.busy;
                 clicked => { root.logout(); }
             }
             if !root.set-password: LinkButton {
+                x: 0px;
+                y: (parent.height - self.height) / 2;
                 text: root.mode == "register" ? "Уже есть аккаунт? Войти" : "Нет аккаунта? Зарегистрироваться";
                 accessible-label: root.mode == "register" ? "Уже есть аккаунт? Войти" : "Нет аккаунта? Зарегистрироваться";
                 clicked => { root.toggle-mode(); }
             }
             FormButton {
+                x: parent.width - self.width;
+                y: 0px;
                 text: root.set-password ? "СОХРАНИТЬ ПАРОЛЬ" : (root.mode == "register" ? "ЗАРЕГИСТРИРОВАТЬСЯ" : "ВОЙТИ");
+                icon: @image-url("../assets/icons/arrow-right.svg");
+                busy: root.busy;
                 enabled: root.can-submit && !root.busy;
                 clicked => { root.submit(); }
             }

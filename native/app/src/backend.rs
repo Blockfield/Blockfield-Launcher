@@ -115,15 +115,7 @@ impl Backend {
                 crate::auth::attach(&app, state.clone(), handle.clone());
                 match status {
                     Ok(status) => crate::auth::enter_startup(&app, state, handle, status),
-                    Err(error) => {
-                        app.set_login_mode("login".into());
-                        app.set_login_set_password(false);
-                        app.set_login_username(stored_username.into());
-                        app.set_login_error(error.into());
-                        app.set_show_main(false);
-                        app.set_show_firstrun(false);
-                        app.set_show_login(true);
-                    }
+                    Err(error) => crate::auth::show_login_error(&app, &stored_username, &error),
                 }
             });
         });

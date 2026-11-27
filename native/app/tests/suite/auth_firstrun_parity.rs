@@ -45,6 +45,55 @@ fn f12_login_auth_error_is_friendly_russian() {
         app.get_login_error().as_str(),
         "Неверный никнейм или пароль."
     );
+    assert_eq!(
+        app.get_login_raw_error().as_str(),
+        "Drasl: Invalid credentials"
+    );
+    // Startup account_status error also uses friendly_error + raw spoiler and records first-run eligibility.
+    auth::show_login_error(&app, "", "Drasl request failed: dns error");
+    assert!(app.get_firstrun_pending());
+    assert!(app.get_login_error().contains("skins.blockfield.pro"));
+    assert_eq!(
+        app.get_login_raw_error().as_str(),
+        "Drasl request failed: dns error"
+    );
+    app.show().unwrap();
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "Подробности")
+            .any(|e| e.accessible_role() == Some(AccessibleRole::Button)),
+        "F12: LoginScreen FormError must expose collapsible Подробности button"
+    );
+}
+
+#[test]
+fn f24_firstrun_low_ram_is_not_clamped_upward_and_disables_continue() {
+    crate::init_slint();
+    let (dir, java, ram, max, presets) =
+        auth::firstrun_defaults_from_response(&serde_json::json!({
+            "gameDir": "/tmp/game",
+            "javaPath": "/tmp/game/java/bin/java",
+            "ramMb": 4096,
+            "maxRamMb": 1024
+        }));
+    assert_eq!(dir, "/tmp/game");
+    assert_eq!(java, "/tmp/game/java/bin/java");
+    assert_eq!(ram, 2);
+    assert_eq!(max, 1, "F24: maxram < 2 must not be clamped upward to 2");
+    assert!(presets.is_empty());
+
+    let app = AppWindow::new().unwrap();
+    let (_host, _activity) = wire_app(&app, Backend::Fixtures).unwrap();
+    fixtures::apply_firstrun(&app).unwrap();
+    app.set_firstrun_maxram(max);
+    app.show().unwrap();
+    let cont = ElementHandle::find_by_accessible_label(&app, "ПРОДОЛЖИТЬ")
+        .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
+        .expect("continue button");
+    assert_eq!(
+        cont.accessible_enabled(),
+        Some(false),
+        "F24: Continue must be disabled when maxram < 2"
+    );
 }
 
 #[test]
@@ -192,6 +241,26 @@ fn visual_password_alignment_and_login_firstrun_geometry_and_focus() {
             app.get_login_username().as_str(),
             "a",
             "item 14: empty login must focus username initially"
+        );
+
+        // Item 15: switch-mode link is vertically centered with the submit button.
+        let link =
+            ElementHandle::find_by_accessible_label(&app, "Нет аккаунта? Зарегистрироваться")
+                .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
+                .expect("switch-mode link");
+        let submit = ElementHandle::find_by_accessible_label(&app, "ВОЙТИ")
+            .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
+            .expect("login submit button");
+        let link_mid = link.absolute_position().y + link.size().height / 2.0;
+        let submit_mid = submit.absolute_position().y + submit.size().height / 2.0;
+        assert!(
+            (link_mid - submit_mid).abs() <= 3.0,
+            "item 15: switch link center ({link_mid}) must align with submit button center ({submit_mid})"
+        );
+        assert!(
+            submit.size().width >= 115.0,
+            "item 15: login button width ({}) must include leading arrow + padding",
+            submit.size().width
         );
     }
     {

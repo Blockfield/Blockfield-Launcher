@@ -14,6 +14,8 @@ use crate::{AppWindow, SettingsData, SettingsForm};
 
 type Core = Option<(Arc<LauncherAppState>, Handle)>;
 
+const DEFAULT_LANG: &str = "ru";
+
 pub fn apply_response(app: &AppWindow, value: &serde_json::Value) {
     let max = ram_limit_gb(value["maxRamMb"].as_f64().unwrap_or(0.0));
     app.global::<SettingsForm>().set_data(SettingsData {
@@ -31,7 +33,7 @@ pub fn apply_response(app: &AppWindow, value: &serde_json::Value) {
             .unwrap_or_default()
             .into(),
         post_exit: value["postExitCommand"].as_str().unwrap_or_default().into(),
-        lang: value["lang"].as_str().unwrap_or("ru").into(),
+        lang: DEFAULT_LANG.into(),
     });
     let form = app.global::<SettingsForm>();
     form.set_presets(ModelRc::new(VecModel::from(
@@ -65,7 +67,7 @@ pub fn config_from_form(data: &SettingsData) -> Result<LauncherConfig, String> {
         hide_while_playing: data.hide_while_playing,
         pre_launch_command: data.pre_launch.to_string(),
         post_exit_command: data.post_exit.to_string(),
-        lang: data.lang.to_string(),
+        lang: DEFAULT_LANG.into(),
         ..LauncherConfig::default()
     })
 }
@@ -313,14 +315,15 @@ pub fn wire(app: &AppWindow, core: Core) {
                             .await
                     };
                     let _ = weak.upgrade_in_event_loop(move |app| {
-                        account_result(&app, password_change, result.map(|_| ()))
+                        let kept = result.map(|status| crate::auth::status_username(&status));
+                        account_result(&app, password_change, kept)
                     });
                 });
             } else {
                 let result = if password_change && password.len() < 8 {
                     Err("Drasl: Invalid password".into())
                 } else {
-                    Ok(())
+                    Ok(app.get_username().to_string())
                 };
                 account_result(&app, password_change, result);
             }
@@ -346,18 +349,16 @@ pub fn wire(app: &AppWindow, core: Core) {
     });
 }
 
-fn account_result(app: &AppWindow, password_change: bool, result: Result<(), String>) {
+fn account_result(app: &AppWindow, password_change: bool, result: Result<String, String>) {
     let form = app.global::<SettingsForm>();
     form.set_account_busy(false);
     match result {
-        Ok(()) => {
+        Ok(username) => {
             form.set_password("".into());
             form.set_password_open(false);
             form.set_password_changed(password_change);
             if !password_change {
-                // The login screen unit consumes the account-expired event; never retain a password in UI state.
-                app.set_username("".into());
-                crate::bridge::apply(app, launcher_app::LauncherEvent::AccountExpired);
+                crate::auth::show_login_logout(app, &username);
             }
         }
         Err(error) => {

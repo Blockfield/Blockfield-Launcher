@@ -6,7 +6,10 @@
 use std::sync::Arc;
 
 use launcher_app::{LauncherAppState, ops::settings as settings_ops};
-use launcher_core::config::{max_ram_mb, valid_username};
+use launcher_core::{
+    config::{max_ram_mb, valid_username},
+    errors::{ErrorContext, friendly_error},
+};
 use launcher_net::account;
 use slint::{ComponentHandle, ModelRc, VecModel};
 use tokio::runtime::Handle;
@@ -89,6 +92,18 @@ pub fn try_begin(app: &AppWindow) -> bool {
     !(app.get_login_busy() || app.get_firstrun_saving())
 }
 
+fn set_login_error(app: &AppWindow, raw: &str) {
+    let friendly = friendly_error(raw, ErrorContext::Account);
+    app.set_login_error(friendly.message.into());
+    app.set_login_raw_error(friendly.raw.into());
+}
+
+fn set_firstrun_error(app: &AppWindow, raw: &str) {
+    let friendly = friendly_error(raw, ErrorContext::SettingsSave);
+    app.set_firstrun_error(friendly.message.into());
+    app.set_firstrun_raw_error(friendly.raw.into());
+}
+
 fn show_login(app: &AppWindow, mode: &str, set_password: bool, username: &str) {
     app.set_show_main(false);
     app.set_show_firstrun(false);
@@ -98,8 +113,30 @@ fn show_login(app: &AppWindow, mode: &str, set_password: bool, username: &str) {
     app.set_login_password("".into());
     app.set_login_busy(false);
     app.set_login_error("".into());
+    app.set_login_raw_error("".into());
     app.set_show_login(true);
     refresh_login(app);
+    app.set_login_focus_trigger(app.get_login_focus_trigger().wrapping_add(1));
+}
+
+/// Voluntary logout from Settings: return to LoginScreen with the stored
+/// username prefilled and no session-expired error (Tauri App.tsx parity).
+pub fn show_login_logout(app: &AppWindow, username: &str) {
+    let kept = if username.is_empty() {
+        app.get_username().to_string()
+    } else {
+        username.to_string()
+    };
+    app.set_username(kept.as_str().into());
+    show_login(app, "login", false, &kept);
+}
+
+/// Startup account_status failure: record first-run eligibility, open login
+/// and show the error via `friendly_error(..., Account)`.
+pub fn show_login_error(app: &AppWindow, username: &str, error: &str) {
+    app.set_firstrun_pending(username.trim().is_empty());
+    show_login(app, "login", false, username);
+    set_login_error(app, error);
 }
 
 fn apply_status(app: &AppWindow, status: &account::AccountStatus) {
@@ -140,6 +177,7 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
                 .into(),
             );
             app.set_login_error("".into());
+            app.set_login_raw_error("".into());
         }
     });
     let weak = app.as_weak();
@@ -153,6 +191,7 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
         }
         app.set_login_busy(true);
         app.set_login_error("".into());
+        app.set_login_raw_error("".into());
         refresh_login(&app);
         let weak = weak.clone();
         let state = submit_state.clone();
@@ -213,7 +252,7 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
                         apply_status(&app, &status);
                         show_login(&app, "login", false, &status_username(&status));
                     }
-                    Err(error) => app.set_login_error(error.into()),
+                    Err(error) => set_login_error(&app, &error),
                 }
             });
         });
@@ -249,6 +288,7 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
         }
         app.set_firstrun_saving(true);
         app.set_firstrun_error("".into());
+        app.set_firstrun_raw_error("".into());
         let weak = weak.clone();
         let state = continue_state.clone();
         let handle = continue_handle.clone();
@@ -273,8 +313,11 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_firstrun_saving(false);
                 match save {
-                    Ok(()) => crate::backend::enter_main(&app, state, handle),
-                    Err(error) => app.set_firstrun_error(error.into()),
+                    Ok(()) => {
+                        app.set_firstrun_pending(false);
+                        crate::backend::enter_main(&app, state, handle);
+                    }
+                    Err(error) => set_firstrun_error(&app, &error),
                 }
             });
         });
@@ -290,7 +333,7 @@ pub fn on_auth_done(
     app.set_login_busy(false);
     match result {
         Err(error) => {
-            app.set_login_error(error.into());
+            set_login_error(app, &error);
             refresh_login(app);
         }
         Ok(status) => {
@@ -298,7 +341,10 @@ pub fn on_auth_done(
             app.set_login_password("".into());
             if status_needs_password(&status) {
                 show_login(app, "login", true, &status_username(&status));
-            } else if first_run_now(state) || status_username(&status).is_empty() {
+            } else if app.get_firstrun_pending()
+                || first_run_now(state)
+                || status_username(&status).is_empty()
+            {
                 enter_firstrun(app, state.clone(), handle.clone());
             } else {
                 crate::backend::enter_main(app, state.clone(), handle.clone());
@@ -307,20 +353,46 @@ pub fn on_auth_done(
     }
 }
 
-/// Fill the FirstRun form from the stored (or platform-default) settings and
-/// show it. `load_settings` already returns sane defaults when nothing was
-/// saved yet, so this mirrors the Tauri `!cfg.username` gate exactly.
+/// Extract FirstRun defaults from `settings_ops::load_settings` JSON without
+/// clamping `maxram` upward (so `< 2 GB` warning/disabled Continue stays reachable).
+pub fn firstrun_defaults_from_response(
+    value: &serde_json::Value,
+) -> (String, String, i32, i32, Vec<i32>) {
+    let dir = value["gameDir"].as_str().unwrap_or_default().to_string();
+    let java = value["javaPath"].as_str().unwrap_or_default().to_string();
+    let max = ram_limit_gb(value["maxRamMb"].as_u64().unwrap_or(0) as u32);
+    let ram = clamp_ram_gb((value["ramMb"].as_u64().unwrap_or(4096) / 1024) as i32, max);
+    let presets = RAM_PRESETS_GB.into_iter().filter(|p| *p <= max).collect();
+    (dir, java, ram, max, presets)
+}
+
+/// Fill the FirstRun form from `settings_ops::load_settings` (which auto-detects
+/// bundled Java and reports real `maxRamMb`) and show it.
 pub fn enter_firstrun(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
     let weak = app.as_weak();
     // handle.spawn, not tokio::spawn: callers run on the Slint UI thread
     // (upgrade_in_event_loop), where no Tokio runtime context exists.
     handle.spawn(async move {
-        let active = state.config.read().await.active();
-        let max = ram_limit_gb(max_ram_mb()).max(RAM_MIN_GB);
-        let ram = clamp_ram_gb((active.ram_mb / 1024) as i32, max);
-        let presets: Vec<i32> = RAM_PRESETS_GB.into_iter().filter(|p| *p <= max).collect();
-        let dir = active.game_dir.clone();
-        let java = active.java_path.clone();
+        let loaded = tokio::task::spawn_blocking({
+            let state = state.clone();
+            move || {
+                settings_ops::load_settings(&state)
+                    .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+            }
+        })
+        .await
+        .ok()
+        .and_then(Result::ok);
+        let (dir, java, ram, max, presets) = match loaded {
+            Some(value) => firstrun_defaults_from_response(&value),
+            None => {
+                let active = state.config.read().await.active();
+                let max = ram_limit_gb(max_ram_mb());
+                let ram = clamp_ram_gb((active.ram_mb / 1024) as i32, max);
+                let presets = RAM_PRESETS_GB.into_iter().filter(|p| *p <= max).collect();
+                (active.game_dir, active.java_path, ram, max, presets)
+            }
+        };
         let _ = weak.upgrade_in_event_loop(move |app| {
             app.set_firstrun_game_dir(dir.into());
             app.set_firstrun_java_path(java.into());
@@ -329,6 +401,7 @@ pub fn enter_firstrun(app: &AppWindow, state: Arc<LauncherAppState>, handle: Han
             app.set_firstrun_presets(ModelRc::new(VecModel::from(presets)));
             app.set_firstrun_saving(false);
             app.set_firstrun_error("".into());
+            app.set_firstrun_raw_error("".into());
             app.set_show_login(false);
             app.set_show_main(false);
             app.set_show_firstrun(true);
@@ -349,9 +422,10 @@ pub fn show_login_expired(app: &AppWindow) {
     app.set_login_error("Сессия истекла — войдите снова.".into());
 }
 
-/// Decide the entry screen after startup, mirroring App.tsx: logged-out (or
-/// password migration) goes to LoginScreen, logged-in without a stored
-/// username goes to FirstRunScreen, otherwise the main Shell.
+/// Decide the entry screen after startup, mirroring App.tsx: capture first-run
+/// eligibility before login, logged-out (or password migration) goes to
+/// LoginScreen, logged-in without a stored username goes to FirstRunScreen,
+/// otherwise the main Shell.
 pub fn enter_startup(
     app: &AppWindow,
     state: Arc<LauncherAppState>,
@@ -359,6 +433,8 @@ pub fn enter_startup(
     status: account::AccountStatus,
 ) {
     apply_status(app, &status);
+    let needs_firstrun = first_run_now(&state);
+    app.set_firstrun_pending(needs_firstrun);
     if !status_logged_in(&status) || status_needs_password(&status) {
         show_login(
             app,
@@ -366,9 +442,10 @@ pub fn enter_startup(
             status_flag(&status, "needsPassword"),
             &status_field(&status, "username"),
         );
-    } else if first_run_now(&state) || status_field(&status, "username").is_empty() {
+    } else if needs_firstrun || status_field(&status, "username").is_empty() {
         enter_firstrun(app, state, handle);
     } else {
+        app.set_firstrun_pending(false);
         crate::backend::enter_main(app, state, handle);
     }
 }
@@ -407,6 +484,7 @@ pub fn attach_fixtures(app: &AppWindow) {
                 .into(),
             );
             app.set_login_error("".into());
+            app.set_login_raw_error("".into());
         }
     });
     let weak = app.as_weak();

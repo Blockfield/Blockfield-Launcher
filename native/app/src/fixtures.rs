@@ -269,9 +269,11 @@ pub fn apply_login(app: &AppWindow, variant: &str) -> Result<(), String> {
     app.set_login_password("".into());
     app.set_login_busy(false);
     app.set_login_error("".into());
+    app.set_login_raw_error("".into());
     app.set_login_name_valid(true);
     app.set_login_can_submit(false);
     app.set_show_login(true);
+    app.set_login_focus_trigger(app.get_login_focus_trigger().wrapping_add(1));
     Ok(())
 }
 
@@ -285,6 +287,7 @@ pub fn apply_firstrun(app: &AppWindow) -> Result<(), String> {
     app.set_firstrun_presets(ModelRc::new(VecModel::from(vec![4, 6, 8, 12, 16])));
     app.set_firstrun_saving(false);
     app.set_firstrun_error("".into());
+    app.set_firstrun_raw_error("".into());
     app.set_show_firstrun(true);
     Ok(())
 }
