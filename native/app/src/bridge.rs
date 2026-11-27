@@ -27,6 +27,11 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
     let mut game_became_idle = false;
     match event {
         LauncherEvent::Status(status) => {
+            if status.phase == "hook-error" {
+                // F13 shell alert persists; launch_status still flashes the
+                // hook message like Tauri MainScreen.tsx.
+                app.set_command_error(status.message.clone().into());
+            }
             data.launch_status = status.message.clone().into();
             crate::update::apply_status(app, &status);
         }

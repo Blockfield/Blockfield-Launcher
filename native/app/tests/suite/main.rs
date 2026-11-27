@@ -20,6 +20,7 @@ pub(crate) fn init_slint() {
 mod auth_firstrun_parity;
 mod avatars;
 mod chrome;
+mod d6_parity;
 mod init_failure;
 mod layer1_screens;
 mod main_controls_probe;

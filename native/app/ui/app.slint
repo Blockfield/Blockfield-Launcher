@@ -110,13 +110,13 @@ export component AppWindow inherits Window {
     callback stats-shown();
     in property <string> settings-title;
     in property <string> settings-subtitle;
-    in property <string> skin-path;
-    in property <string> cape-path;
+    in-out property <string> skin-path;
+    in-out property <string> cape-path;
     in-out property <bool> slim: false;
     in property <image> skin-frame;
     in property <string> skin-error;
     in property <string> skin-caption;
-    in property <string> skin-message;
+    in-out property <string> skin-message;
     in property <string> skin-raw-error;
     in-out property <bool> skin-busy: false;
     in property <UpdateData> update-data;
@@ -132,6 +132,11 @@ export component AppWindow inherits Window {
     callback skin-drag-state(bool);
     callback skin-drag-by(float, float);
     callback skin-frame-ready();
+    callback skin-preview-sync();
+    changed username => { root.skin-preview-sync(); }
+    changed skin-path => { root.skin-preview-sync(); }
+    changed cape-path => { root.skin-preview-sync(); }
+    changed slim => { root.skin-preview-sync(); }
     callback update-retry();
     callback update-cancel();
     callback update-launch();
@@ -159,6 +164,7 @@ export component AppWindow inherits Window {
     in property <string> support-label;
     in property <string> network-label;
     in property <bool> dev-build;
+    in-out property <string> command-error;
     in property <bool> show-backdrop: false;
     in property <bool> show-pulse: false;
     in-out property <int> active: 0;
@@ -208,6 +214,7 @@ export component AppWindow inherits Window {
             support-label: root.support-label;
             network-label: root.network-label;
             dev-build: root.dev-build;
+            command-error <=> root.command-error;
             navigate(index) => { root.navigate(index); }
             launcher-update => { root.launcher-update(); }
             support => { root.support(); }
@@ -280,13 +287,13 @@ export component AppWindow inherits Window {
                 tab <=> root.settings-tab;
                 title: root.settings-title;
                 subtitle: root.settings-subtitle;
-                skin-path: root.skin-path;
-                cape-path: root.cape-path;
+                skin-path <=> root.skin-path;
+                cape-path <=> root.cape-path;
                 slim <=> root.slim;
                 skin-frame: root.skin-frame;
                 skin-error: root.skin-error;
                 caption: root.skin-caption;
-                skin-message: root.skin-message;
+                skin-message <=> root.skin-message;
                 skin-raw-error: root.skin-raw-error;
                 skin-busy <=> root.skin-busy;
                 launcher-data: root.launcher-update-data;

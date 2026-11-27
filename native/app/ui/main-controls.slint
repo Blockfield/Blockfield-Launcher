@@ -4,6 +4,7 @@ import { ActionArea, WindowActivity } from "controls.slint";
 export global MainText {
     pure callback launch-sub(string, int) -> string;
     pure callback friendly-error(string, string) -> string;
+    pure callback maintenance-banner(string) -> string;
 }
 
 export component Spinner inherits Rectangle {

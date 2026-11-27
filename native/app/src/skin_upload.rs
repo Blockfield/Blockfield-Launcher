@@ -61,6 +61,7 @@ pub async fn perform_upload(
 /// Wire the skin tab upload to the core runtime (same code path as
 /// production). Browse callbacks stay in `wire_app` next to the preview host.
 pub fn wire_upload(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
+    crate::skin::attach_live(app, state.clone(), handle.clone());
     let weak = app.as_weak();
     app.on_upload_skin(move || {
         let Some(app) = weak.upgrade() else { return };
@@ -106,6 +107,7 @@ pub fn wire_upload(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
                             skins,
                             vec![username],
                         );
+                        crate::skin::invalidate_preview(&app);
                         app.set_skin_message(SKIN_UPLOADED.into());
                     }
                     Err(error) => {
