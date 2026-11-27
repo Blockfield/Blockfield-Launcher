@@ -2890,6 +2890,9 @@ mod tests {
         i_slint_backend_testing::init_no_event_loop();
         let app = crate::AppWindow::new().unwrap();
         crate::fixtures::apply(&app);
+        // Process-global run flag: establish the no-active-run precondition
+        // (Windows runs lib tests highly parallel; a leaked flag flakes this).
+        super::active_run().store(false, Ordering::SeqCst);
         super::visited_flag().store(true, Ordering::SeqCst);
         let mut data = app.get_update_data();
         data.patch = "/ ПАТЧ 2.75".into();
@@ -2932,6 +2935,8 @@ mod tests {
     fn clash_c5_probe_with_newer_remote_resyncs_idle_update_screen() {
         use std::{cell::Cell, rc::Rc};
         let _serial = crate::main_ops::test_serial();
+        // Same process-global isolation as clash_c4 above.
+        super::active_run().store(false, Ordering::SeqCst);
         i_slint_backend_testing::init_no_event_loop();
         let app = crate::AppWindow::new().unwrap();
         crate::fixtures::apply(&app);
