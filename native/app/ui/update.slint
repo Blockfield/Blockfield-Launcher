@@ -27,6 +27,7 @@ export struct UpdateData {
     speed: string,
     mirror-name: string,
     mirror-status: string,
+    mirror-speed: string,
     mirror-bad: bool,
     operation: string,
     patch: string,
@@ -89,7 +90,7 @@ component UpdateStep inherits Rectangle {
     in property <bool> last: false;
     height: 34px;
     Rectangle { x: 0px; y: 13px; width: 8px; height: 8px; border-radius: 4px;
-        background: root.state == 2 ? Tokens.success : root.state == 1 ? Tokens.primary : #3a2c1d;
+        background: root.state == 2 ? Tokens.success : root.state == 1 ? Tokens.primary : Tokens.muted-border;
         drop-shadow-blur: root.state == 1 ? 10px : root.state == 2 ? 6px : 0px;
         drop-shadow-color: root.state == 1 ? Tokens.primary.with-alpha(0.7) : root.state == 2 ? Tokens.success.with-alpha(0.5) : transparent;
     }
@@ -127,8 +128,8 @@ component UpdateAction inherits Rectangle {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
         for corner in 4: Rectangle {
             x: Math.mod(corner, 2) == 0 ? 1px : parent.width - 13px; y: corner < 2 ? 1px : parent.height - 13px; width: 12px; height: 12px;
-            Rectangle { y: 0px; x: Math.mod(corner, 2) == 0 ? 0px : 11px; width: 1px; background: root.danger ? #7a3838 : !root.enabled ? #3a2c1d : Tokens.primary; }
-            Rectangle { x: 0px; y: corner < 2 ? 0px : 11px; height: 1px; background: root.danger ? #7a3838 : !root.enabled ? #3a2c1d : Tokens.primary; }
+            Rectangle { y: 0px; x: Math.mod(corner, 2) == 0 ? 0px : 11px; width: 1px; background: root.danger ? #7a3838 : !root.enabled ? Tokens.muted-border : Tokens.primary; }
+            Rectangle { x: 0px; y: corner < 2 ? 0px : 11px; height: 1px; background: root.danger ? #7a3838 : !root.enabled ? Tokens.muted-border : Tokens.primary; }
         }
     }
     HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: parent.height; alignment: center; spacing: 16px;
@@ -185,7 +186,10 @@ export component UpdateScreen inherits Rectangle {
     private property <color> op-status-color: root.data.phase == "error" ? #c98b8b : Tokens.primary;
     private property <color> status-color: root.data.phase == "error" ? #c98b8b :
         root.data.phase == "complete" || root.data.phase == "uptodate" ? Tokens.success : Tokens.primary;
-    private property <string> mirror-status: root.transferring ? (root.data.speed != "" ? root.data.speed : "—") :
+    private property <string> download-speed:
+        (root.data.speed != "" && root.data.speed != "—") ? root.data.speed
+        : (root.data.mirror-speed != "" ? root.data.mirror-speed : "—");
+    private property <string> mirror-status: root.transferring ? root.download-speed :
         root.data.mirror-status != "" ? root.data.mirror-status : "ПРОВЕРКА...";
     private property <bool> show-err: root.data.phase == "error" && root.data.error != "";
     private property <bool> show-raw: root.error-details && root.data.error-raw != "";
@@ -215,14 +219,15 @@ export component UpdateScreen inherits Rectangle {
             // omit the redundant description on 720p windows so the progress card matches Tauri geometry.
             if !root.show-err && root.height > 800px: Text { x: 0px; y: 36px; width: Math.min(520px, parent.width - 260px); height: 32px;
                 text: root.data.description; color: Tokens.secondary-foreground; font-size: 12px; wrap: word-wrap; }
-            err-block := Rectangle { x: 0px; y: 34px; width: parent.width - 260px; visible: root.show-err;
-                height: (root.data.error-raw != "" ? 18px : 0px) + (root.show-raw ? err-raw.preferred-height + 6px : 0px);
-                if root.data.error-raw != "": ActionArea { x: 0px; y: 0px; width: err-toggle.preferred-width + 11px; height: 16px; label: "Подробности";
+            err-block := VerticalLayout { x: 0px; y: 34px; width: parent.width - 260px; height: self.preferred-height;
+                visible: root.show-err; spacing: 4px; alignment: start;
+                if root.height > 800px: Text { text: root.data.error; color: #c98b8b; font-size: 12px; wrap: word-wrap; width: parent.width; }
+                if root.data.error-raw != "": ActionArea { width: err-toggle.preferred-width + 11px; height: 16px; label: "Подробности";
                     clicked => { root.error-details = !root.error-details; }
                     Path { x: 0px; y: 5px; width: 5px; height: 5px; viewbox-width: 7; viewbox-height: 7; fill: Tokens.muted-foreground; commands: root.error-details ? "M 0 0 L 7 0 L 3.5 7 Z" : "M 0 0 L 7 3.5 L 0 7 Z"; }
                     err-toggle := SmallLabel { x: 11px; y: 0px; height: parent.height; text: "Подробности"; letter-spacing: 1px; }
                 }
-                err-raw := Text { x: 0px; y: 20px; width: parent.width; text: root.data.error-raw; visible: root.show-raw;
+                if root.show-raw: Text { text: root.data.error-raw; width: parent.width;
                     font-family: Tokens.mono; font-size: 10px; color: Tokens.muted-foreground; wrap: word-wrap; }
             }
             mirror := Rectangle { x: parent.width - 240px; y: 0px; width: 240px; height: 82px; background: Tokens.chrome;

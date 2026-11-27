@@ -32,6 +32,7 @@ fn update_flow_parity_suite() {
     test_f11_main_screen_errors_use_friendly_error();
     test_f19_fatal_init_error_dedicated_screen_with_retry();
     test_f22_file_progress_hint_banner();
+    test_r13_error_summary_visible_above_800px();
     test_f26_launcher_panel_labels_and_version();
     test_f28_progress_precision_and_cancel_label();
 }
@@ -65,6 +66,8 @@ fn test_f04_bridge_updates_update_screen() {
         "F04: game_sub matches Tauri"
     );
 
+    let _active = update::enter_active_run();
+
     bridge::apply(
         &app,
         LauncherAppState::status_event("modpack", "Синхронизация модов", true),
@@ -90,6 +93,14 @@ fn test_f04_bridge_updates_update_screen() {
     assert_eq!(
         data.mirror_name, "Gcore CDN",
         "F04: DownloadMirror updates mirror_name"
+    );
+    assert_eq!(
+        data.mirror_speed, "12.4 MB/s",
+        "Review #10: DownloadMirror preserves fallback mirror_speed"
+    );
+    assert_eq!(
+        data.speed, "—",
+        "Review #10: DownloadMirror resets live throughput speed"
     );
 
     let mut progress = DownloadProgressPayload::files("mods/blockfield.jar".into(), 1, 4);
@@ -394,6 +405,24 @@ fn test_f22_file_progress_hint_banner() {
             "Крупные файлы скачиваются дольше. Текущий файл, объём и зеркало показаны ниже."
         ),
         "F22: files-mode downloading renders fileProgressHint banner"
+    );
+}
+
+fn test_r13_error_summary_visible_above_800px() {
+    let app = AppWindow::new().unwrap();
+    wire_app(&app, backend::Backend::Fixtures).unwrap();
+    fixtures::apply_update(&app, "error").unwrap();
+    let msg = "Не удалось загрузить обновление";
+    app.show().unwrap();
+    app.window()
+        .set_size(slint::LogicalSize::new(1280.0, 720.0));
+    let at_720 = ElementHandle::find_by_accessible_label(&app, msg).count();
+    app.window()
+        .set_size(slint::LogicalSize::new(1280.0, 960.0));
+    let at_960 = ElementHandle::find_by_accessible_label(&app, msg).count();
+    assert!(
+        at_960 > at_720,
+        "Review #13: UpdateScreen error summary text renders above 800px height (720p={at_720}, 960p={at_960})"
     );
 }
 

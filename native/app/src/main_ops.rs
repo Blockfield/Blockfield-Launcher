@@ -144,21 +144,24 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
                     let mut data = app.get_main_data();
                     data.checking = false;
                     data.launching = false;
-                    let mut route_updates = false;
+                    let mut route_updates: Option<bool> = None;
                     match result {
                         Ok(RunOutcome::Verified(version)) => {
                             crate::update::apply_version_patch(&app, &version);
                             apply_version(&mut data, version);
                         }
                         Ok(RunOutcome::Launched) => {}
-                        Ok(RunOutcome::RouteToUpdates(version)) => {
+                        Ok(RunOutcome::RouteToUpdates {
+                            version,
+                            auto_launch,
+                        }) => {
                             if let Some(version) = version {
                                 crate::update::apply_version_patch(&app, &version);
                                 apply_version(&mut data, version);
                             }
                             data.launch_status = "".into();
                             data.progress = -1;
-                            route_updates = true;
+                            route_updates = Some(auto_launch);
                         }
                         Err(error) if matches!(action, Action::Verify) => {
                             data.check_error = error.into()
@@ -169,8 +172,8 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
                         }
                     }
                     app.set_main_data(data);
-                    if route_updates {
-                        app.invoke_open_updates(true);
+                    if let Some(auto_launch) = route_updates {
+                        app.invoke_open_updates(auto_launch);
                         return;
                     }
                     // Pack check done / launch idle: a still-waiting invite
@@ -233,7 +236,10 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
 enum RunOutcome {
     Verified(VersionCheckResult),
     Launched,
-    RouteToUpdates(Option<VersionCheckResult>),
+    RouteToUpdates {
+        version: Option<VersionCheckResult>,
+        auto_launch: bool,
+    },
 }
 
 /// Tauri `MainScreen.tsx` launch recovery: `PACK_STALE` / `PACK_REPAIR` from
@@ -251,15 +257,26 @@ async fn run(
     if matches!(action, Action::Verify) {
         return check(state, true).await.map(RunOutcome::Verified);
     }
+    // `Action::Download` and `Action::Deploy` with `needs_setup == true`
+    // (ОБНОВИТЬ / ПОДГОТОВИТЬ) pre-route above via `join_continues`. Only a
+    // Play-intent `Deploy` (`!needs_setup`, i.e. button showed ИГРАТЬ) reaches
+    // here, matching Tauri `MainScreen.tsx:160,174` (`onPlay()` -> `goUpdate(true)`).
+    let auto_launch = matches!(action, Action::Deploy);
     if matches!(action, Action::Deploy) && state.config.read().await.auto_update {
         let version = check(state, true).await?;
         if version.needs_update || !version.java_ok || !version.loader_ok {
-            return Ok(RunOutcome::RouteToUpdates(Some(version)));
+            return Ok(RunOutcome::RouteToUpdates {
+                version: Some(version),
+                auto_launch,
+            });
         }
     }
     match launch(state, pending, weak).await {
         Ok(()) => Ok(RunOutcome::Launched),
-        Err(error) if is_pack_recovery_error(&error) => Ok(RunOutcome::RouteToUpdates(None)),
+        Err(error) if is_pack_recovery_error(&error) => Ok(RunOutcome::RouteToUpdates {
+            version: None,
+            auto_launch,
+        }),
         Err(error) => Err(error),
     }
 }

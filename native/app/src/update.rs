@@ -44,7 +44,58 @@ fn speed_sample() -> &'static Mutex<Option<SpeedSample>> {
 }
 
 fn reset_speed_sample() {
-    *speed_sample().lock().unwrap() = None;
+    *speed_sample().lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Process-level flag indicating `UpdateScreen` owns the active sync or launch
+/// (`UpdateScreen.tsx` only subscribes to `Status`/`DownloadProgress`/`DownloadMirror`
+/// while its own `run()` or `handleLaunch()` is active).
+fn active_run() -> &'static AtomicBool {
+    static ACTIVE: AtomicBool = AtomicBool::new(false);
+    &ACTIVE
+}
+
+/// RAII guard marking `UpdateScreen` as the active event consumer.
+pub struct ActiveRunGuard(());
+
+impl Drop for ActiveRunGuard {
+    fn drop(&mut self) {
+        active_run().store(false, Ordering::SeqCst);
+    }
+}
+
+/// Enter an active `UpdateScreen` sync/launch run until the returned guard drops.
+pub fn enter_active_run() -> ActiveRunGuard {
+    active_run().store(true, Ordering::SeqCst);
+    ActiveRunGuard(())
+}
+
+/// Mirrors Tauri `updatesVisited` (`App.tsx:87,121`), reset on profile switch,
+/// settings save, or a background probe detecting a newer remote pack.
+fn visited_flag() -> &'static AtomicBool {
+    static VISITED: AtomicBool = AtomicBool::new(false);
+    &VISITED
+}
+
+/// Last remote pack version synced by `UpdateScreen` (`UpdateScreen.tsx:136`).
+fn synced_remote_version() -> &'static Mutex<Option<String>> {
+    static REMOTE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    REMOTE.get_or_init(|| Mutex::new(None))
+}
+
+#[derive(Default)]
+struct MirrorState {
+    manifest_mirror: String,
+    installer_mirror: Option<(String, Option<String>)>,
+}
+
+fn mirror_state() -> &'static Mutex<MirrorState> {
+    static MIRROR: OnceLock<Mutex<MirrorState>> = OnceLock::new();
+    MIRROR.get_or_init(|| Mutex::new(MirrorState::default()))
+}
+
+fn reset_mirror_state() {
+    *mirror_state().lock().unwrap_or_else(|e| e.into_inner()) = MirrorState::default();
 }
 
 /// Tauri `ErrorDetail` parity: the panel shows the friendly message, the raw
@@ -175,12 +226,28 @@ pub(crate) fn apply_game_status(app: &AppWindow, status: &GameStatus) {
 
 /// Forward `LauncherEvent::Status` into `UpdateData` (`UpdateScreen.tsx:applyBackendStatus` parity).
 pub(crate) fn apply_status(app: &AppWindow, status: &LauncherStatusPayload) {
+    if !active_run().load(Ordering::Acquire) {
+        return;
+    }
     let mut data = app.get_update_data();
     data.status_message = status.message.clone().into();
     data.can_cancel = status.cancelable;
     let tone = if status.phase == "ready" { 0 } else { 1 };
     let ts = stamp();
     append_log(&mut data, &ts, &status.message, tone);
+    // The panel names the pack's download source only while packwiz-installer runs
+    // (`UpdateScreen.tsx:205`).
+    if status.phase != "modpack" {
+        let manifest = {
+            let mut state = mirror_state().lock().unwrap_or_else(|e| e.into_inner());
+            state.installer_mirror = None;
+            state.manifest_mirror.clone()
+        };
+        if !manifest.is_empty() {
+            data.mirror_name = manifest.into();
+        }
+        data.mirror_speed = "".into();
+    }
     match status.phase {
         "setup" | "java" | "loader" | "prune" | "modpack" => {
             data.phase = "downloading".into();
@@ -209,22 +276,41 @@ pub(crate) fn apply_status(app: &AppWindow, status: &LauncherStatusPayload) {
 
 /// Forward `LauncherEvent::DownloadMirror` into `UpdateData` (`UpdateScreen.tsx:applyMirror` parity).
 pub(crate) fn apply_mirror(app: &AppWindow, mirror: &DownloadMirrorPayload) {
+    if !active_run().load(Ordering::Acquire) {
+        return;
+    }
     reset_speed_sample();
+    let speed_label = mirror
+        .speed
+        .as_deref()
+        .map(str::trim)
+        .filter(|speed| !speed.is_empty())
+        .map(|speed| format!("{speed} MB/s"));
+    let display_name = {
+        let mut state = mirror_state().lock().unwrap_or_else(|e| e.into_inner());
+        state.installer_mirror = Some((mirror.name.clone(), speed_label.clone()));
+        if !mirror.name.is_empty() {
+            mirror.name.clone()
+        } else {
+            state.manifest_mirror.clone()
+        }
+    };
     let mut data = app.get_update_data();
-    if !mirror.name.is_empty() {
-        data.mirror_name = mirror.name.clone().into();
+    if !display_name.is_empty() {
+        data.mirror_name = display_name.into();
     }
     data.mirror_status = "ОНЛАЙН".into();
+    data.mirror_speed = speed_label.unwrap_or_default().into();
     data.mirror_bad = false;
-    data.speed = match mirror.speed.as_deref().map(str::trim) {
-        Some(speed) if !speed.is_empty() => format!("{speed} MB/s").into(),
-        _ => "—".into(),
-    };
+    data.speed = "—".into();
     app.set_update_data(data);
 }
 
 /// Forward `LauncherEvent::DownloadProgress` into `UpdateData` (`UpdateScreen.tsx:applyProgress` parity).
 pub(crate) fn apply_progress(app: &AppWindow, progress: &DownloadProgressPayload) {
+    if !active_run().load(Ordering::Acquire) {
+        return;
+    }
     let mut data = app.get_update_data();
     data.progress_unit = match progress.unit {
         ProgressUnit::Bytes => "bytes",
@@ -266,7 +352,7 @@ pub(crate) fn apply_progress(app: &AppWindow, progress: &DownloadProgressPayload
     let now = Instant::now();
     let finished =
         progress.total_bytes_all > 0 && progress.total_bytes_downloaded >= progress.total_bytes_all;
-    let mut sample = speed_sample().lock().unwrap();
+    let mut sample = speed_sample().lock().unwrap_or_else(|e| e.into_inner());
     match sample.as_ref() {
         None => {
             *sample = Some(SpeedSample {
@@ -304,14 +390,57 @@ pub(crate) fn apply_progress(app: &AppWindow, progress: &DownloadProgressPayload
     app.set_update_data(data);
 }
 
-/// Sync the shared remote patch version from MainScreen's check into UpdateScreen.
-pub(crate) fn apply_version_patch(app: &AppWindow, version: &VersionCheckResult) {
-    if version.remote_version.is_empty() {
+/// Reset `UpdateScreen`'s first-visit state and stale patch after a profile
+/// switch or Settings save (`App.tsx:121` `setUpdatesVisited(false)` parity).
+pub(crate) fn invalidate_sync(app: &AppWindow) {
+    if active_run().load(Ordering::Acquire) {
         return;
     }
+    visited_flag().store(false, Ordering::SeqCst);
+    *synced_remote_version()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = None;
+    reset_mirror_state();
     let mut data = app.get_update_data();
-    data.patch = format!("/ ПАТЧ {}", version.remote_version).into();
+    data.patch = "/ ПАТЧ ...".into();
     app.set_update_data(data);
+}
+
+/// Sync the shared remote patch version from MainScreen/probe checks into
+/// `UpdateScreen`, resyncing an idle `UpdateScreen` (or resetting `visited`
+/// off-tab) when the remote version changes or an update is needed
+/// (`UpdateScreen.tsx:430-440` parity).
+pub(crate) fn apply_version_patch(app: &AppWindow, version: &VersionCheckResult) {
+    if !version.remote_version.is_empty() {
+        let mut data = app.get_update_data();
+        data.patch = format!("/ ПАТЧ {}", version.remote_version).into();
+        app.set_update_data(data);
+    }
+    if !visited_flag().load(Ordering::Acquire) || active_run().load(Ordering::Acquire) {
+        return;
+    }
+    let remote_changed = {
+        let prev = synced_remote_version()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        prev.as_deref()
+            .is_some_and(|r| !version.remote_version.is_empty() && r != version.remote_version)
+    };
+    let stale = version.needs_update || !version.java_ok || !version.loader_ok || remote_changed;
+    if !stale {
+        return;
+    }
+    let idle = app.get_main_data().phase == "idle" && !app.get_update_data().launching;
+    if app.get_active() == 1 && idle {
+        if !version.remote_version.is_empty() {
+            *synced_remote_version()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(version.remote_version.clone());
+        }
+        app.invoke_update_retry();
+    } else {
+        visited_flag().store(false, Ordering::SeqCst);
+    }
 }
 
 /// Fixture state machine: each callback moves to the next deterministic
@@ -432,8 +561,12 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
     let busy = Arc::new(AtomicBool::new(false));
     // Mirrors the Tauri `cancelledRef`: labels a failed download as a cancel.
     let cancel_requested = Arc::new(AtomicBool::new(false));
-    // Mirrors Tauri `updatesVisited` + `startedRef`: first visit auto-checks.
-    let visited = Arc::new(AtomicBool::new(false));
+    // Fresh session resets first-visit and synced-version state.
+    visited_flag().store(false, Ordering::SeqCst);
+    *synced_remote_version()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = None;
+    reset_mirror_state();
     // Mirrors Tauri `autoLaunchRequest`: Play-triggered routing launches once sync finishes.
     let auto_launch = Arc::new(AtomicBool::new(false));
     // Launcher self-update staging (check result + in-flight guard), shared by
@@ -459,15 +592,14 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
             if state.game.is_busy() || busy.swap(true, Ordering::SeqCst) {
                 return;
             }
+            let guard = ClearBusy::new(busy.clone());
             cancel_requested.store(false, Ordering::SeqCst);
             reset_for_run(app);
             let weak = app.as_weak();
             let state = state.clone();
-            let busy = busy.clone();
             let cancel_requested = cancel_requested.clone();
             let auto_launch = auto_launch.clone();
             handle.spawn(async move {
-                let _guard = ClearBusy(busy.clone());
                 let started = weak.clone();
                 let outcome = run_retry(&state, &cancel_requested, |version| {
                     let version = version.clone();
@@ -476,18 +608,20 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
                     });
                 })
                 .await;
-                let should_launch = matches!(
-                    outcome,
-                    RetryOutcome::UpToDate(_) | RetryOutcome::Complete(_)
-                ) && auto_launch.swap(false, Ordering::SeqCst);
-                if !should_launch {
-                    auto_launch.store(false, Ordering::SeqCst);
-                }
-                let game_busy = state.game.is_busy();
-                drop(_guard);
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     apply_retry_outcome(&app, outcome);
-                    if should_launch && !game_busy {
+                    let play_triggered = auto_launch.swap(false, Ordering::SeqCst);
+                    let data = app.get_update_data();
+                    let should_launch = launch::should_auto_launch_after_sync(
+                        &data.phase,
+                        play_triggered,
+                        data.launching,
+                        state.game.is_busy(),
+                    );
+                    // Hold `busy` and `active_run` until the UI thread finishes applying
+                    // the outcome so no concurrent Retry/open_updates can interleave.
+                    drop(guard);
+                    if should_launch {
                         app.invoke_update_launch();
                     }
                 });
@@ -496,38 +630,36 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
     };
     {
         let weak = app.as_weak();
-        let visited = visited.clone();
         let auto_launch = auto_launch.clone();
         let spawn_sync = spawn_sync.clone();
         app.on_update_retry(move || {
             let Some(app) = weak.upgrade() else { return };
-            visited.store(true, Ordering::SeqCst);
+            visited_flag().store(true, Ordering::SeqCst);
             auto_launch.store(false, Ordering::SeqCst);
             spawn_sync(&app);
         });
     }
     {
         let weak = app.as_weak();
-        let visited = visited.clone();
         let spawn_sync = spawn_sync.clone();
         app.on_update_shown(move || {
             let Some(app) = weak.upgrade() else { return };
-            if !visited.swap(true, Ordering::SeqCst) {
+            if !visited_flag().swap(true, Ordering::SeqCst) {
                 spawn_sync(&app);
             }
         });
     }
     {
         let weak = app.as_weak();
-        let visited = visited.clone();
         let auto_launch = auto_launch.clone();
         let spawn_sync = spawn_sync.clone();
         app.on_open_updates(move |wants_auto_launch| {
             let Some(app) = weak.upgrade() else { return };
-            visited.store(true, Ordering::SeqCst);
-            if wants_auto_launch {
-                auto_launch.store(true, Ordering::SeqCst);
+            if app.get_main_data().profile_blocked {
+                return;
             }
+            visited_flag().store(true, Ordering::SeqCst);
+            auto_launch.store(wants_auto_launch, Ordering::SeqCst);
             app.invoke_navigate(1);
             spawn_sync(&app);
         });
@@ -571,6 +703,7 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
             if state.game.is_busy() || busy.swap(true, Ordering::SeqCst) {
                 return;
             }
+            let guard = ClearBusy::new(busy.clone());
             let mut data = app.get_update_data();
             data.launching = true;
             data.phase = "launching".into();
@@ -581,9 +714,7 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
             let state = state.clone();
             let hide = weak.clone();
             let restore = weak.clone();
-            let busy = busy.clone();
             handle.spawn(async move {
-                let _guard = ClearBusy(busy.clone());
                 let pending = crate::main_ops::shared_pending();
                 let result = launch::launch_game(
                     &state,
@@ -604,7 +735,6 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
                     },
                 )
                 .await;
-                drop(_guard);
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     let mut data = app.get_update_data();
                     data.launching = false;
@@ -629,6 +759,7 @@ pub fn attach_core(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle
                         }
                     }
                     app.set_update_data(data);
+                    drop(guard);
                     if resync {
                         app.invoke_update_retry();
                     }
@@ -931,6 +1062,7 @@ fn fmt_launcher_bytes(bytes: u64) -> String {
 /// Tauri `handleRetry` reset: checking with a fresh first step.
 fn reset_for_run(app: &AppWindow) {
     reset_speed_sample();
+    reset_mirror_state();
     let mut data = app.get_update_data();
     data.phase = "checking".into();
     data.status_message = "".into();
@@ -946,6 +1078,7 @@ fn reset_for_run(app: &AppWindow) {
     data.speed = "—".into();
     data.mirror_name = "—".into();
     data.mirror_status = "".into();
+    data.mirror_speed = "".into();
     data.mirror_bad = false;
     data.error = "".into();
     data.error_raw = "".into();
@@ -994,17 +1127,15 @@ async fn run_retry(
     on_download_start(&version);
     match install::download_modpack(state).await {
         Ok(()) => RetryOutcome::Complete(version),
-        Err(error) => RetryOutcome::DownloadFailed(if cancel_requested.load(Ordering::SeqCst) {
-            "Загрузка отменена".into()
-        } else {
-            error
-        }),
+        Err(_) if cancel_requested.load(Ordering::SeqCst) => RetryOutcome::Cancelled,
+        Err(error) => RetryOutcome::DownloadFailed(error),
     }
 }
 
 enum RetryOutcome {
     UpToDate(VersionCheckResult),
     Complete(VersionCheckResult),
+    Cancelled,
     CheckFailed(String),
     DownloadFailed(String),
 }
@@ -1013,14 +1144,21 @@ enum RetryOutcome {
 /// screen enters `downloading` before the backend install tasks run — that
 /// transition is what arms cancel.
 fn mark_download_started(app: &AppWindow, version: &VersionCheckResult) {
+    let host = host_of(&version.mirror).to_owned();
+    {
+        let mut state = mirror_state().lock().unwrap_or_else(|e| e.into_inner());
+        state.manifest_mirror = host.clone();
+        state.installer_mirror = None;
+    }
     let mut data = app.get_update_data();
     data.phase = "downloading".into();
     data.can_cancel = true;
     if !version.remote_version.is_empty() {
         data.patch = format!("/ ПАТЧ {}", version.remote_version).into();
     }
-    data.mirror_name = host_of(&version.mirror).into();
+    data.mirror_name = host.into();
     data.mirror_status = "ОНЛАЙН".into();
+    data.mirror_speed = "".into();
     data.mirror_bad = false;
     data.file_count = version.file_count.min(i32::MAX as usize) as i32;
     data.downloaded = "0 B".into();
@@ -1066,13 +1204,26 @@ fn try_begin_cancel(data: &mut crate::UpdateData) -> bool {
     true
 }
 
-/// Clears `busy` when a spawned run ends, even on panic or a dead window —
-/// without it one wedged task blocks every later retry/launch/cancel.
-struct ClearBusy(Arc<AtomicBool>);
+/// Clears `busy` and `active_run` when a spawned run ends on the UI thread,
+/// even on panic or a dead window — without it one wedged task blocks every
+/// later retry/launch/cancel.
+struct ClearBusy {
+    busy: Arc<AtomicBool>,
+    _active: ActiveRunGuard,
+}
+
+impl ClearBusy {
+    fn new(busy: Arc<AtomicBool>) -> Self {
+        Self {
+            busy,
+            _active: enter_active_run(),
+        }
+    }
+}
 
 impl Drop for ClearBusy {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        self.busy.store(false, Ordering::SeqCst);
     }
 }
 
@@ -1081,10 +1232,28 @@ fn apply_retry_outcome(app: &AppWindow, outcome: RetryOutcome) {
     let mut data = app.get_update_data();
     data.can_cancel = false;
     data.speed = "—".into();
+    data.mirror_speed = "".into();
+    {
+        mirror_state()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .installer_mirror = None;
+    }
     let ts = stamp();
     let mut synced_version: Option<VersionCheckResult> = None;
     match outcome {
         RetryOutcome::UpToDate(version) => {
+            let host = host_of(&version.mirror).to_owned();
+            mirror_state()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .manifest_mirror = host.clone();
+            visited_flag().store(true, Ordering::SeqCst);
+            if !version.remote_version.is_empty() {
+                *synced_remote_version()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(version.remote_version.clone());
+            }
             data.phase = "uptodate".into();
             data.status_message = "".into();
             data.progress_unit = "bytes".into();
@@ -1092,7 +1261,7 @@ fn apply_retry_outcome(app: &AppWindow, outcome: RetryOutcome) {
             if !version.remote_version.is_empty() {
                 data.patch = format!("/ ПАТЧ {}", version.remote_version).into();
             }
-            data.mirror_name = host_of(&version.mirror).into();
+            data.mirror_name = host.into();
             data.mirror_status = "ОНЛАЙН".into();
             data.mirror_bad = false;
             data.file_count = version.file_count.min(i32::MAX as usize) as i32;
@@ -1120,6 +1289,17 @@ fn apply_retry_outcome(app: &AppWindow, outcome: RetryOutcome) {
             synced_version = Some(version);
         }
         RetryOutcome::Complete(mut version) => {
+            let host = host_of(&version.mirror).to_owned();
+            mirror_state()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .manifest_mirror = host.clone();
+            visited_flag().store(true, Ordering::SeqCst);
+            if !version.remote_version.is_empty() {
+                *synced_remote_version()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(version.remote_version.clone());
+            }
             let done = format!("Modpack {} installed successfully.", version.remote_version);
             data.phase = "complete".into();
             data.status_message = "".into();
@@ -1128,9 +1308,14 @@ fn apply_retry_outcome(app: &AppWindow, outcome: RetryOutcome) {
             if !version.remote_version.is_empty() {
                 data.patch = format!("/ ПАТЧ {}", version.remote_version).into();
             }
-            data.mirror_name = host_of(&version.mirror).into();
+            data.mirror_name = host.into();
             data.mirror_status = "ОНЛАЙН".into();
             data.mirror_bad = false;
+            if version.total_size > 0 && (data.total.is_empty() || data.total == "0 B") {
+                let formatted = format_bytes(version.total_size);
+                data.downloaded = formatted.clone().into();
+                data.total = formatted.into();
+            }
             data.remaining = if version.total_size > 0 {
                 format!("{} files", version.file_count).into()
             } else {
@@ -1153,6 +1338,15 @@ fn apply_retry_outcome(app: &AppWindow, outcome: RetryOutcome) {
             version.java_ok = true;
             version.loader_ok = true;
             synced_version = Some(version);
+        }
+        RetryOutcome::Cancelled => {
+            data.phase = "error".into();
+            data.status_message = "".into();
+            data.error = "Загрузка отменена".into();
+            data.error_raw = "".into();
+            data.step0 = 2;
+            data.step1 = 1;
+            append_log(&mut data, &ts, "Download cancelled by operator.", 2);
         }
         RetryOutcome::CheckFailed(error) => {
             let line = format!("ERROR: Failed to fetch manifest — {error}");
@@ -2431,7 +2625,9 @@ pub fn default_data() -> crate::UpdateData {
         progress_unit: "bytes".into(),
         operation: "BLOCKFIELD".into(),
         patch: "/ ПАТЧ ...".into(),
-        description: "Синхронизация модпака, проверка файлов и запуск игры.".into(),
+        description:
+            "Лаунчер скачает обновления и проверит файлы игры. Дождитесь завершения перед запуском."
+                .into(),
         downloaded: "0 B".into(),
         total: "0 B".into(),
         remaining: "—".into(),
@@ -2502,12 +2698,12 @@ mod tests {
         assert_eq!(data.step0, 1);
         super::apply_retry_outcome(
             &app,
-            super::RetryOutcome::DownloadFailed("Загрузка отменена".into()),
+            super::RetryOutcome::DownloadFailed("connection reset".into()),
         );
         let data = app.get_update_data();
         assert_eq!(data.phase, "error");
         assert_eq!(data.error, "Не удалось скачать обновление модпака.");
-        assert_eq!(data.error_raw, "Загрузка отменена");
+        assert_eq!(data.error_raw, "connection reset");
         assert_eq!((data.step0, data.step1), (2, 1));
         assert_eq!(
             super::host_of("https://mirror.blockfield.pro/pack"),
@@ -2568,9 +2764,14 @@ mod tests {
     }
     #[test]
     fn busy_guard_clears_on_drop() {
+        let _serial = crate::main_ops::test_serial();
         let busy = Arc::new(AtomicBool::new(true));
-        drop(super::ClearBusy(busy.clone()));
+        let guard = super::ClearBusy::new(busy.clone());
+        assert!(busy.load(Ordering::SeqCst));
+        assert!(super::active_run().load(Ordering::SeqCst));
+        drop(guard);
         assert!(!busy.load(Ordering::SeqCst));
+        assert!(!super::active_run().load(Ordering::SeqCst));
     }
 
     #[test]
@@ -2632,10 +2833,7 @@ mod tests {
         i_slint_backend_testing::init_no_event_loop();
         let app = crate::AppWindow::new().unwrap();
         crate::fixtures::apply(&app);
-        super::apply_retry_outcome(
-            &app,
-            super::RetryOutcome::DownloadFailed("Загрузка отменена".into()),
-        );
+        super::apply_retry_outcome(&app, super::RetryOutcome::Cancelled);
         let data = app.get_update_data();
         assert_eq!(data.phase, "error");
         assert_eq!(data.error, "Загрузка отменена");
@@ -2655,6 +2853,7 @@ mod tests {
         i_slint_backend_testing::init_no_event_loop();
         let app = crate::AppWindow::new().unwrap();
         crate::fixtures::apply(&app);
+        let _active = super::enter_active_run();
         let version = VersionCheckResult {
             needs_update: true,
             remote_version: "2.75".into(),
@@ -2674,18 +2873,57 @@ mod tests {
                 speed: Some("4.1".into()),
             },
         );
-        assert_eq!(app.get_update_data().mirror_name, "Gcore CDN");
+        let data = app.get_update_data();
+        assert_eq!(data.mirror_name, "Gcore CDN");
+        assert_eq!(data.mirror_speed, "4.1 MB/s");
+        assert_eq!(data.speed, "—");
+
+        // Files-mode progress and zero-speed bytes packet keep mirror_speed intact.
+        super::apply_progress(
+            &app,
+            &DownloadProgressPayload::files("mods/a.jar".into(), 1, 10),
+        );
+        let data = app.get_update_data();
+        assert_eq!(data.speed, "—");
+        assert_eq!(data.mirror_speed, "4.1 MB/s");
+
+        let mut bytes_zero = DownloadProgressPayload::files("mods/a.jar".into(), 1, 10);
+        bytes_zero.unit = ProgressUnit::Bytes;
+        bytes_zero.total_bytes_downloaded = 512;
+        bytes_zero.total_bytes_all = 4096;
+        bytes_zero.speed_bytes_per_sec = 0;
+        super::apply_progress(&app, &bytes_zero);
+        let data = app.get_update_data();
+        assert_eq!(data.speed, "—");
+        assert_eq!(data.mirror_speed, "4.1 MB/s");
+
         let runtime = LauncherStatusPayload {
             phase: "runtime",
             message: "Подготовка Minecraft".into(),
             cancelable: false,
         };
         super::apply_status(&app, &runtime);
+        let data = app.get_update_data();
         assert_eq!(
-            app.get_update_data().mirror_name,
-            "mirror.blockfield.pro",
+            data.mirror_name, "mirror.blockfield.pro",
             "non-modpack status must revert mirror_name to manifest host"
         );
+        assert_eq!(data.mirror_speed, "");
+    }
+
+    #[test]
+    fn clash_c4_invalidate_sync_resets_visited_and_clears_patch() {
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        crate::fixtures::apply(&app);
+        super::visited_flag().store(true, Ordering::SeqCst);
+        let mut data = app.get_update_data();
+        data.patch = "/ ПАТЧ 2.75".into();
+        app.set_update_data(data);
+        super::invalidate_sync(&app);
+        assert!(!super::visited_flag().load(Ordering::SeqCst));
+        assert_eq!(app.get_update_data().patch, "/ ПАТЧ ...");
     }
 
     #[test]

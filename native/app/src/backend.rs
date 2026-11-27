@@ -576,6 +576,7 @@ pub fn select_profile(
                 app.set_rooms(ModelRc::default());
                 app.set_room_names(ModelRc::default());
                 app.set_main_data(data);
+                crate::update::invalidate_sync(&app);
 
                 sync_footer_server_label(&app);
                 trigger_pack_check(&app, state.clone(), handle.clone(), false);
@@ -642,6 +643,7 @@ pub fn on_settings_saved(app: &AppWindow, state: Arc<LauncherAppState>, handle: 
     data.checked = false;
     data.check_error = "".into();
     app.set_main_data(data);
+    crate::update::invalidate_sync(app);
     trigger_pack_check(app, state.clone(), handle.clone(), false);
     trigger_server_refresh(app, state, handle);
 }
