@@ -2627,6 +2627,161 @@ mod tests {
         assert_eq!(super::footer_update_label(&data), "Перезапустить");
     }
     #[test]
+    fn review_r8_cancelled_download_shows_cancel_copy_and_dim_log() {
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        crate::fixtures::apply(&app);
+        super::apply_retry_outcome(
+            &app,
+            super::RetryOutcome::DownloadFailed("Загрузка отменена".into()),
+        );
+        let data = app.get_update_data();
+        assert_eq!(data.phase, "error");
+        assert_eq!(data.error, "Загрузка отменена");
+        assert_eq!(data.error_raw, "");
+        assert_eq!((data.step0, data.step1), (2, 1));
+        let last = data
+            .log
+            .row_data(data.log.row_count().saturating_sub(1))
+            .expect("cancel log line");
+        assert_eq!(last.msg, "Download cancelled by operator.");
+        assert_eq!(last.tone, 2);
+    }
+
+    #[test]
+    fn review_r10_mirror_reverts_to_manifest_host_on_runtime_status() {
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        crate::fixtures::apply(&app);
+        let version = VersionCheckResult {
+            needs_update: true,
+            remote_version: "2.75".into(),
+            installed_version: "2.74".into(),
+            mirror: "https://mirror.blockfield.pro/pack".into(),
+            file_count: 10,
+            total_size: 4096,
+            java: None,
+            java_ok: true,
+            loader_ok: true,
+        };
+        super::mark_download_started(&app, &version);
+        super::apply_mirror(
+            &app,
+            &DownloadMirrorPayload {
+                name: "Gcore CDN".into(),
+                speed: Some("4.1".into()),
+            },
+        );
+        assert_eq!(app.get_update_data().mirror_name, "Gcore CDN");
+        let runtime = LauncherStatusPayload {
+            phase: "runtime",
+            message: "Подготовка Minecraft".into(),
+            cancelable: false,
+        };
+        super::apply_status(&app, &runtime);
+        assert_eq!(
+            app.get_update_data().mirror_name,
+            "mirror.blockfield.pro",
+            "non-modpack status must revert mirror_name to manifest host"
+        );
+    }
+
+    #[test]
+    fn review_r12_complete_after_files_mode_restores_total_size() {
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        crate::fixtures::apply(&app);
+        let mut data = app.get_update_data();
+        data.progress_unit = "files".into();
+        data.downloaded = "0 B".into();
+        data.total = "0 B".into();
+        app.set_update_data(data);
+        let version = VersionCheckResult {
+            needs_update: true,
+            remote_version: "2.75".into(),
+            installed_version: "2.74".into(),
+            mirror: "https://mirror.blockfield.pro/pack".into(),
+            file_count: 4,
+            total_size: 2048,
+            java: None,
+            java_ok: true,
+            loader_ok: true,
+        };
+        super::apply_retry_outcome(&app, super::RetryOutcome::Complete(version));
+        let data = app.get_update_data();
+        assert_eq!(data.progress_unit, "bytes");
+        assert_eq!(data.downloaded, "2 KB");
+        assert_eq!(data.total, "2 KB");
+    }
+
+    #[test]
+    fn clash_c5_probe_with_newer_remote_resyncs_idle_update_screen() {
+        use std::{cell::Cell, rc::Rc};
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        crate::fixtures::apply(&app);
+        let rt = crate::runtime::new().unwrap();
+        let temp_dir = std::env::temp_dir().join(format!("bf-c5-probe-{}", std::process::id()));
+        let downloader = Arc::new(launcher_net::download::Downloader::new(
+            Arc::new(|_| {}),
+            Arc::new(|_, _| {}),
+            launcher_net::download::noop_guard_sink(),
+        ));
+        let state = Arc::new(LauncherAppState {
+            cancel_flag: downloader.cancel_flag.clone(),
+            downloader,
+            pack: tokio::sync::RwLock::new(None),
+            config: tokio::sync::RwLock::new(launcher_core::config::LauncherConfig::default()),
+            app_data_dir: temp_dir.clone(),
+            game: Arc::new(launcher_core::game::GameState::new(|_| {})),
+            operation: tokio::sync::Mutex::new(()),
+            events: Arc::new(|_| {}),
+        });
+        super::attach_core(&app, state, rt.handle().clone());
+        let v1 = VersionCheckResult {
+            needs_update: false,
+            remote_version: "2.75".into(),
+            installed_version: "2.75".into(),
+            mirror: "https://mirror.blockfield.pro/pack".into(),
+            file_count: 1,
+            total_size: 1024,
+            java: None,
+            java_ok: true,
+            loader_ok: true,
+        };
+        super::apply_retry_outcome(&app, super::RetryOutcome::UpToDate(v1));
+        app.set_active(1);
+        let mut main = app.get_main_data();
+        main.phase = "idle".into();
+        app.set_main_data(main);
+        let retried = Rc::new(Cell::new(false));
+        let retried_flag = retried.clone();
+        app.on_update_retry(move || retried_flag.set(true));
+        let v2 = VersionCheckResult {
+            needs_update: true,
+            remote_version: "2.76".into(),
+            installed_version: "2.75".into(),
+            mirror: "https://mirror.blockfield.pro/pack".into(),
+            file_count: 2,
+            total_size: 2048,
+            java: None,
+            java_ok: true,
+            loader_ok: true,
+        };
+        super::apply_version_patch(&app, &v2);
+        assert!(
+            retried.get(),
+            "Clash #5: newer remote_version on idle UpdateScreen must trigger resync"
+        );
+        rt.shutdown_timeout(std::time::Duration::from_secs(1));
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
     fn fixture_transitions_follow_the_tauri_flow() {
         i_slint_backend_testing::init_no_event_loop();
         let app = crate::AppWindow::new().unwrap();

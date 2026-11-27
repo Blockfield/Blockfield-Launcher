@@ -26,6 +26,8 @@ fn update_flow_parity_suite() {
 
     test_f04_bridge_updates_update_screen();
     test_f04_default_update_data_matches_tauri();
+    test_r7_idle_update_screen_ignores_main_launch_events();
+    test_r11_core_main_ops_routing_and_profile_block_guard();
     test_f08_footer_click_and_launcher_update_panel_sync();
     test_f11_main_screen_errors_use_friendly_error();
     test_f19_fatal_init_error_dedicated_screen_with_retry();
@@ -123,6 +125,154 @@ fn test_f04_default_update_data_matches_tauri() {
     assert_eq!(data.total, "0 B", "F04: initial total bytes");
     assert_eq!(data.remaining, "—", "F04: initial remaining placeholder");
     assert_eq!(data.speed, "—", "F04: initial speed placeholder");
+    assert_eq!(
+        data.description,
+        "Лаунчер скачает обновления и проверит файлы игры. Дождитесь завершения перед запуском.",
+        "Review #13: default_data().description matches Tauri i18n.tsx"
+    );
+}
+
+fn test_r7_idle_update_screen_ignores_main_launch_events() {
+    let app = AppWindow::new().unwrap();
+    wire_app(&app, backend::Backend::Fixtures).unwrap();
+    app.set_show_main(true);
+    app.set_active(0);
+    app.set_update_data(UpdateData {
+        phase: "uptodate".into(),
+        mirror_name: "mirror.blockfield.pro".into(),
+        step0: 2,
+        step1: 2,
+        step2: 2,
+        step3: 0,
+        game_phase: "idle".into(),
+        ..Default::default()
+    });
+
+    bridge::apply(
+        &app,
+        LauncherAppState::status_event("launch", "Запуск игры", false),
+    );
+    bridge::apply(
+        &app,
+        LauncherEvent::DownloadMirror(DownloadMirrorPayload {
+            name: "Gcore CDN".into(),
+            speed: Some("4.1".into()),
+        }),
+    );
+    bridge::apply(
+        &app,
+        LauncherEvent::DownloadProgress(DownloadProgressPayload::files(
+            "mods/blockfield.jar".into(),
+            1,
+            4,
+        )),
+    );
+    bridge::apply(
+        &app,
+        LauncherEvent::GameStatus(GameStatus {
+            phase: GamePhase::Launching,
+            revision: 1,
+        }),
+    );
+    assert_eq!(
+        app.get_update_data().game_phase,
+        "launching",
+        "Review #7: GameStatus stays active when UpdateScreen is idle"
+    );
+    bridge::apply(
+        &app,
+        LauncherEvent::GameStatus(GameStatus {
+            phase: GamePhase::Idle,
+            revision: 2,
+        }),
+    );
+    let data = app.get_update_data();
+    assert_eq!(
+        data.phase, "uptodate",
+        "Review #7: MainScreen launch Status must not wedge idle UpdateScreen in launching"
+    );
+    assert_eq!(data.step3, 0, "Review #7: idle UpdateScreen step3 stays 0");
+    assert_eq!(
+        data.mirror_name, "mirror.blockfield.pro",
+        "Review #7: idle UpdateScreen ignores unrelated DownloadMirror"
+    );
+    assert_eq!(data.game_phase, "idle");
+}
+
+fn test_r11_core_main_ops_routing_and_profile_block_guard() {
+    use std::{cell::RefCell, rc::Rc, sync::Arc};
+    let rt = blockfield_native::runtime::new().unwrap();
+    let temp_dir = std::env::temp_dir().join(format!("bf-d2-core-parity-{}", std::process::id()));
+    let downloader = Arc::new(launcher_net::download::Downloader::new(
+        Arc::new(|_| {}),
+        Arc::new(|_, _| {}),
+        launcher_net::download::noop_guard_sink(),
+    ));
+    let state = Arc::new(LauncherAppState {
+        cancel_flag: downloader.cancel_flag.clone(),
+        downloader,
+        pack: tokio::sync::RwLock::new(None),
+        config: tokio::sync::RwLock::new(launcher_core::config::LauncherConfig::default()),
+        app_data_dir: temp_dir.clone(),
+        game: Arc::new(launcher_core::game::GameState::new(|_| {})),
+        operation: tokio::sync::Mutex::new(()),
+        events: Arc::new(|_| {}),
+    });
+
+    let app = AppWindow::new().unwrap();
+    let routed = Rc::new(RefCell::new(Vec::<bool>::new()));
+    let routed_spy = routed.clone();
+    app.on_open_updates(move |auto_launch| routed_spy.borrow_mut().push(auto_launch));
+    blockfield_native::main_ops::attach(&app, state.clone(), rt.handle().clone());
+
+    let mut main = MainData {
+        phase: "idle".into(),
+        checked: true,
+        checking: false,
+        needs_setup: true,
+        ..Default::default()
+    };
+    app.set_main_data(main.clone());
+
+    let pending = blockfield_native::main_ops::shared_pending();
+    *pending.0.lock().unwrap() = None;
+    app.invoke_deploy();
+    assert_eq!(
+        *routed.borrow(),
+        vec![false],
+        "Review #11 / Revix: plain ОБНОВИТЬ routes with auto_launch = false"
+    );
+
+    *pending.0.lock().unwrap() = Some("room-1".into());
+    app.invoke_deploy();
+    assert_eq!(
+        *routed.borrow(),
+        vec![false, true],
+        "Review #11: invite-driven Deploy routes with auto_launch = true"
+    );
+
+    app.invoke_download_modpack();
+    assert_eq!(
+        *routed.borrow(),
+        vec![false, true, false],
+        "Review #11: explicit Download never arms auto_launch even with pending invite"
+    );
+    *pending.0.lock().unwrap() = None;
+
+    // Attach Core update handlers and verify profile_blocked guards open_updates.
+    update::attach_core(&app, state.clone(), rt.handle().clone());
+    app.set_active(0);
+    main.profile_blocked = true;
+    app.set_main_data(main);
+    app.invoke_open_updates(true);
+    assert_eq!(
+        app.get_active(),
+        0,
+        "Review #11: open_updates must ignore navigation while profile is blocked"
+    );
+
+    rt.shutdown_timeout(std::time::Duration::from_secs(1));
+    let _ = std::fs::remove_dir_all(temp_dir);
 }
 
 fn test_f08_footer_click_and_launcher_update_panel_sync() {
