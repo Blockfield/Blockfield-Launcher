@@ -226,6 +226,11 @@ fn f03_skin_tab_fetches_real_drasl_skin_and_sets_source_caption() {
                         // debounce like Tauri SettingsScreen); only the last
                         // name ("DraslHero") may fetch and set "ВАШ СКИН".
                         profiles_base.store(profiles.load(Ordering::SeqCst), Ordering::SeqCst);
+                        eprintln!(
+                            "F03TRACE snapshot base={} (profiles now {})",
+                            profiles_base.load(Ordering::SeqCst),
+                            profiles.load(Ordering::SeqCst)
+                        );
                         for name in ["Typist02", "Typist03", "Typist04", "Typist05", "DraslHero"] {
                             app.set_username(name.into());
                         }
@@ -240,7 +245,10 @@ fn f03_skin_tab_fetches_real_drasl_skin_and_sets_source_caption() {
                     assert_eq!(
                         profiles.load(Ordering::SeqCst) - profiles_base.load(Ordering::SeqCst),
                         1,
-                        "rapid username changes must coalesce into one profile lookup"
+                        "rapid username changes must coalesce into one profile lookup (profiles={}, base={}, hits={})",
+                        profiles.load(Ordering::SeqCst),
+                        profiles_base.load(Ordering::SeqCst),
+                        hits_check.load(Ordering::SeqCst)
                     );
                     slint::quit_event_loop().unwrap();
                 }
