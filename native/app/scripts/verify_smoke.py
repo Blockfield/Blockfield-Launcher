@@ -72,15 +72,19 @@ def main():
         if token in log:
             failures.append(f"crash token in app.log: {token}")
 
-    timing = (directory / "timing.txt").read_text(encoding="utf-8")
-    opened = int(
-        next(
-            l.split("=")[1]
-            for l in timing.splitlines()
-            if l.startswith("window_open_s=")
+    try:
+        timing = (directory / "timing.txt").read_text(encoding="utf-8")
+        opened = int(
+            next(
+                l.split("=")[1]
+                for l in timing.splitlines()
+                if l.startswith("window_open_s=")
+            )
         )
-    )
-    if opened > WINDOW_OPEN_BUDGET_S:
+    except (FileNotFoundError, StopIteration, ValueError):
+        failures.append("missing or invalid timing.txt")
+        opened = None
+    if opened is not None and opened > WINDOW_OPEN_BUDGET_S:
         failures.append(
             f"window opened in {opened}s, budget is {WINDOW_OPEN_BUDGET_S}s"
         )
