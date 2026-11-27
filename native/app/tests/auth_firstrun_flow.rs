@@ -4,7 +4,7 @@
 #![cfg(unix)]
 use std::{path::PathBuf, time::Duration};
 
-use blockfield_native::{AppWindow, SettingsForm, auth, runtime, settings_tabs};
+use blockfield_native::{AppWindow, SettingsForm, auth, backend::Backend, runtime, wire_app};
 use launcher_app::ops::java::java_exe_name;
 use launcher_core::config::LauncherConfig;
 use slint::ComponentHandle;
@@ -78,31 +78,50 @@ fn first_login_runs_firstrun_with_bundled_java_friendly_errors_and_clean_logout(
 
     i_slint_backend_testing::init_integration_test_with_system_time();
     let app = AppWindow::new().unwrap();
-    auth::attach(&app, state.clone(), runtime.handle().clone());
-    auth::enter_startup(&app, state.clone(), runtime.handle().clone(), logged_out);
-    assert!(app.get_show_login(), "fresh install starts on LoginScreen");
+    // Production wiring: Backend::start runs the real startup (settings load,
+    // account_status, enter_startup) instead of hand-wired auth callbacks.
+    let (_host, _activity) = wire_app(&app, Backend::Core(runtime.handle().clone())).unwrap();
+    assert!(
+        !app.get_show_main(),
+        "fresh install must not show MainScreen before auth"
+    );
 
-    // Simulate real Drasl login persisting username + token BEFORE on_auth_done.
-    let signed_in = runtime.block_on(async {
-        let mut cfg = state.config.write().await;
-        cfg.username = "NewPlayer".into();
-        cfg.access_token = "tok".into();
-        launcher_core::config::save_config(&state.app_data_dir, &cfg).unwrap();
-        launcher_net::account::AccountStatus::from(&*cfg)
-    });
-    auth::on_auth_done(&app, &state, runtime.handle(), Ok(signed_in));
-
-    let phase = std::rc::Rc::new(std::cell::Cell::new(0u8));
+    let phase = std::rc::Rc::new(std::cell::Cell::new(255u8));
+    let relogin_done = std::rc::Rc::new(std::cell::Cell::new(false));
     let poll = slint::Timer::default();
     poll.start(slint::TimerMode::Repeated, Duration::from_millis(10), {
         let weak = app.as_weak();
         let phase = phase.clone();
+        let relogin_done = relogin_done.clone();
         let state = state.clone();
         let handle = runtime.handle().clone();
         let bundled_java_str = bundled_java.to_string_lossy().into_owned();
         move || {
             let app = weak.upgrade().unwrap();
             match phase.get() {
+                // Startup (F09): production Backend::start lands on LoginScreen
+                // and arms firstrun_pending for the fresh install.
+                255 => {
+                    if !app.get_show_login() {
+                        return;
+                    }
+                    assert!(
+                        app.get_firstrun_pending(),
+                        "F09: fresh install must arm firstrun_pending at startup"
+                    );
+                    app.set_show_init_error(true);
+
+                    // Simulate real Drasl login persisting username + token BEFORE on_auth_done.
+                    let signed_in = {
+                        let mut cfg = state.config.blocking_write();
+                        cfg.username = "NewPlayer".into();
+                        cfg.access_token = "tok".into();
+                        launcher_core::config::save_config(&state.app_data_dir, &cfg).unwrap();
+                        launcher_net::account::AccountStatus::from(&*cfg)
+                    };
+                    auth::on_auth_done(&app, &state, &handle, Ok(signed_in));
+                    phase.set(0);
+                }
                 // Phase 0 (F09 + F24): FirstRunScreen MUST open (not MainScreen),
                 // and bundled Java MUST be auto-detected into firstrun_java_path.
                 0 => {
@@ -113,6 +132,10 @@ fn first_login_runs_firstrun_with_bundled_java_friendly_errors_and_clean_logout(
                     if !app.get_show_firstrun() {
                         return;
                     }
+                    assert!(
+                        !app.get_show_init_error(),
+                        "enter_firstrun must clear a stale init-error screen"
+                    );
                     assert_eq!(
                         app.get_firstrun_java_path().as_str(),
                         bundled_java_str,
@@ -145,26 +168,33 @@ fn first_login_runs_firstrun_with_bundled_java_friendly_errors_and_clean_logout(
                     phase.set(2);
                 }
                 // Phase 2: MainScreen opens after FirstRun completes. Now verify
-                // voluntary logout through real core settings_tabs::wire.
+                // voluntary logout through the production enter_main wiring.
                 2 => {
                     if !app.get_show_main() {
                         return;
                     }
-                    // Re-login after completed FirstRun skips FirstRunScreen.
-                    let re_signed = {
-                        let cfg = state.config.blocking_read();
-                        launcher_net::account::AccountStatus::from(&*cfg)
-                    };
-                    auth::on_auth_done(&app, &state, &handle, Ok(re_signed));
-                    assert!(
-                        app.get_show_main() && !app.get_show_firstrun(),
-                        "re-login after FirstRun completes goes straight to MainScreen"
-                    );
+                    if !relogin_done.get() {
+                        // Re-login after completed FirstRun skips FirstRunScreen.
+                        let re_signed = {
+                            let cfg = state.config.blocking_read();
+                            launcher_net::account::AccountStatus::from(&*cfg)
+                        };
+                        auth::on_auth_done(&app, &state, &handle, Ok(re_signed));
+                        assert!(
+                            app.get_show_main() && !app.get_show_firstrun(),
+                            "re-login after FirstRun completes goes straight to MainScreen"
+                        );
+                        relogin_done.set(true);
+                    }
+                    // enter_main wires SettingsForm::logout asynchronously; the
+                    // username sync lands in the same callback, so gate on it.
+                    if app.get_username().as_str() != "NewPlayer" {
+                        return;
+                    }
 
                     // Clear access_token so account::logout skips network /auth/invalidate
                     // while still running the full core logout + config save path.
                     state.config.blocking_write().access_token.clear();
-                    settings_tabs::wire(&app, Some((state.clone(), handle.clone())));
                     app.global::<SettingsForm>().invoke_logout();
                     phase.set(3);
                 }
@@ -190,7 +220,7 @@ fn first_login_runs_firstrun_with_bundled_java_friendly_errors_and_clean_logout(
         }
     });
     let timeout_phase = phase.clone();
-    slint::Timer::single_shot(Duration::from_secs(15), move || {
+    slint::Timer::single_shot(Duration::from_secs(30), move || {
         panic!(
             "auth_firstrun_flow timed out in phase {}",
             timeout_phase.get()

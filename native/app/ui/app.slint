@@ -28,6 +28,9 @@ export component AppWindow inherits Window {
     in property <bool> show-main: false;
     in property <bool> show-login: false;
     in property <bool> show-firstrun: false;
+    // D2 init-error screen flag (forward-compatible): auth transitions clear
+    // it so a retried startup can never leave init chrome over auth screens.
+    in property <bool> show-init-error: false;
     in property <string> login-mode: "login";
     in-out property <string> login-username;
     in-out property <string> login-password;

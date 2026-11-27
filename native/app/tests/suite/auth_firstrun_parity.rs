@@ -7,7 +7,37 @@ use blockfield_native::{
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use launcher_app::LauncherEvent;
 use launcher_core::config::LauncherConfig;
-use slint::ComponentHandle;
+use slint::{ComponentHandle, platform::Key};
+
+fn test_state() -> (
+    tokio::runtime::Runtime,
+    std::sync::Arc<launcher_app::LauncherAppState>,
+) {
+    let rt = runtime::new().unwrap();
+    let state = std::sync::Arc::new(launcher_app::LauncherAppState {
+        cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        downloader: std::sync::Arc::new(launcher_net::download::Downloader::new(
+            std::sync::Arc::new(|_| {}),
+            std::sync::Arc::new(|_, _| {}),
+            launcher_net::download::noop_guard_sink(),
+        )),
+        config: tokio::sync::RwLock::new(LauncherConfig::default()),
+        app_data_dir: std::env::temp_dir().join(format!("bf-auth-unit-{}", std::process::id())),
+        pack: tokio::sync::RwLock::new(None),
+        game: std::sync::Arc::new(launcher_core::game::GameState::new(|_| {})),
+        operation: tokio::sync::Mutex::new(()),
+        events: std::sync::Arc::new(|_| {}),
+    });
+    (rt, state)
+}
+
+fn press_key(app: &AppWindow, key: Key) {
+    let text: slint::SharedString = key.into();
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::KeyPressed { text: text.clone() });
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::KeyReleased { text });
+}
 
 fn type_char(app: &AppWindow, ch: &str) {
     app.window()
@@ -77,7 +107,7 @@ fn f24_firstrun_low_ram_is_not_clamped_upward_and_disables_continue() {
         }));
     assert_eq!(dir, "/tmp/game");
     assert_eq!(java, "/tmp/game/java/bin/java");
-    assert_eq!(ram, 2);
+    assert_eq!(ram, 1, "F24: sub-2GB max keeps Tauri min(max, ...) order");
     assert_eq!(max, 1, "F24: maxram < 2 must not be clamped upward to 2");
     assert!(presets.is_empty());
 
@@ -104,6 +134,13 @@ fn f14_voluntary_logout_preserves_username_without_expired_error() {
     app.set_username("NetherG".into());
     app.set_show_main(true);
     app.set_show_login(false);
+    // A previous owner's session: role badge + Workshop must not leak.
+    app.set_role("ВЛАДЕЛЕЦ".into());
+    let mut data = app.get_main_data();
+    data.can_workshop = true;
+    data.profile_blocked = true;
+    data.profile_error = "stale".into();
+    app.set_main_data(data);
 
     app.global::<SettingsForm>().invoke_logout();
 
@@ -119,15 +156,30 @@ fn f14_voluntary_logout_preserves_username_without_expired_error() {
         "voluntary logout must not show session-expired error, got: {}",
         app.get_login_error()
     );
+    assert_eq!(app.get_role().as_str(), "ИГРОК", "logout resets role badge");
+    assert!(
+        !app.get_main_data().can_workshop,
+        "logout revokes Workshop access"
+    );
+    assert!(
+        !app.get_main_data().profile_blocked,
+        "logout clears profile block"
+    );
+    assert!(
+        app.get_main_data().profile_error.is_empty(),
+        "logout clears profile error"
+    );
 
     // Genuine session expiry still shows the expired message and preserves username.
     app.set_show_login(false);
     app.set_show_main(true);
     app.set_username("NetherG".into());
     app.set_login_username("".into());
+    app.set_role("ВЛАДЕЛЕЦ".into());
     bridge::apply(&app, LauncherEvent::AccountExpired);
     assert!(app.get_show_login());
     assert_eq!(app.get_login_username().as_str(), "NetherG");
+    assert_eq!(app.get_role().as_str(), "ИГРОК");
     assert_eq!(
         app.get_login_error().as_str(),
         "Сессия истекла — войдите снова."
@@ -310,4 +362,95 @@ fn visual_password_alignment_and_login_firstrun_geometry_and_focus() {
             dir_input.absolute_position().x
         );
     }
+}
+
+#[test]
+fn auth_transitions_clear_init_error_flag() {
+    crate::init_slint();
+    let app = AppWindow::new().unwrap();
+    // A retried startup that lands back on auth must not keep init chrome.
+    app.set_show_init_error(true);
+    auth::show_login_error(&app, "NetherG", "dns error");
+    assert!(
+        !app.get_show_init_error(),
+        "startup auth error must clear the init-error screen"
+    );
+    app.set_show_init_error(true);
+    auth::show_login_logout(&app, "NetherG");
+    assert!(
+        !app.get_show_init_error(),
+        "voluntary logout must clear the init-error screen"
+    );
+}
+
+#[test]
+fn auth_busy_stays_set_until_transition_completes() {
+    crate::init_slint();
+    let app = AppWindow::new().unwrap();
+    let (rt, state) = test_state();
+    // Successful first login: busy stays set while enter_firstrun loads.
+    let status = launcher_net::account::AccountStatus::from(&*state.config.blocking_read());
+    auth::on_auth_done(&app, &state, rt.handle(), Ok(status));
+    assert!(
+        app.get_login_busy(),
+        "login_busy must stay set until FirstRunScreen is up"
+    );
+    // Failed login releases busy with a friendly error.
+    auth::on_auth_done(
+        &app,
+        &state,
+        rt.handle(),
+        Err("Drasl: Invalid credentials".into()),
+    );
+    assert!(!app.get_login_busy());
+    assert!(!app.get_login_error().is_empty());
+}
+
+#[test]
+fn logout_clears_stale_login_errors() {
+    crate::init_slint();
+    let app = AppWindow::new().unwrap();
+    let (rt, state) = test_state();
+    std::fs::create_dir_all(&state.app_data_dir).unwrap();
+    auth::attach(&app, state.clone(), rt.handle().clone());
+    app.set_login_error("Неверный пароль.".into());
+    app.set_login_raw_error("Drasl: Invalid password".into());
+    app.invoke_login_logout();
+    assert!(
+        app.get_login_error().is_empty(),
+        "logout must clear the stale password error while running"
+    );
+    assert!(
+        app.get_login_raw_error().is_empty(),
+        "logout must clear the stale raw error while running"
+    );
+    rt.shutdown_timeout(std::time::Duration::from_secs(2));
+    let _ = std::fs::remove_dir_all(&state.app_data_dir);
+}
+
+#[test]
+fn settings_tabs_mouse_click_and_keyboard_navigation() {
+    crate::init_slint();
+    let app = AppWindow::new().unwrap();
+    let (_host, _activity) = wire_app(&app, Backend::Fixtures).unwrap();
+    settings_fixtures::apply(&app, "settings-general", "default").unwrap();
+    app.show().unwrap();
+    slint::platform::update_timers_and_animations();
+    // Mouse path: clicking a tab switches it (keyboard focus outline stays off).
+    ElementHandle::find_by_accessible_label(&app, "СКИН")
+        .find(|e| e.accessible_role() == Some(AccessibleRole::Tab))
+        .expect("skin tab")
+        .invoke_accessible_default_action();
+    assert_eq!(app.get_settings_tab(), 3, "mouse click switches tabs");
+    // Keyboard path: the click moved focus into the tab bar, arrows move on.
+    press_key(&app, Key::RightArrow);
+    assert_eq!(app.get_settings_tab(), 4, "RightArrow advances tabs");
+    press_key(&app, Key::LeftArrow);
+    assert_eq!(app.get_settings_tab(), 3, "LeftArrow goes back");
+    press_key(&app, Key::Home);
+    assert_eq!(app.get_settings_tab(), 0, "Home jumps to first tab");
+    press_key(&app, Key::End);
+    assert_eq!(app.get_settings_tab(), 4, "End jumps to last tab");
+    // Full-box focus outline is pixel chrome, not test-tree state; paired
+    // screenshots cover items 22-24, geometry is asserted above.
 }

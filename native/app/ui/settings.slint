@@ -48,9 +48,9 @@ component SettingsScroll inherits Rectangle {
             width: 5px;
             height: root.thumb-height;
             border-radius: 2px;
-            background: sb-touch.pressed ? Tokens.ring : (sb-touch.has-hover ? #3a2c1d : Tokens.border);
+            background: sb-touch.pressed ? Tokens.ring : (sb-touch.has-hover ? Tokens.scroll-hover : Tokens.border);
             border-width: 1px;
-            border-color: sb-touch.pressed ? Tokens.primary : (sb-touch.has-hover ? Tokens.secondary-foreground : #70706e);
+            border-color: sb-touch.pressed ? Tokens.primary : (sb-touch.has-hover ? Tokens.secondary-foreground : Tokens.scroll-border);
         }
         sb-touch := TouchArea {
             x: 0px;
