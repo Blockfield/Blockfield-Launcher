@@ -37,7 +37,15 @@ fn first_login_runs_firstrun_with_bundled_java_friendly_errors_and_clean_logout(
     let game_dir = root.join("game");
     let bundled_java = game_dir.join("java").join("bin").join(java_exe_name());
     std::fs::create_dir_all(bundled_java.parent().unwrap()).unwrap();
-    std::fs::write(&bundled_java, b"#!/bin/sh\n").unwrap();
+    std::fs::write(
+        &bundled_java,
+        b"#!/bin/sh\necho 'openjdk version \"21.0.1\"' >&2\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bundled_java, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
 
     // Fresh install: no username, no access_token, empty java_path (bundled exists).
     let config = LauncherConfig {
