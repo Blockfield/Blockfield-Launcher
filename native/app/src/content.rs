@@ -6,7 +6,7 @@ use std::{
 };
 
 use serde_json::Value;
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel, Weak};
+use slint::{ModelRc, SharedString, VecModel, Weak};
 use tokio::runtime::Handle;
 
 use crate::{AppWindow, MainFeature};

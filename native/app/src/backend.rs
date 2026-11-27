@@ -49,8 +49,10 @@ fn pending_profile_retry() -> &'static Mutex<Option<ClientProfile>> {
     PENDING.get_or_init(|| Mutex::new(None))
 }
 
-fn active_session() -> &'static Mutex<Option<(Arc<LauncherAppState>, Handle)>> {
-    static SESSION: OnceLock<Mutex<Option<(Arc<LauncherAppState>, Handle)>>> = OnceLock::new();
+type SessionHandle = (Arc<LauncherAppState>, Handle);
+
+fn active_session() -> &'static Mutex<Option<SessionHandle>> {
+    static SESSION: OnceLock<Mutex<Option<SessionHandle>>> = OnceLock::new();
     SESSION.get_or_init(|| Mutex::new(None))
 }
 
