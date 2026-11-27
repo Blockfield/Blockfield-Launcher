@@ -1,6 +1,7 @@
 ; Standalone NSIS installer for the Blockfield Native (Slint) launcher.
-; Reuses the Tauri installer's branding assets, localization and ownership-aware
-; uninstall cleanup contract without depending on Tauri's bundler plugins.
+; Supports in-place upgrades over legacy Tauri NSIS installs (same per-user
+; install directory, executable name, and uninstall registry key) and
+; side-by-side DEV installs via -DDEV_BUILD=1.
 Unicode true
 ManifestDPIAware true
 SetCompressor /SOLID lzma
@@ -13,10 +14,10 @@ SetCompressor /SOLID lzma
 !define /ifndef ERROR_MORE_DATA 234
 
 !ifndef VERSION
-  !error "VERSION must be defined (e.g. -DVERSION=1.0.31)"
+  !error "VERSION must be defined (e.g. -DVERSION=2.0.1)"
 !endif
 !ifndef VERSION_QUAD
-  !error "VERSION_QUAD must be defined (e.g. -DVERSION_QUAD=1.0.31.0)"
+  !error "VERSION_QUAD must be defined (e.g. -DVERSION_QUAD=2.0.1.0)"
 !endif
 !ifndef BINARY_PATH
   !error "BINARY_PATH must be defined"
@@ -38,16 +39,23 @@ SetCompressor /SOLID lzma
 !endif
 
 !define MANUFACTURER "Blockfield"
-!define PRODUCTNAME "blockfield-native"
-!define DISPLAYNAME "Blockfield Launcher"
-!define MAINBINARYNAME "blockfield-native"
-!define BUNDLEID "com.blockfield.launcher"
+!ifdef DEV_BUILD
+  !define PRODUCTNAME "blockfield-launcher-dev"
+  !define DISPLAYNAME "Blockfield Launcher DEV"
+  !define MAINBINARYNAME "blockfield-launcher-dev"
+  !define BUNDLEID "com.blockfield.launcher.dev"
+!else
+  !define PRODUCTNAME "blockfield-launcher"
+  !define DISPLAYNAME "Blockfield Launcher"
+  !define MAINBINARYNAME "blockfield-launcher"
+  !define BUNDLEID "com.blockfield.launcher"
+!endif
 !define HOMEPAGE "https://blockfield.pro"
 !define COPYRIGHT "Blockfield"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCTNAME}"
 !define MANUPRODUCTKEY "Software\${MANUFACTURER}\${PRODUCTNAME}"
 
-; Dark theme matching src-tauri/windows/hooks.nsh.
+; Dark theme matching Blockfield branding.
 !define MUI_BGCOLOR "070604"
 !define MUI_TEXTCOLOR "F3E7D0"
 !define MUI_INSTFILESPAGE_COLORS "F3E7D0 11100D"
@@ -228,8 +236,10 @@ Section Install
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe"
   File "/oname=${MAINBINARYNAME}.exe" "${BINARY_PATH}"
 
-  !insertmacro RegisterScheme "blockfield"
-  !insertmacro RegisterScheme "discord-${DISCORD_APP_ID}"
+  !ifndef DEV_BUILD
+    !insertmacro RegisterScheme "blockfield"
+    !insertmacro RegisterScheme "discord-${DISCORD_APP_ID}"
+  !endif
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
   WriteRegStr HKCU "${MANUPRODUCTKEY}" "" "$INSTDIR"
@@ -269,7 +279,7 @@ SectionEnd
 Section Uninstall
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe"
 
-  ; Skip destructive cleanup during upgrades (exact parity with src-tauri/windows/hooks.nsh).
+  ; Skip destructive cleanup during upgrades.
   ${If} $UpdateMode <> 1
     ClearErrors
     ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --uninstall-cleanup' $0
@@ -280,8 +290,10 @@ Section Uninstall
     ${EndIf}
   ${EndIf}
 
-  !insertmacro UnregisterScheme "blockfield"
-  !insertmacro UnregisterScheme "discord-${DISCORD_APP_ID}"
+  !ifndef DEV_BUILD
+    !insertmacro UnregisterScheme "blockfield"
+    !insertmacro UnregisterScheme "discord-${DISCORD_APP_ID}"
+  !endif
 
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"
   Delete "$INSTDIR\uninstall.exe"

@@ -112,7 +112,7 @@ pub async fn preview_skin(
         skin: Some(format!(
             "data:image/png;base64,{}",
             base64::engine::general_purpose::STANDARD
-                .encode(include_bytes!("../../../public/skins/steve.png"))
+                .encode(include_bytes!("../../../assets/skins/steve.png"))
         )),
         cape: None,
         slim: false,
@@ -334,7 +334,7 @@ mod tests {
             textures_with_skin(&encode(textures.clone())),
             Some(textures)
         );
-        let png = include_bytes!("../../../public/skins/steve.png");
+        let png = include_bytes!("../../../assets/skins/steve.png");
         assert!(png.starts_with(PNG_MAGIC));
         assert_eq!(&png[16..24], &[0, 0, 0, 64, 0, 0, 0, 64]);
     }

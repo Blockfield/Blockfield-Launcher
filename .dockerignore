@@ -2,11 +2,10 @@
 .github
 .vscode
 .idea
-node_modules
 dist
 extracted
 target
-src-tauri/target
+native/app/target
 server/files
 server/extracted
 server/directus

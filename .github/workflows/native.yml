@@ -1,17 +1,13 @@
 name: Native e2e
 
-# u18: cross-OS end-to-end screen tests for the Slint POC (Windows and
-# Ubuntu) as a merge/release gate. Layer 1 = in-process testing-tree
-# scenarios (`cargo test`, needs SLINT_EMIT_DEBUG_INFO=1 below). Layer 2 =
-# real-window acceptance walk with per-OS golden screenshots (`--e2e`).
-# No secrets, no signing, no releases — artifacts only.
+# Cross-OS end-to-end screen tests and packaging smoke checks for the native
+# Slint launcher (Windows and Ubuntu) as a merge/release gate.
+# Layer 1 = in-process testing-tree scenarios (`cargo test`, needs SLINT_EMIT_DEBUG_INFO=1).
+# Layer 2 = real-window acceptance walk with per-OS golden screenshots (`--e2e`).
 on:
   push:
-    # Native e2e runs on integration/release branches so pushes warm the
-    # shared Rust cache and gate merges.
     branches: [native/**, feat/native-slint, next, main]
   pull_request:
-    # Run on PRs targeting feat/native-slint, next, and main (skipping doc-only edits).
     branches: [feat/native-slint, next, main]
     paths-ignore: ['**.md', 'docs/**', 'release-notes/**']
   workflow_dispatch:
@@ -30,19 +26,17 @@ concurrency:
 
 env:
   # Layer 1 drives the Slint testing tree, which needs debug info in the
-  # generated code. Metadata only; no pixels change (u18 verified AE=0).
+  # generated code. Metadata only; no pixels change.
   SLINT_EMIT_DEBUG_INFO: 1
 
 jobs:
-  # Seconds-long gate before the 26-minute 3-OS matrix: a fmt/clippy failure
-  # fails this one Linux job instead of inside every OS leg.
+  # Seconds-long gate before the 2-OS matrix: a fmt/clippy failure fails this
+  # one Linux job instead of inside every OS leg.
   lint:
     name: lint (ubuntu)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      # No debuginfo in the dev-profile clippy build: faster linking and a
-      # smaller rust-cache (same flag as the standards check job).
       CARGO_PROFILE_DEV_DEBUG: 0
     defaults:
       run:
@@ -60,30 +54,28 @@ jobs:
           shared-key: native-lint-ubuntu-24.04
           workspaces: native/app -> target
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/feat/native-slint' || github.ref == 'refs/heads/next' || github.ref == 'refs/heads/main') }}
-      # Clippy compiles the same crates as the legs, so it needs their
-      # system build libraries (fontconfig for yeslogic-fontconfig-sys).
       - name: Cache apt .deb archives
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/apt-archives
-          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-native-lint-${{ hashFiles('scripts/install-tauri-deps.sh') }}
+          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-native-lint-${{ hashFiles('scripts/install-linux-deps.sh') }}
           restore-keys: |
             apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-native-lint-
             apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-native-lint-
       - name: Linux build libraries
         timeout-minutes: 8
-        run: scripts/install-tauri-deps.sh libfontconfig-dev libxkbcommon-x11-0
+        run: scripts/install-linux-deps.sh libfontconfig-dev libxkbcommon-x11-0
       - name: Format check
         timeout-minutes: 3
         run: |
           cd native/app
           cargo fmt --all -- --check
-      # Debug profile avoids building release artifacts just for lint checks.
       - name: Clippy
         timeout-minutes: 25
         run: |
           cd native/app
           cargo clippy --locked --all-targets -- -D warnings
+
   e2e:
     name: e2e (${{ matrix.name }})
     needs: [lint]
@@ -117,44 +109,36 @@ jobs:
           shared-key: native-e2e-${{ matrix.os }}
           workspaces: native/app -> target
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/feat/native-slint' || github.ref == 'refs/heads/next' || github.ref == 'refs/heads/main') }}
-      # Ubuntu runners have no display server and no Vulkan ICD: Xvfb for the
-      # winit window, lavapipe so the skin3d wgpu preview gets an adapter.
-      # winit dlopens libxkbcommon-x11 at window creation (invisible to ldd).
       - name: Cache apt .deb archives
         if: runner.os == 'Linux'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/apt-archives
-          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-native-e2e-${{ hashFiles('scripts/install-tauri-deps.sh') }}
+          key: apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-native-e2e-${{ hashFiles('scripts/install-linux-deps.sh') }}
           restore-keys: |
             apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-native-e2e-
             apt-debs-v1-${{ runner.os }}-${{ runner.arch }}-native-e2e-
-      - name: Linux display and software GL/Vulkan
+      - name: Linux display, packaging and software GL/Vulkan
         if: runner.os == 'Linux'
         timeout-minutes: 8
-        run: scripts/install-tauri-deps.sh xvfb mesa-vulkan-drivers libgl1 libfontconfig-dev libxkbcommon-x11-0
-      # Format and clippy gate the matrix via the lint job above; the legs
-      # start at Layer 1.
-      # Layer 1: headless testing-tree scenarios, no display needed.
+        run: scripts/install-linux-deps.sh xvfb mesa-vulkan-drivers libgl1 libfontconfig-dev libxkbcommon-x11-0 squashfs-tools
       - name: Tests (Layer 1)
         timeout-minutes: 30
         run: |
           cd native/app
           cargo test --locked --profile ci-test
-      # Reuse the ci-test profile (workspace opt-level 0, deps opt-level 2) so Layer 2 links
-      # against the same compiled dependencies instead of rebuilding under release.
       - name: Build binary (ci-test)
         timeout-minutes: 30
         run: |
           cd native/app
           cargo build --locked --profile ci-test --bin blockfield-native
-      - name: Smoke-check Linux .deb packaging
+      - name: Smoke-check Linux .deb and .AppImage packaging
         if: runner.os == 'Linux'
         timeout-minutes: 5
         run: |
           set -euo pipefail
-          version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
-          out="$RUNNER_TEMP/native-deb-smoke"
+          version=$(python3 scripts/check-version.py --print)
+          out="$RUNNER_TEMP/native-linux-smoke"
           rm -rf "$out"
           deb=$(python3 scripts/package-native-deb.py \
             --binary native/app/target/ci-test/blockfield-native \
@@ -163,9 +147,16 @@ jobs:
           dpkg-deb --info "$deb"
           contents=$(dpkg-deb --contents "$deb")
           printf '%s\n' "$contents"
-          grep -F './usr/bin/blockfield-native' <<<"$contents"
-          grep -F './usr/share/applications/blockfield-native.desktop' <<<"$contents"
-          grep -F './usr/share/icons/hicolor/256x256/apps/blockfield-native.png' <<<"$contents"
+          grep -F './usr/bin/blockfield-launcher' <<<"$contents"
+          grep -F './usr/share/applications/blockfield-launcher.desktop' <<<"$contents"
+          grep -F './usr/share/icons/hicolor/256x256/apps/blockfield-launcher.png' <<<"$contents"
+          appimage=$(python3 scripts/package-native-appimage.py \
+            --binary native/app/target/ci-test/blockfield-native \
+            --version "$version" \
+            --output "$out")
+          [ -x "$appimage" ]
+          # Verify AppImage executes its bundled binary without FUSE.
+          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --renderer-probe
       - name: Cache NSIS
         if: runner.os == 'Windows'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -184,7 +175,7 @@ jobs:
           elif ! command -v makensis >/dev/null 2>&1; then
             choco install nsis --no-progress -y
           fi
-          version=$(python -c 'import tomllib; print(tomllib.load(open("native/app/Cargo.toml", "rb"))["package"]["version"])')
+          version=$(python scripts/check-version.py --print)
           out="$RUNNER_TEMP/native-win-smoke"
           rm -rf "$out"
           python scripts/package-native-windows.py \
@@ -192,8 +183,8 @@ jobs:
             --version "$version" \
             --output "$out"
           ls -la "$out"
-          [ -s "$out/blockfield-native_${version}_x64_en-US.msi" ]
-          [ -s "$out/blockfield-native_${version}_x64-setup.exe" ]
+          [ -s "$out/blockfield-launcher_${version}_x64_en-US.msi" ]
+          [ -s "$out/blockfield-launcher_${version}_x64-setup.exe" ]
       - name: Capture main and settings-skin
         timeout-minutes: 15
         env:
@@ -204,18 +195,11 @@ jobs:
           exe=target/ci-test/blockfield-native
           if [ "$RUNNER_OS" = Windows ]; then exe=$exe.exe; fi
           ls -l "$exe"
-          # Fail fast with an exact cause if a system .so is missing (Ubuntu).
           if [ "$RUNNER_OS" = Linux ]; then ldd "./$exe" | grep "not found" || echo "ldd: all libs present"; fi
           out=xplat-captures
           rm -rf "$out"
           mkdir -p "$out"
           python3 ../../scripts/native-e2e-runner.py capture --exe "./$exe" --out "$out"
-      # Layer 2: real-window acceptance walk against per-OS goldens at 1x.
-      # Renderer is pinned to software on every OS: it is the one renderer
-      # both runners support (u17: Windows Skia-GL has no GPU and falls
-      # back anyway; Ubuntu Skia-GL fails under Xvfb), so one golden set per
-      # OS suffices. The e2e log records the backend. Any mismatch, missing
-      # element, crash or hang exits non-zero and turns the gate red.
       - name: E2E walk (Layer 2)
         timeout-minutes: 20
         env:
@@ -240,7 +224,6 @@ jobs:
           name: native-${{ runner.os }}-${{ runner.arch }}
           path: native/app/xplat-captures
           retention-days: 7
-      # Screenshots, diffs and logs for every red Layer 2 run.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure() || inputs.update_goldens == 'true'
         with:

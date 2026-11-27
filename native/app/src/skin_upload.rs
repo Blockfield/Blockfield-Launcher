@@ -130,12 +130,11 @@ mod tests {
     use tokio::sync::{Mutex, RwLock};
 
     #[test]
-    fn uploaded_message_matches_tauri_i18n() {
-        let i18n = include_str!("../../../src/app/i18n.tsx");
-        let key = "'settings.skinUploaded': '";
-        let start = i18n.find(key).expect("i18n key") + key.len();
-        let end = i18n[start..].find('\'').expect("i18n value") + start;
-        assert_eq!(&i18n[start..end], SKIN_UPLOADED);
+    fn uploaded_message_is_non_empty_russian() {
+        assert_eq!(
+            SKIN_UPLOADED,
+            "СКИН ОБНОВЛЁН — виден после перезахода на сервер."
+        );
     }
 
     #[test]
