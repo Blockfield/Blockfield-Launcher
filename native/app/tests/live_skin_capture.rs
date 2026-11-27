@@ -126,6 +126,7 @@ fn live_skin_capture_red_drasl_preview() {
         .unwrap_or_else(|_| std::env::temp_dir());
     std::fs::create_dir_all(&out_dir).expect("capture out dir");
     let start_delivered = host.delivered();
+    let poll_host = host.clone();
     let weak = app.as_weak();
     let poll = slint::Timer::default();
     poll.start(
@@ -134,7 +135,7 @@ fn live_skin_capture_red_drasl_preview() {
         move || {
             let app = weak.upgrade().expect("capture window");
             // Live custom skin resolved and the 3D host is animating it.
-            if app.get_skin_caption() == "ВАШ СКИН" && host.delivered() >= start_delivered + 5
+            if app.get_skin_caption() == "ВАШ СКИН" && poll_host.delivered() >= start_delivered + 5
             {
                 let pixels = app.window().take_snapshot().expect("renderer snapshot");
                 let path = out_dir.join("settings-skin-live.ppm");
@@ -214,7 +215,7 @@ fn skin_preview_state(skins_base: &str) -> launcher_app::LauncherAppState {
             loader: None,
         },
     };
-    LauncherAppState {
+    launcher_app::LauncherAppState {
         cancel_flag: downloader.cancel_flag.clone(),
         downloader,
         config: RwLock::new(LauncherConfig {
