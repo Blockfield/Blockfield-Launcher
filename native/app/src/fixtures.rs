@@ -562,6 +562,52 @@ pub const UPDATE_SCENARIOS: &[&str] = &[
     "running",
 ];
 
+/// Fixture-only update log lines: fixed clock and versions for deterministic
+/// goldens/captures. Real runs stamp every line with the local time
+/// (`update::stamp`, Tauri `UpdateScreen.tsx timestamp()` parity), so these
+/// constructors live here and never in a real-path module.
+fn fixture_log(lines: &[(&str, &str, i32)]) -> ModelRc<crate::UpdateLogLine> {
+    ModelRc::new(VecModel::from(
+        lines
+            .iter()
+            .map(|(ts, msg, tone)| crate::UpdateLogLine {
+                ts: (*ts).into(),
+                msg: (*msg).into(),
+                tone: *tone,
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
+pub fn checking_log() -> ModelRc<crate::UpdateLogLine> {
+    fixture_log(&[(
+        "12:00:01",
+        "Establishing connection to deployment server...",
+        1,
+    )])
+}
+
+pub fn downloading_log() -> ModelRc<crate::UpdateLogLine> {
+    fixture_log(&[
+        (
+            "12:00:01",
+            "Establishing connection to deployment server...",
+            1,
+        ),
+        (
+            "12:00:02",
+            "Manifest fetched: remote=2.75, installed=2.74",
+            0,
+        ),
+        ("12:00:03", "Update needed: 2.74 → 2.75", 1),
+        ("12:00:04", "Waiting for backend install tasks...", 1),
+    ])
+}
+
+pub fn cancelled_log() -> ModelRc<crate::UpdateLogLine> {
+    fixture_log(&[("12:00:02", "Download cancelled by operator.", 2)])
+}
+
 /// Pack-sync screen on nav index 1; main fixtures stay loaded so the e2e
 /// walk back to main still screenshots a populated screen.
 pub fn apply_update(app: &AppWindow, scenario: &str) -> Result<(), String> {
@@ -584,7 +630,7 @@ pub fn apply_update(app: &AppWindow, scenario: &str) -> Result<(), String> {
         "checking" => {
             data.phase = "checking".into();
             data.step0 = 1;
-            data.log = crate::update::checking_log();
+            data.log = checking_log();
         }
         "verifying" => {
             data.phase = "verifying".into();
@@ -620,7 +666,7 @@ pub fn apply_update(app: &AppWindow, scenario: &str) -> Result<(), String> {
             data.error = "Не удалось загрузить обновление".into();
             data.step0 = 2;
             data.step1 = 1;
-            data.log = crate::update::downloading_log();
+            data.log = downloading_log();
         }
         "running" => {
             data.phase = "downloading".into();
@@ -642,7 +688,7 @@ pub fn apply_update(app: &AppWindow, scenario: &str) -> Result<(), String> {
             data.speed = "8.4 МБ/с".into();
             data.step0 = 2;
             data.step1 = 1;
-            data.log = crate::update::downloading_log();
+            data.log = downloading_log();
         }
     }
     app.set_update_data(data);

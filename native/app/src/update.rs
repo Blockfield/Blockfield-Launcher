@@ -462,11 +462,9 @@ pub fn attach_fixtures(app: &AppWindow) {
             data.step1 = 0;
             data.step2 = 0;
             data.step3 = 0;
-            data.log = log(&[(
-                "12:00:01",
-                "Establishing connection to deployment server...",
-                1,
-            )]);
+            // Fixture retry reset: deterministic golden line (real runs stamp
+            // the local time in reset_for_run instead).
+            data.log = crate::fixtures::checking_log();
             app.set_update_data(data);
         }
     });
@@ -481,7 +479,7 @@ pub fn attach_fixtures(app: &AppWindow) {
             data.can_cancel = false;
             data.error = "Загрузка отменена".into();
             data.error_raw = "".into();
-            data.log = log(&[("12:00:02", "Download cancelled by operator.", 2)]);
+            data.log = crate::fixtures::cancelled_log();
             app.set_update_data(data);
         }
     });
@@ -2594,31 +2592,6 @@ pub mod self_update {
     }
 }
 
-pub fn checking_log() -> ModelRc<UpdateLogLine> {
-    log(&[(
-        "12:00:01",
-        "Establishing connection to deployment server...",
-        1,
-    )])
-}
-
-pub fn downloading_log() -> ModelRc<UpdateLogLine> {
-    log(&[
-        (
-            "12:00:01",
-            "Establishing connection to deployment server...",
-            1,
-        ),
-        (
-            "12:00:02",
-            "Manifest fetched: remote=2.75, installed=2.74",
-            0,
-        ),
-        ("12:00:03", "Update needed: 2.74 → 2.75", 1),
-        ("12:00:04", "Waiting for backend install tasks...", 1),
-    ])
-}
-
 pub fn default_data() -> crate::UpdateData {
     crate::UpdateData {
         phase: "checking".into(),
@@ -3017,6 +2990,63 @@ mod tests {
         );
         rt.shutdown_timeout(std::time::Duration::from_secs(1));
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn real_check_start_uses_live_clock_and_real_versions() {
+        // D7: a real (non-fixture) check start must stamp the local time like
+        // Tauri UpdateScreen timestamp() and carry the real versions. The
+        // fixed "12:00:0x"/"2.75"/"2.74" lines live in fixtures:: only.
+        let _serial = crate::main_ops::test_serial();
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        // Real initial state, no fixtures: Tauri's exact pre-version patch
+        // placeholder and an empty log.
+        app.set_update_data(super::default_data());
+        assert_eq!(app.get_update_data().patch, "/ ПАТЧ ...");
+        assert_eq!(app.get_update_data().log.row_count(), 0);
+        let before: String = chrono::Local::now().format("%H:%M:%S").to_string();
+        super::reset_for_run(&app);
+        let after: String = chrono::Local::now().format("%H:%M:%S").to_string();
+        let data = app.get_update_data();
+        let first = data.log.iter().next().expect("check-start log line");
+        assert_eq!(first.msg, "Establishing connection to deployment server...");
+        assert!(
+            first.ts.as_str() == before || first.ts.as_str() == after,
+            "check-start stamp must be the local time, got {}",
+            first.ts
+        );
+        // Distinctive versions: nothing fixture-like may leak into real data.
+        let version = VersionCheckResult {
+            needs_update: true,
+            remote_version: "9.97".into(),
+            installed_version: "9.96".into(),
+            mirror: "https://mirror.blockfield.pro/pack".into(),
+            file_count: 4,
+            total_size: 2048,
+            java: None,
+            java_ok: true,
+            loader_ok: true,
+        };
+        super::mark_download_started(&app, &version);
+        super::apply_retry_outcome(&app, super::RetryOutcome::UpToDate(version));
+        let data = app.get_update_data();
+        assert_eq!(data.patch, "/ ПАТЧ 9.97");
+        let mut text = data.patch.to_string();
+        for line in data.log.iter() {
+            text.push('\n');
+            text.push_str(line.msg.as_str());
+        }
+        assert!(text.contains("9.97") && text.contains("9.96"));
+        for banned in ["12:00:0", "2.75", "2.74"] {
+            assert!(
+                !text.contains(banned),
+                "real update data leaks fixture text {banned}: {text}"
+            );
+        }
+        // The fixed lines still exist for goldens/captures, in fixtures only.
+        let golden = crate::fixtures::checking_log();
+        assert_eq!(golden.iter().next().expect("golden line").ts, "12:00:01");
     }
 
     #[test]
