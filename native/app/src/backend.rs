@@ -306,16 +306,9 @@ fn run_startup(app: &AppWindow, handle: Handle) {
             crate::auth::attach(&app, state.clone(), handle.clone());
             match status {
                 Ok(status) => crate::auth::enter_startup(&app, state, handle, status),
-                Err(error) => {
-                    app.set_login_mode("login".into());
-                    app.set_login_set_password(false);
-                    app.set_login_username(stored_username.into());
-                    app.set_login_error(error.into());
-                    app.set_show_main(false);
-                    app.set_show_firstrun(false);
-                    app.set_show_init_error(false);
-                    app.set_show_login(true);
-                }
+                // Auth failures land on LoginScreen with friendly_error +
+                // first-run eligibility (D5), inside D2's run_startup wrapper.
+                Err(error) => crate::auth::show_login_error(&app, &stored_username, &error),
             }
         });
     });
