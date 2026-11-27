@@ -198,7 +198,7 @@ export component UpdateScreen inherits Rectangle {
     content := Rectangle {
         x: (parent.width - self.width) / 2; y: 20px; width: Math.min(1600px, parent.width) - 40px; height: parent.height - 40px;
         operation := SmallLabel { x: 0px; y: 0px; height: 15px; text: "ПОДГОТОВКА ИГРЫ"; letter-spacing: 2.8px; }
-        status-box := HorizontalLayout { x: parent.width - self.preferred-width; y: 0px; height: 15px; spacing: 8px; alignment: end;
+        status-box := HorizontalLayout { x: parent.width - self.preferred-width; y: 0px; width: self.preferred-width; height: 15px; spacing: 8px; alignment: end;
             Rectangle { width: 6px; height: 15px;
                 StatusDot { x: 0px; y: 4.5px; tint: root.op-status-color; }
             }
@@ -279,8 +279,8 @@ export component UpdateScreen inherits Rectangle {
                     font-size: 28px; color: Tokens.foreground; horizontal-alignment: right; }
                 if !root.progress-spinning && root.data.progress-unit != "files": HorizontalLayout {
                     x: parent.width - 220px; y: 16px; width: 220px; height: 44px; spacing: 0px; alignment: end;
-                    Text { text: Math.floor(root.progress-tenths / 10) + "." + Math.mod(root.progress-tenths, 10); font-size: 44px; color: Tokens.foreground; }
-                    Text { text: "%"; font-size: 20px; color: Tokens.muted-foreground; }
+                    Text { text: Math.floor(root.progress-tenths / 10) + "." + Math.mod(root.progress-tenths, 10); font-size: 44px; color: Tokens.foreground; vertical-alignment: bottom; }
+                    Text { text: "%"; font-size: 20px; color: Tokens.muted-foreground; vertical-alignment: bottom; }
                 }
             }
             bar := Rectangle { x: 16px; y: actions.y + actions.height + 12px; width: parent.width - 32px; height: 10px;
