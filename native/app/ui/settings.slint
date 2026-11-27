@@ -6,11 +6,81 @@ import { SettingsCommands } from "settings-commands.slint";
 import { SettingsForm } from "settings-model.slint";
 import { FormButton, FormError } from "settings-inputs.slint";
 import { Spinner } from "main-controls.slint";
-import { ScrollView } from "std-widgets.slint";
 import { GridBackdrop, TopoBackdrop } from "backdrop.slint";
 import { SkinPreview } from "../../skin3d/src/slint_preview.slint";
 import { LauncherUpdatePanel, LauncherUpdateData } from "update.slint";
 import { DevPanel, DevData } from "dev.slint";
+
+component SettingsScroll inherits Rectangle {
+    in property <length> content-height;
+    private property <length> max-scroll: Math.max(0px, root.content-height - root.height);
+    private property <bool> scrollable: root.max-scroll > 0px;
+    private property <length> track-margin: 4px;
+    private property <length> track-height: Math.max(1px, root.height - 2 * root.track-margin);
+    private property <length> thumb-height: root.scrollable
+        ? Math.max(24px, root.track-height * (root.height / Math.max(1px, root.content-height)))
+        : 0px;
+    private property <length> thumb-travel: Math.max(1px, root.track-height - root.thumb-height);
+    private property <float> scroll-ratio: root.scrollable
+        ? Math.max(0, Math.min(1, -flick.content-y / root.max-scroll))
+        : 0;
+    clip: true;
+    flick := Flickable {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        content-width: self.width;
+        content-height: root.content-height;
+        interactive: false;
+        @children
+    }
+    if root.scrollable: Rectangle {
+        x: parent.width - 10px;
+        y: 0px;
+        width: 10px;
+        height: parent.height;
+        private property <length> drag-start-y;
+        private property <length> drag-start-viewport;
+        thumb := Rectangle {
+            x: 3px;
+            y: root.track-margin + root.thumb-travel * root.scroll-ratio;
+            width: 5px;
+            height: root.thumb-height;
+            border-radius: 2px;
+            background: sb-touch.pressed ? Tokens.ring : (sb-touch.has-hover ? Tokens.scroll-hover : Tokens.border);
+            border-width: 1px;
+            border-color: sb-touch.pressed ? Tokens.primary : (sb-touch.has-hover ? Tokens.secondary-foreground : Tokens.scroll-border);
+        }
+        sb-touch := TouchArea {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                    if self.mouse-y >= thumb.y && self.mouse-y <= thumb.y + thumb.height {
+                        parent.drag-start-y = self.mouse-y;
+                        parent.drag-start-viewport = flick.content-y;
+                    } else {
+                        let frac = Math.max(0, Math.min(1, (self.mouse-y - root.track-margin - root.thumb-height / 2) / root.thumb-travel));
+                        flick.content-y = -root.max-scroll * frac;
+                        parent.drag-start-y = self.mouse-y;
+                        parent.drag-start-viewport = flick.content-y;
+                    }
+                }
+            }
+            moved => {
+                if self.pressed {
+                    let dy = self.mouse-y - parent.drag-start-y;
+                    let next = parent.drag-start-viewport - root.max-scroll * (dy / root.thumb-travel);
+                    flick.content-y = Math.max(-root.max-scroll, Math.min(0px, next));
+                }
+            }
+        }
+    }
+}
 
 component SettingsTabButton inherits Rectangle {
     in property <string> label;
@@ -129,6 +199,7 @@ export component SettingsScreen inherits Rectangle {
             border-width: Math.floor(1px / 1phx) * 1phx;
             border-color: Tokens.border;
             tabbar := Rectangle {
+                private property <bool> keyboard-focus: false;
                 x: root.edge;
                 y: root.edge;
                 width: parent.width - 2 * root.edge;
@@ -136,12 +207,15 @@ export component SettingsScreen inherits Rectangle {
                 background: Tokens.chrome;
                 Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Tokens.border; }
                 tab-keys := FocusScope {
+                    focus-gained(reason) => { tabbar.keyboard-focus = reason == FocusReason.tab-navigation; }
+                    focus-lost(reason) => { tabbar.keyboard-focus = false; }
                     key-pressed(event) => {
                         if event.text == Key.RightArrow { root.tab = Math.mod(root.tab + 1, root.tabs.length); }
                         else if event.text == Key.LeftArrow { root.tab = Math.mod(root.tab + root.tabs.length - 1, root.tabs.length); }
                         else if event.text == Key.Home { root.tab = 0; }
                         else if event.text == Key.End { root.tab = root.tabs.length - 1; }
                         else { return reject; }
+                        tabbar.keyboard-focus = true;
                         return accept;
                     }
                 }
@@ -156,9 +230,10 @@ export component SettingsScreen inherits Rectangle {
                         width: tabbar.width / root.tabs.length;
                         label: entry;
                         current: root.tab == index;
-                        focused: tab-keys.has-focus;
+                        focused: tab-keys.has-focus && tabbar.keyboard-focus;
                         chosen => {
                             tab-keys.focus();
+                            tabbar.keyboard-focus = false;
                             root.tab = index;
                             root.tab-changed(index);
                         }
@@ -171,20 +246,20 @@ export component SettingsScreen inherits Rectangle {
                 width: parent.width - 2 * root.edge;
                 height: actions.y - self.y;
                 clip: true;
-                if root.tab == 0: ScrollView {
+                if root.tab == 0: SettingsScroll {
                     x: 0px; y: 0px; width: parent.width; height: parent.height;
-                    content-width: self.visible-width; content-height: general-page.height + 16px;
+                    content-height: general-page.height + 16px;
                     general-page := SettingsGeneral { x: 20px; y: 8px; width: parent.width - 40px; username: root.username; }
                 }
-                if root.tab == 1: ScrollView {
+                if root.tab == 1: SettingsScroll {
                     x: 0px; y: 0px; width: parent.width; height: parent.height;
-                    content-width: self.visible-width; content-height: runtime-page.height + 16px;
-                    runtime-page := SettingsRuntime { x: 20px; y: 8px; width: parent.width - 40px;  }
+                    content-height: runtime-page.height + 16px;
+                    runtime-page := SettingsRuntime { x: 20px; y: 8px; width: parent.width - 40px; }
                 }
-                if root.tab == 2: ScrollView {
+                if root.tab == 2: SettingsScroll {
                     x: 0px; y: 0px; width: parent.width; height: parent.height;
-                    content-width: self.visible-width; content-height: commands-page.height + 16px;
-                    commands-page := SettingsCommands { x: 20px; y: 8px; width: parent.width - 40px;  }
+                    content-height: commands-page.height + 16px;
+                    commands-page := SettingsCommands { x: 20px; y: 8px; width: parent.width - 40px; }
                 }
                 if root.tab == 3: skin-content := Rectangle {
                     x: 20px;

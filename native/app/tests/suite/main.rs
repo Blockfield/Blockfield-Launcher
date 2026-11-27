@@ -17,6 +17,7 @@ pub(crate) fn init_slint() {
     });
 }
 
+mod auth_firstrun_parity;
 mod avatars;
 mod chrome;
 mod init_failure;
