@@ -1,7 +1,10 @@
 import { Tokens } from "tokens.slint";
 import { ActionArea, WindowActivity } from "controls.slint";
 
-export global MainText { pure callback launch-sub(string, int) -> string; }
+export global MainText {
+    pure callback launch-sub(string, int) -> string;
+    pure callback maintenance-banner(string) -> string;
+}
 
 export component Spinner inherits Rectangle {
     private property <angle> turn: 0deg;

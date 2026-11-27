@@ -42,6 +42,23 @@ pub fn support_url() -> String {
         .unwrap_or_else(|| "https://discord.gg/cAUcpeCVDM".to_owned())
 }
 
+/// Room maintenance banner (Tauri `RoomList.tsx` parity): avoids double-printing
+/// `"Идут технические работы"` when `backend.rs` supplies the empty-message sentinel,
+/// and avoids `".."` when custom text already ends with sentence punctuation.
+pub fn maintenance_banner(maintenance: slint::SharedString) -> slint::SharedString {
+    let trimmed = maintenance.trim();
+    if trimmed.is_empty() || trimmed == "Идут технические работы" {
+        return "Идут технические работы. Матчи откроются после завершения работ.".into();
+    }
+    let sep = if trimmed.ends_with(['.', '!', '?']) {
+        ""
+    } else {
+        "."
+    };
+    format!("Идут технические работы: {trimmed}{sep} Матчи откроются после завершения работ.")
+        .into()
+}
+
 /// Tauri `CloseRequested` parity (src-tauri/src/lib.rs): while the game is
 /// busy the window hides instead of quitting; the launch exit thread always
 /// runs `restore` (core ops::launch), so the window comes back on game exit.
@@ -188,6 +205,8 @@ pub fn wire_app(
     app.global::<SelectSearch>()
         .on_find(|options, search| fixtures::find_option(&options, &search));
     app.global::<MainText>().on_launch_sub(main_ops::launch_sub);
+    app.global::<MainText>()
+        .on_maintenance_banner(maintenance_banner);
     let weak = app.as_weak();
     app.on_deploy(move || {
         if let Some(app) = weak.upgrade() {
@@ -301,5 +320,25 @@ mod tests {
         app.set_main_data(data);
         assert!(hide_instead_of_quit(&app));
         assert!(!app.window().is_visible());
+    }
+
+    #[test]
+    fn maintenance_banner_avoids_double_print_and_double_period() {
+        assert_eq!(
+            maintenance_banner("Идут технические работы".into()),
+            "Идут технические работы. Матчи откроются после завершения работ."
+        );
+        assert_eq!(
+            maintenance_banner("".into()),
+            "Идут технические работы. Матчи откроются после завершения работ."
+        );
+        assert_eq!(
+            maintenance_banner("Обновляем карту.".into()),
+            "Идут технические работы: Обновляем карту. Матчи откроются после завершения работ."
+        );
+        assert_eq!(
+            maintenance_banner("Плановое обслуживание".into()),
+            "Идут технические работы: Плановое обслуживание. Матчи откроются после завершения работ."
+        );
     }
 }

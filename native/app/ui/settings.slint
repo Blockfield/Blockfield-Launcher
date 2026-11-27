@@ -1,10 +1,10 @@
 import { Tokens } from "tokens.slint";
-import { SettingRow, PathField, SettingsToggle, SettingsButton } from "settings-fields.slint";
+import { SettingRow, SettingsToggle, SettingsButton } from "settings-fields.slint";
 import { SettingsGeneral } from "settings-general.slint";
 import { SettingsRuntime } from "settings-runtime.slint";
 import { SettingsCommands } from "settings-commands.slint";
 import { SettingsForm } from "settings-model.slint";
-import { FormButton, FormError } from "settings-inputs.slint";
+import { EditablePath, FormButton, FormError } from "settings-inputs.slint";
 import { Spinner } from "main-controls.slint";
 import { ScrollView } from "std-widgets.slint";
 import { GridBackdrop, TopoBackdrop } from "backdrop.slint";
@@ -59,13 +59,13 @@ export component SettingsScreen inherits Rectangle {
     in property <string> username;
     in property <string> title;
     in property <string> subtitle;
-    in property <string> skin-path;
-    in property <string> cape-path;
+    in-out property <string> skin-path;
+    in-out property <string> cape-path;
     in-out property <bool> slim: false;
     in property <image> skin-frame;
     in property <string> skin-error;
     in property <string> caption;
-    in property <string> skin-message;
+    in-out property <string> skin-message;
     in property <string> skin-raw-error;
     in-out property <bool> skin-busy: false;
     in property <LauncherUpdateData> launcher-data;
@@ -203,12 +203,14 @@ export component SettingsScreen inherits Rectangle {
                             label: "СКИН";
                             hint: ["PNG 64×64. Без загрузки на сервере", "остаётся скин лицензионного аккаунта с", "таким ником."];
                             row-height: root.skin-row-height;
-                            PathField {
+                            EditablePath {
                                 x: 0px;
                                 y: (parent.height - 24px - root.edge - self.height) / 2;
                                 width: parent.width - 284px;
                                 label: "СКИН";
-                                value: root.skin-path;
+                                marks-dirty: false;
+                                value <=> root.skin-path;
+                                edited => { root.skin-message = ""; }
                                 browse => { root.browse-skin(); }
                             }
                         }
@@ -219,12 +221,14 @@ export component SettingsScreen inherits Rectangle {
                             label: "ПЛАЩ";
                             hint: ["PNG 64×32. Необязательно."];
                             row-height: root.cape-row-height;
-                            PathField {
+                            EditablePath {
                                 x: 0px;
                                 y: (parent.height - 24px - root.edge - self.height) / 2;
                                 width: parent.width - 284px;
                                 label: "ПЛАЩ";
-                                value: root.cape-path;
+                                marks-dirty: false;
+                                value <=> root.cape-path;
+                                edited => { root.skin-message = ""; }
                                 browse => { root.browse-cape(); }
                             }
                         }
@@ -248,8 +252,8 @@ export component SettingsScreen inherits Rectangle {
                         upload-row := Rectangle {
                             y: root.skin-row-height + root.cape-row-height + root.model-row-height;
                             width: parent.width;
-                            height: 56px;
-                            SettingsButton {
+                            height: Math.max(56px, upload-error.height + 24px);
+                            upload-button := SettingsButton {
                                 x: parent.width - self.width;
                                 y: 12px;
                                 text: root.skin-busy ? "ЗАГРУЗКА..." : "ЗАГРУЗИТЬ";
@@ -258,17 +262,25 @@ export component SettingsScreen inherits Rectangle {
                                 enabled: (root.skin-path != "" || root.cape-path != "") && !root.skin-busy;
                                 clicked => { root.upload(); }
                             }
-                            if root.skin-message != "": Text {
+                            upload-error := FormError {
+                                x: upload-button.x - 12px - self.width;
+                                y: 12px + Math.max(0px, (40px - self.height) / 2);
+                                width: root.skin-error == "" ? 0px : Math.min(320px, Math.max(0px, upload-button.x - 12px));
+                                visible: root.skin-error != "";
+                                message: root.skin-error;
+                                raw: root.skin-raw-error;
+                            }
+                            if root.skin-error == "" && root.skin-message != "": Text {
                                 x: 0px;
-                                y: 44px;
-                                width: parent.width;
-                                height: 12px;
+                                y: 12px;
+                                width: Math.max(0px, upload-button.x - 12px);
+                                height: 40px;
                                 text: root.skin-message;
                                 font-size: 11px;
-                                color: #F5A524;
+                                color: Tokens.primary;
                                 horizontal-alignment: right;
                                 vertical-alignment: center;
-                                overflow: elide;
+                                wrap: word-wrap;
                             }
                         }
                     }
@@ -300,17 +312,6 @@ export component SettingsScreen inherits Rectangle {
                             color: Tokens.muted-foreground;
                             horizontal-alignment: center;
                             vertical-alignment: center;
-                        }
-                        if root.skin-error != "": Text {
-                            x: 9px;
-                            y: 330px;
-                            width: 220px;
-                            height: 12px;
-                            text: root.skin-error;
-                            font-size: 10px;
-                            color: #c98b8b;
-                            horizontal-alignment: center;
-                            overflow: elide;
                         }
                     }
                 }

@@ -1,5 +1,4 @@
 import { Tokens } from "tokens.slint";
-import { ActionArea } from "controls.slint";
 export component SettingRow inherits Rectangle {
     in property <image> icon;
     in property <string> label;
@@ -58,59 +57,6 @@ export component SettingRow inherits Rectangle {
     }
     for dash in (root.last ? 0 : Math.ceil(root.width / 6px)): Rectangle {
         x: dash * 6px; y: root.height - root.edge; width: Math.min(3px, root.width - self.x); height: root.edge; background: Tokens.secondary;
-    }
-}
-
-export component PathField inherits Rectangle {
-    in property <string> label;
-    in property <string> value;
-    callback browse();
-    height: 40px;
-    clip: true;
-    background: Tokens.chrome;
-    border-width: Math.floor(1px / 1phx) * 1phx;
-    border-color: Tokens.border;
-    field-text := Text {
-        x: 12px;
-        y: 0px;
-        width: parent.width - 79px;
-        height: parent.height;
-        text: root.value;
-        font-family: Tokens.mono;
-        font-size: 12px;
-        color: Tokens.neutral-200;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-    browse-button := ActionArea {
-        x: root.width - self.width;
-        y: 0px;
-        width: 67px;
-        height: parent.height;
-        label: "ОБЗОР";
-        background: Tokens.card;
-        Rectangle { x: 0px; y: 0px; width: 1px; height: parent.height; background: Tokens.border; }
-        browse-label := Text {
-            x: 0px;
-            y: 0px;
-            width: parent.width;
-            height: parent.height;
-            text: "ОБЗОР";
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: 1.4px;
-            color: parent.hovered ? Tokens.foreground : Tokens.secondary-foreground;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-        clicked => { root.browse(); }
-    }
-    TouchArea {
-        x: 0px;
-        y: 0px;
-        width: parent.width - 67px;
-        mouse-cursor: text;
-        clicked => { root.browse(); }
     }
 }
 

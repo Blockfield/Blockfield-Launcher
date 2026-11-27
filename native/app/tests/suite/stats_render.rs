@@ -102,18 +102,15 @@ fn scenario_board_states_and_pager() {
     // Data: stored rank wins, missing rank falls back to page position,
     // own row matches case-insensitively, pager counts derive from total.
     let app = test_app();
-    stats::apply_board(
-        &app,
-        &ok(board_json(
-            103,
-            vec![
-                row("some-other", "Player-001", Some(1)),
-                row("OWN-UUID", "CaptureOperator", None),
-            ],
-        )),
-        "own-uuid",
-        2,
+    let mut page2 = board_json(
+        103,
+        vec![
+            row("some-other", "Player-001", Some(1)),
+            row("OWN-UUID", "CaptureOperator", None),
+        ],
     );
+    page2["page"] = 2.into();
+    stats::apply_board(&app, &ok(page2), "own-uuid", 2);
     assert_eq!(app.get_stats_board_state(), 3, "board data");
     let rows = app.get_stats_rows();
     assert_eq!(rows.row_count(), 2);

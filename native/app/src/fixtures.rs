@@ -344,8 +344,8 @@ fn stats_row(index: i64, own: bool) -> serde_json::Value {
     })
 }
 
-fn stats_board_json(total: i64, rows: Vec<serde_json::Value>) -> serde_json::Value {
-    serde_json::json!({"schemaVersion": 1, "page": 1, "limit": 25, "total": total, "players": rows})
+fn stats_board_json(page: i64, total: i64, rows: Vec<serde_json::Value>) -> serde_json::Value {
+    serde_json::json!({"schemaVersion": 1, "page": page, "limit": 25, "total": total, "players": rows})
 }
 
 fn stats_self_json() -> serde_json::Value {
@@ -426,7 +426,7 @@ pub fn apply_stats(app: &AppWindow, scenario: &str) -> Result<(), String> {
             crate::stats::apply_board(
                 app,
                 &crate::stats::StatsOutcome {
-                    data: Some(stats_board_json(0, vec![])),
+                    data: Some(stats_board_json(1, 0, vec![])),
                     saved_at: Some(1_761_300_000_000),
                     stale: false,
                     error: None,
@@ -452,6 +452,7 @@ pub fn apply_stats(app: &AppWindow, scenario: &str) -> Result<(), String> {
                 app,
                 &crate::stats::StatsOutcome {
                     data: Some(stats_board_json(
+                        1,
                         2,
                         vec![stats_row(1, false), stats_row(2, true)],
                     )),
@@ -522,7 +523,7 @@ pub fn apply_stats_page(app: &AppWindow, page: i32) {
     crate::stats::apply_board(
         app,
         &crate::stats::StatsOutcome {
-            data: Some(stats_board_json(total, rows)),
+            data: Some(stats_board_json(i64::from(page), total, rows)),
             saved_at: Some(1_761_300_000_000),
             stale: false,
             error: None,

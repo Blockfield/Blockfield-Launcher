@@ -12,7 +12,7 @@ export struct DevData {
 export component DevPanel inherits Rectangle {
     in property <DevData> data;
     height: 112px;
-    Text { x: 0px; y: 0px; height: 20px; text: "DEV-СБОРКА"; font-size: 13px; font-weight: Tokens.weight-medium; color: Tokens.foreground; vertical-alignment: center; }
+    Text { x: 0px; y: 0px; height: 20px; text: "DEV-сборка"; font-size: 13px; font-weight: Tokens.weight-medium; color: Tokens.foreground; vertical-alignment: center; }
     Text { x: 0px; y: 22px; height: 14px; text: "Настройки берутся из переменных окружения при запуске лаунчера"; font-size: 11px; color: Tokens.muted-foreground; overflow: elide; vertical-alignment: center; }
     for row[i] in [
         { name: "BLOCKFIELD_DEV_SERVER", value: root.data.server },

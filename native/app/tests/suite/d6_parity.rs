@@ -5,7 +5,7 @@ use blockfield_native::{AppWindow, bridge, fixtures, stats, wire_app};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use launcher_app::{LauncherAppState, LauncherEvent};
 use launcher_core::game::{GamePhase, GameStatus};
-use slint::{Model, ModelRc};
+use slint::{ComponentHandle, Model, ModelRc};
 
 fn test_app() -> AppWindow {
     crate::init_slint();
@@ -238,8 +238,11 @@ fn f13_hook_error_shows_persistent_dismissible_alert() {
         "hook-error message must remain visible in Shell after launch/idle events"
     );
 
+    // Skip the WindowChrome titlebar close button (y < 50); click the Shell alert's dismiss button.
     let close = ElementHandle::find_by_accessible_label(&app, "Закрыть")
-        .find(|el| el.accessible_role() != Some(AccessibleRole::Text))
+        .find(|el| {
+            el.accessible_role() != Some(AccessibleRole::Text) && el.absolute_position().y > 50.0
+        })
         .expect("hook-error alert must have a dismiss button");
     close.invoke_accessible_default_action();
     assert!(
@@ -247,5 +250,38 @@ fn f13_hook_error_shows_persistent_dismissible_alert() {
             .next()
             .is_none(),
         "clicking Закрыть must dismiss the hook-error alert"
+    );
+}
+
+/// F13 + F30: Commands screen pre-launch hint matches engine behavior ("не отменяет запуск"),
+/// shell footnote says "sh (Linux)", and DevPanel heading says "DEV-сборка".
+#[test]
+fn f13_f30_commands_and_dev_panel_copy_parity() {
+    let app = test_app();
+    let (_host, _activity) =
+        wire_app(&app, blockfield_native::backend::Backend::Fixtures).expect("wire");
+    fixtures::apply_settings(&app).expect("settings fixtures");
+    app.set_settings_tab(2);
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "команды не отменяет запуск.")
+            .next()
+            .is_some(),
+        "pre-launch hint must state errors do not cancel launch"
+    );
+    assert!(
+        ElementHandle::find_by_accessible_label(
+            &app,
+            "Команды выполняются в папке игры через sh (Linux) или cmd (Windows). Доступны INST_DIR, INST_MC_DIR, INST_JAVA и INST_EXIT_CODE после выхода. Обращение к переменным: $INST_DIR в sh, %INST_DIR% в cmd. Вывод: logs/launcher-hooks.log.",
+        )
+        .next()
+        .is_some(),
+        "commands footer must say sh (Linux)"
+    );
+    app.set_settings_tab(4);
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "DEV-сборка")
+            .next()
+            .is_some(),
+        "DevPanel heading must match Tauri 'DEV-сборка'"
     );
 }

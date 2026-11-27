@@ -24,7 +24,13 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
     // readiness on this thread (the rest retry at their own set_main_data).
     let mut retry = false;
     match event {
-        LauncherEvent::Status(status) => data.launch_status = status.message.into(),
+        LauncherEvent::Status(status) => {
+            if status.phase == "hook-error" {
+                app.set_command_error(status.message.into());
+                return;
+            }
+            data.launch_status = status.message.into();
+        }
         LauncherEvent::GameStatus(status) => {
             data.phase = match status.phase {
                 GamePhase::Idle => "idle",

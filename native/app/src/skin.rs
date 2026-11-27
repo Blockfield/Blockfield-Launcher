@@ -1,17 +1,252 @@
-use std::{rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
-use skin3d::slint::{ClockMode, FrameSink, HostOptions, PreviewHost, default_source};
+use launcher_app::LauncherAppState;
+use skin3d::slint::{ClockMode, FrameSink, HostOptions, PreviewHost, SkinSource, default_source};
 use slint::{
     ComponentHandle, Timer,
     platform::WindowEvent,
     winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent as WinitEvent},
 };
+use tokio::runtime::Handle;
 
 use crate::{AppWindow, window_activity::Activity};
 
 const MAX_TEXTURE_BYTES: u64 = 1024 * 1024;
 const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
 const LOCAL_CAPTION: &str = "ПРЕДПРОСМОТР ФАЙЛА";
+const DEFAULT_CAPTION: &str = "СТАНДАРТНЫЙ СКИН";
+const MOJANG_CAPTION: &str = "ЛИЦЕНЗИОННЫЙ СКИН";
+const CUSTOM_CAPTION: &str = "ВАШ СКИН";
+const FALLBACK_CAPTION: &str = "СКИН НЕ НАЙДЕН";
+const DATA_URL_PREFIX: &str = "data:image/png;base64,";
+
+/// Derive the preview caption from the resolved `preview_skin` result,
+/// mirroring `SettingsScreen.tsx` + `SkinPreview.tsx`.
+pub fn caption_for_preview(
+    skin_path: &str,
+    preview: &launcher_net::skins::SkinPreview,
+) -> &'static str {
+    if preview.skin.is_none() {
+        return FALLBACK_CAPTION;
+    }
+    if !skin_path.trim().is_empty() {
+        return LOCAL_CAPTION;
+    }
+    match preview.source {
+        "none" => DEFAULT_CAPTION,
+        "mojang" => MOJANG_CAPTION,
+        _ => CUSTOM_CAPTION,
+    }
+}
+
+fn decode_data_url(url: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let encoded = url.strip_prefix(DATA_URL_PREFIX)?;
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct LiveKey {
+    username: String,
+    skin_path: String,
+    cape_path: String,
+    slim: bool,
+    upload_rev: u64,
+}
+
+struct LiveBackend {
+    state: Arc<LauncherAppState>,
+    handle: Handle,
+    generation: Arc<AtomicU64>,
+    upload_rev: Cell<u64>,
+    last_key: RefCell<Option<LiveKey>>,
+    staged: Cell<bool>,
+}
+
+enum PendingPreview {
+    AttachLive(Arc<LauncherAppState>, Handle),
+    Invalidate,
+    Apply {
+        host_key: (String, String, bool),
+        skin: Option<Vec<u8>>,
+        cape: Option<Vec<u8>>,
+        slim: bool,
+        caption: &'static str,
+    },
+}
+
+thread_local! {
+    static PENDING: RefCell<Option<PendingPreview>> = const { RefCell::new(None) };
+}
+
+fn dispatch_pending(app: &AppWindow, pending: PendingPreview) {
+    PENDING.with(|slot| *slot.borrow_mut() = Some(pending));
+    app.invoke_skin_preview_sync();
+    // Drop if the window has no `skin::attach` handler (e.g. isolated upload tests).
+    PENDING.with(|slot| *slot.borrow_mut() = None);
+}
+
+/// Attach live off-UI-thread `preview_skin` fetching to this window's preview host.
+pub fn attach_live(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
+    dispatch_pending(app, PendingPreview::AttachLive(state, handle));
+}
+
+/// Force a fresh Drasl/Mojang skin preview fetch after an upload succeeds.
+pub fn invalidate_preview(app: &AppWindow) {
+    dispatch_pending(app, PendingPreview::Invalidate);
+}
+
+struct SkinController {
+    host: Rc<PreviewHost>,
+    live: RefCell<Option<LiveBackend>>,
+}
+
+impl SkinController {
+    fn handle_sync(&self, app: &AppWindow) {
+        let pending = PENDING.with(|slot| slot.borrow_mut().take());
+        match pending {
+            Some(PendingPreview::AttachLive(state, handle)) => {
+                self.live.replace(Some(LiveBackend {
+                    state,
+                    handle,
+                    generation: Arc::new(AtomicU64::new(0)),
+                    upload_rev: Cell::new(0),
+                    last_key: RefCell::new(None),
+                    staged: Cell::new(false),
+                }));
+            }
+            Some(PendingPreview::Invalidate) => {
+                if let Some(live) = self.live.borrow().as_ref() {
+                    live.upload_rev.set(live.upload_rev.get().wrapping_add(1));
+                    live.last_key.replace(None);
+                }
+            }
+            Some(PendingPreview::Apply {
+                host_key,
+                skin,
+                cape,
+                slim,
+                caption,
+            }) => {
+                app.set_skin_caption(caption.into());
+                match skin {
+                    Some(bytes) => {
+                        self.host.set_source(
+                            host_key,
+                            SkinSource {
+                                skin: bytes,
+                                cape,
+                                slim,
+                            },
+                        );
+                        if let Some(live) = self.live.borrow().as_ref() {
+                            live.staged.set(true);
+                        }
+                        self.host.set_tab_visible(skin_visible(app));
+                        self.host.refresh();
+                    }
+                    None => {
+                        self.host.set_tab_visible(false);
+                        self.host.refresh();
+                    }
+                }
+                return;
+            }
+            None => {}
+        }
+
+        let live_borrow = self.live.borrow();
+        let Some(live) = live_borrow.as_ref() else {
+            sync_source(app, &self.host);
+            self.host.set_tab_visible(skin_visible(app));
+            self.host.refresh();
+            return;
+        };
+
+        if !skin_visible(app) {
+            self.host.set_tab_visible(false);
+            self.host.refresh();
+            return;
+        }
+
+        let key = LiveKey {
+            username: app.get_username().to_string(),
+            skin_path: app.get_skin_path().to_string(),
+            cape_path: app.get_cape_path().to_string(),
+            slim: app.get_slim(),
+            upload_rev: live.upload_rev.get(),
+        };
+        if live.last_key.borrow().as_ref() == Some(&key) {
+            if live.staged.get() && !self.host.failed() {
+                self.host.set_tab_visible(true);
+                self.host.refresh();
+            }
+            return;
+        }
+        live.last_key.replace(Some(key.clone()));
+        let generation = live.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        if !live.staged.get() {
+            // Avoid initializing wgpu with the bundled fixture skin before real bytes arrive.
+            self.host.set_tab_visible(false);
+        }
+
+        let state = live.state.clone();
+        let gen_counter = live.generation.clone();
+        let weak = app.as_weak();
+        let username = key.username;
+        let skin_path = key.skin_path;
+        let cape_path = key.cape_path;
+        let slim = key.slim;
+        live.handle.spawn(async move {
+            let skins_base = state
+                .pack
+                .read()
+                .await
+                .as_ref()
+                .and_then(|pack| pack.info.skins.clone());
+            let skin_arg = (!skin_path.trim().is_empty()).then(|| skin_path.clone());
+            let cape_arg = (!cape_path.trim().is_empty()).then(|| cape_path.clone());
+            let result =
+                launcher_net::skins::preview_skin(skins_base, username, skin_arg, cape_arg, slim)
+                    .await;
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if gen_counter.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+                match result {
+                    Ok(preview) => {
+                        let caption = caption_for_preview(&skin_path, &preview);
+                        let skin = preview.skin.as_deref().and_then(decode_data_url);
+                        let cape = preview.cape.as_deref().and_then(decode_data_url);
+                        dispatch_pending(
+                            &app,
+                            PendingPreview::Apply {
+                                host_key: (skin_path, cape_path, preview.slim),
+                                skin,
+                                cape,
+                                slim: preview.slim,
+                                caption,
+                            },
+                        );
+                    }
+                    Err(error) => {
+                        eprintln!("preview_skin: {error}");
+                    }
+                }
+            });
+        });
+    }
+}
 
 /// The preview is live only on the Skin tab of the settings screen.
 pub fn skin_visible(app: &AppWindow) -> bool {
@@ -107,10 +342,8 @@ pub fn sync_source(app: &AppWindow, host: &Rc<PreviewHost>) {
     }
 }
 
-pub fn sync_visibility(app: &AppWindow, host: &Rc<PreviewHost>) {
-    sync_source(app, host);
-    host.set_tab_visible(skin_visible(app));
-    host.refresh();
+pub fn sync_visibility(app: &AppWindow, _host: &Rc<PreviewHost>) {
+    app.invoke_skin_preview_sync();
 }
 
 pub fn attach(app: &AppWindow, activity: &Rc<Activity>) -> std::io::Result<Rc<PreviewHost>> {
@@ -157,6 +390,16 @@ pub fn attach(app: &AppWindow, activity: &Rc<Activity>) -> std::io::Result<Rc<Pr
             }),
         },
     })?;
+    let controller = Rc::new(SkinController {
+        host: host.clone(),
+        live: RefCell::new(None),
+    });
+    let sync_weak = app.as_weak();
+    app.on_skin_preview_sync(move || {
+        if let Some(app) = sync_weak.upgrade() {
+            controller.handle_sync(&app);
+        }
+    });
     let this = host.clone();
     let activity = activity.clone();
     app.window().on_winit_window_event(move |_, event| {
@@ -333,5 +576,35 @@ mod tests {
         assert!(texture_bytes(&path).expect("small PNG loads").is_some());
         assert!(texture_bytes("").expect("empty path").is_none());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn caption_matches_tauri_source_rules() {
+        let mk = |skin: Option<&str>, source: &'static str| launcher_net::skins::SkinPreview {
+            skin: skin.map(str::to_owned),
+            cape: None,
+            slim: false,
+            source,
+        };
+        assert_eq!(caption_for_preview("", &mk(None, "none")), "СКИН НЕ НАЙДЕН");
+        assert_eq!(
+            caption_for_preview(
+                "/tmp/s.png",
+                &mk(Some("data:image/png;base64,AA=="), "none")
+            ),
+            "ПРЕДПРОСМОТР ФАЙЛА"
+        );
+        assert_eq!(
+            caption_for_preview("", &mk(Some("data:image/png;base64,AA=="), "none")),
+            "СТАНДАРТНЫЙ СКИН"
+        );
+        assert_eq!(
+            caption_for_preview("", &mk(Some("data:image/png;base64,AA=="), "mojang")),
+            "ЛИЦЕНЗИОННЫЙ СКИН"
+        );
+        assert_eq!(
+            caption_for_preview("", &mk(Some("data:image/png;base64,AA=="), "custom")),
+            "ВАШ СКИН"
+        );
     }
 }

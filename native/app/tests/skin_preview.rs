@@ -184,25 +184,21 @@ fn f03_skin_tab_fetches_real_drasl_skin_and_sets_source_caption() {
         move || {
             let app = weak.upgrade().unwrap();
             match phase_poll.get() {
-                0 => {
-                    if app.get_skin_caption() == "СТАНДАРТНЫЙ СКИН" {
-                        if cfg!(debug_assertions) {
-                            // Step 2 (debug builds where local HTTP Drasl is permitted):
-                            // switching username to "DraslHero" must hit mock Drasl and
-                            // update caption to "ВАШ СКИН".
-                            phase_poll.set(1);
-                            app.set_username("DraslHero".into());
-                        } else {
-                            slint::quit_event_loop().unwrap();
-                        }
-                    }
-                }
-                1 => {
-                    if hits_check.load(Ordering::SeqCst) >= 1
-                        && app.get_skin_caption() == "ВАШ СКИН"
-                    {
+                0 if app.get_skin_caption() == "СТАНДАРТНЫЙ СКИН" => {
+                    if cfg!(debug_assertions) {
+                        // Step 2 (debug builds where local HTTP Drasl is permitted):
+                        // switching username to "DraslHero" must hit mock Drasl and
+                        // update caption to "ВАШ СКИН".
+                        phase_poll.set(1);
+                        app.set_username("DraslHero".into());
+                    } else {
                         slint::quit_event_loop().unwrap();
                     }
+                }
+                1 if hits_check.load(Ordering::SeqCst) >= 1
+                    && app.get_skin_caption() == "ВАШ СКИН" =>
+                {
+                    slint::quit_event_loop().unwrap();
                 }
                 _ => {}
             }
