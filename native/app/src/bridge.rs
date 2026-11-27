@@ -22,7 +22,9 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
     // Tauri MainScreen.tsx pending-room effect re-runs on every readiness
     // dep change; arm the one-shot retry below for the events that change
     // readiness on this thread (the rest retry at their own set_main_data).
+    let was_busy = matches!(data.phase.as_str(), "launching" | "running" | "finishing");
     let mut retry = false;
+    let mut game_became_idle = false;
     match event {
         LauncherEvent::Status(status) => data.launch_status = status.message.into(),
         LauncherEvent::GameStatus(status) => {
@@ -38,6 +40,7 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
                 data.launch_status = "".into();
                 data.progress = -1;
             }
+            game_became_idle = was_busy && status.phase == GamePhase::Idle;
             retry = true;
         }
         LauncherEvent::DownloadProgress(progress) => {
@@ -60,6 +63,10 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
         LauncherEvent::AccountExpired => {
             // Tauri answers `account://expired` with the login screen; the
             // stored username stays so the user can sign straight back in.
+            app.set_role("ИГРОК".into());
+            data.can_workshop = false;
+            data.profile_blocked = false;
+            data.profile_error = "".into();
             crate::auth::show_login_expired(app);
         }
         event => {
@@ -68,6 +75,9 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
         }
     }
     app.set_main_data(data);
+    if game_became_idle {
+        crate::backend::retry_pending_profile_if_idle(app);
+    }
     if retry {
         retry_pending_join(app);
     }

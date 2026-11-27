@@ -107,6 +107,7 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
                 }
                 data.check_error = "".into();
                 data.launch_error = "".into();
+                crate::backend::bump_pack_check_gen();
                 if matches!(action, Action::Verify) {
                     data.checking = true;
                 } else {

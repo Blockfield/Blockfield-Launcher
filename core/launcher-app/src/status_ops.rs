@@ -80,6 +80,10 @@ pub async fn stats_player(
     status::fetch_stats(status::STATS_API_URL, &format!("players/{uuid}"), query).await
 }
 
+pub async fn launcher_content(base: &str) -> Option<serde_json::Value> {
+    status::fetch_content(base).await
+}
+
 pub fn game_status(state: &LauncherAppState) -> GameStatus {
     state.game.snapshot()
 }
