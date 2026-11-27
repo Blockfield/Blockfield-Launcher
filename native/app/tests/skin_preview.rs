@@ -196,27 +196,17 @@ fn f03_skin_tab_fetches_real_drasl_skin_and_sets_source_caption() {
 
     let weak = app.as_weak();
     let hits_check = hits.clone();
-    let profiles_base = profiles.clone();
+    // Independent snapshot holder: a clone of `profiles` would alias the
+    // live mock counter and read back the same value.
+    let profiles_base = Arc::new(AtomicUsize::new(0));
     let phase = std::rc::Rc::new(std::cell::Cell::new(0u8));
     let phase_poll = phase.clone();
-    let last_seen = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
-    let last_seen_poll = last_seen.clone();
     let poll = slint::Timer::default();
     poll.start(
         slint::TimerMode::Repeated,
         Duration::from_millis(20),
         move || {
             let app = weak.upgrade().unwrap();
-            let caption = app.get_skin_caption().to_string();
-            if *last_seen_poll.borrow() != caption {
-                eprintln!(
-                    "F03TRACE phase={} caption={caption:?} hits={} profiles={}",
-                    phase_poll.get(),
-                    hits_check.load(Ordering::SeqCst),
-                    profiles.load(Ordering::SeqCst)
-                );
-                *last_seen_poll.borrow_mut() = caption.clone();
-            }
             match phase_poll.get() {
                 0 if app.get_skin_caption() == "СТАНДАРТНЫЙ СКИН" => {
                     if cfg!(debug_assertions) {
@@ -226,11 +216,6 @@ fn f03_skin_tab_fetches_real_drasl_skin_and_sets_source_caption() {
                         // debounce like Tauri SettingsScreen); only the last
                         // name ("DraslHero") may fetch and set "ВАШ СКИН".
                         profiles_base.store(profiles.load(Ordering::SeqCst), Ordering::SeqCst);
-                        eprintln!(
-                            "F03TRACE snapshot base={} (profiles now {})",
-                            profiles_base.load(Ordering::SeqCst),
-                            profiles.load(Ordering::SeqCst)
-                        );
                         for name in ["Typist02", "Typist03", "Typist04", "Typist05", "DraslHero"] {
                             app.set_username(name.into());
                         }
@@ -245,10 +230,7 @@ fn f03_skin_tab_fetches_real_drasl_skin_and_sets_source_caption() {
                     assert_eq!(
                         profiles.load(Ordering::SeqCst) - profiles_base.load(Ordering::SeqCst),
                         1,
-                        "rapid username changes must coalesce into one profile lookup (profiles={}, base={}, hits={})",
-                        profiles.load(Ordering::SeqCst),
-                        profiles_base.load(Ordering::SeqCst),
-                        hits_check.load(Ordering::SeqCst)
+                        "rapid username changes must coalesce into one profile lookup"
                     );
                     slint::quit_event_loop().unwrap();
                 }
