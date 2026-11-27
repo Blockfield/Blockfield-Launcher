@@ -199,12 +199,24 @@ fn f03_skin_tab_fetches_real_drasl_skin_and_sets_source_caption() {
     let profiles_base = profiles.clone();
     let phase = std::rc::Rc::new(std::cell::Cell::new(0u8));
     let phase_poll = phase.clone();
+    let last_seen = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+    let last_seen_poll = last_seen.clone();
     let poll = slint::Timer::default();
     poll.start(
         slint::TimerMode::Repeated,
         Duration::from_millis(20),
         move || {
             let app = weak.upgrade().unwrap();
+            let caption = app.get_skin_caption().to_string();
+            if *last_seen_poll.borrow() != caption {
+                eprintln!(
+                    "F03TRACE phase={} caption={caption:?} hits={} profiles={}",
+                    phase_poll.get(),
+                    hits_check.load(Ordering::SeqCst),
+                    profiles.load(Ordering::SeqCst)
+                );
+                *last_seen_poll.borrow_mut() = caption.clone();
+            }
             match phase_poll.get() {
                 0 if app.get_skin_caption() == "СТАНДАРТНЫЙ СКИН" => {
                     if cfg!(debug_assertions) {
