@@ -27,6 +27,18 @@ use launcher_net::{
 use slint::ComponentHandle;
 use tokio::sync::{Mutex, RwLock};
 
+// The testing event-loop backend installs process-wide (second init panics)
+// and only one `app.run()` may drive it at a time, so the tests in this
+// binary share one init and serialize on the loop guard.
+static BACKEND_INIT: std::sync::Once = std::sync::Once::new();
+static LOOP_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn setup_loop() -> std::sync::MutexGuard<'static, ()> {
+    let guard = LOOP_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    BACKEND_INIT.call_once(i_slint_backend_testing::init_integration_test_with_system_time);
+    guard
+}
+
 fn spawn_mock_drasl(
     skin_png: Vec<u8>,
 ) -> (
@@ -163,7 +175,7 @@ fn state_with_skins(skins_base: Option<String>, username: &str) -> LauncherAppSt
 
 #[test]
 fn f03_skin_tab_fetches_real_drasl_skin_and_sets_source_caption() {
-    i_slint_backend_testing::init_integration_test_with_system_time();
+    let _loop_guard = setup_loop();
     let app = AppWindow::new().unwrap();
     let runtime = runtime::new().unwrap();
     // Wire app with Fixtures so Backend::Core does not spawn real network startup,
@@ -246,7 +258,7 @@ fn f03_debounce_coalesces_rapid_username_changes_into_single_fetch() {
     // Fail-before for review item 4 (300 ms debounce like Tauri
     // SettingsScreen): five rapid username changes must spawn exactly one
     // profile lookup, not one Drasl chain per keystroke.
-    i_slint_backend_testing::init_integration_test_with_system_time();
+    let _loop_guard = setup_loop();
     let app = AppWindow::new().unwrap();
     let runtime = runtime::new().unwrap();
     let (host, _activity) = wire_app(&app, Backend::Fixtures).unwrap();
@@ -342,7 +354,7 @@ fn f03_preload_caption_is_not_found_until_first_bytes() {
     // host stays hidden and the caption must be the not-found fallback
     // (Tauri SkinPreview shows `fallback` when `data?.skin` is null), never
     // the fixture "ВАШ СКИН".
-    i_slint_backend_testing::init_integration_test_with_system_time();
+    let _loop_guard = setup_loop();
     let app = AppWindow::new().unwrap();
     let runtime = runtime::new().unwrap();
     let (host, _activity) = wire_app(&app, Backend::Fixtures).unwrap();
