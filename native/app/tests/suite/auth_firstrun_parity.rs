@@ -390,6 +390,7 @@ fn auth_busy_stays_set_until_transition_completes() {
     let (rt, state) = test_state();
     // Successful first login: busy stays set while enter_firstrun loads.
     let status = launcher_net::account::AccountStatus::from(&*state.config.blocking_read());
+    app.set_login_busy(true);
     auth::on_auth_done(&app, &state, rt.handle(), Ok(status));
     assert!(
         app.get_login_busy(),
