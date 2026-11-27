@@ -1,7 +1,7 @@
 use blockfield_native::{
     AppWindow, backend, deep_link, fixtures, idle_self_check, runtime, single_instance, skin,
 };
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model};
 
 // Resident set size in KiB (Linux only; None elsewhere) for the RENDERER_PROBE cost line.
 #[cfg(target_os = "linux")]
@@ -301,8 +301,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Smoke-gate text snapshot: every user-visible string the gate asserts on.
-/// Update-log lines are excluded on purpose: the real checking default also
-/// carries fixed "12:00:01" stamps, so they cannot tell fixtures apart.
+/// Update-log lines are included: since D7 the fixed "12:00:01" stamps live in
+/// fixtures:: only and real runs stamp the local time, so a fixture marker in
+/// the log tells a fixture leak apart from a real run.
 fn smoke_dump(app: &AppWindow) -> String {
     let main = app.get_main_data();
     let update = app.get_update_data();
@@ -346,10 +347,13 @@ fn smoke_dump(app: &AppWindow) -> String {
     ]
     .iter()
     .map(|(key, value)| format!("{key}={value}"))
-    .collect::<Vec<_>>()
-    .join("\n");
-    out.push('\n');
-    out
+    .collect::<Vec<_>>();
+    // D7 tripwire: fixture log lines carry fixed "12:00:01" stamps while real
+    // runs stamp the local time, so any fixture marker here is a real leak.
+    for (index, line) in update.log.iter().enumerate() {
+        out.push(format!("update_log[{index}]={} {}", line.ts, line.msg));
+    }
+    out.join("\n") + "\n"
 }
 
 #[cfg(test)]
