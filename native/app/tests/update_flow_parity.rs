@@ -219,6 +219,14 @@ fn test_f19_fatal_init_error_dedicated_screen_with_retry() {
         has_text(&app, "Повторить"),
         "F19: fatal init error screen offers Повторить button"
     );
+    let retried = std::rc::Rc::new(std::cell::Cell::new(false));
+    let retried_flag = retried.clone();
+    app.on_retry_init(move || retried_flag.set(true));
+    let retry_btn = ElementHandle::find_by_accessible_label(&app, "Повторить")
+        .find(|el| el.accessible_role() != Some(i_slint_backend_testing::AccessibleRole::Text))
+        .expect("F19: Повторить button exists");
+    retry_btn.invoke_accessible_default_action();
+    assert!(retried.get(), "F19: clicking Повторить invokes retry_init");
 }
 
 fn test_f22_file_progress_hint_banner() {

@@ -105,9 +105,21 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
                 {
                     return;
                 }
+                // Tauri MainScreen parity: ОБНОВИТЬ / ПОДГОТОВИТЬ (and explicit
+                // download) route to UpdateScreen so the user gets full progress,
+                // mirror status and cancel. Play intent (saved room invite) arms
+                // auto-launch after sync; plain ОБНОВИТЬ syncs only (launcher#156).
+                if matches!(action, Action::Download)
+                    || (matches!(action, Action::Deploy) && data.needs_setup)
+                {
+                    let auto_launch = join_continues(action, &pending);
+                    app.invoke_open_updates(auto_launch);
+                    return;
+                }
                 data.check_error = "".into();
                 data.launch_error = "".into();
                 crate::backend::bump_pack_check_gen();
+                data.launch_stale = false;
                 if matches!(action, Action::Verify) {
                     data.checking = true;
                 } else {
@@ -127,20 +139,40 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
                     }
                     return;
                 }
-                let result = run(action, &state, &pending, &weak, data.needs_setup).await;
+                let result = run(action, &state, &pending, &weak).await;
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     let mut data = app.get_main_data();
                     data.checking = false;
                     data.launching = false;
+                    let mut route_updates = false;
                     match result {
-                        Ok(Some(version)) => apply_version(&mut data, version),
-                        Ok(None) => {}
+                        Ok(RunOutcome::Verified(version)) => {
+                            crate::update::apply_version_patch(&app, &version);
+                            apply_version(&mut data, version);
+                        }
+                        Ok(RunOutcome::Launched) => {}
+                        Ok(RunOutcome::RouteToUpdates(version)) => {
+                            if let Some(version) = version {
+                                crate::update::apply_version_patch(&app, &version);
+                                apply_version(&mut data, version);
+                            }
+                            data.launch_status = "".into();
+                            data.progress = -1;
+                            route_updates = true;
+                        }
                         Err(error) if matches!(action, Action::Verify) => {
                             data.check_error = error.into()
                         }
-                        Err(error) => data.launch_error = error.into(),
+                        Err(error) => {
+                            data.launch_stale = error.contains("PACK_STALE");
+                            data.launch_error = error.into();
+                        }
                     }
                     app.set_main_data(data);
+                    if route_updates {
+                        app.invoke_open_updates(true);
+                        return;
+                    }
                     // Pack check done / launch idle: a still-waiting invite
                     // retries now (Tauri MainScreen.tsx pending-room effect).
                     crate::bridge::retry_pending_join(&app);
@@ -198,38 +230,38 @@ pub fn attach(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle) {
     });
 }
 
+enum RunOutcome {
+    Verified(VersionCheckResult),
+    Launched,
+    RouteToUpdates(Option<VersionCheckResult>),
+}
+
+/// Tauri `MainScreen.tsx` launch recovery: `PACK_STALE` / `PACK_REPAIR` from
+/// `launch_game` route straight to `UpdateScreen` with one-shot auto-launch.
+pub fn is_pack_recovery_error(error: &str) -> bool {
+    error.contains("PACK_STALE") || error.contains("PACK_REPAIR")
+}
+
 async fn run(
     action: Action,
     state: &LauncherAppState,
     pending: &PendingRoom,
     weak: &slint::Weak<AppWindow>,
-    needs_setup: bool,
-) -> Result<Option<VersionCheckResult>, String> {
+) -> Result<RunOutcome, String> {
     if matches!(action, Action::Verify) {
-        return check(state, true).await.map(Some);
+        return check(state, true).await.map(RunOutcome::Verified);
     }
-    let needs_setup = if matches!(action, Action::Deploy) && state.config.read().await.auto_update {
+    if matches!(action, Action::Deploy) && state.config.read().await.auto_update {
         let version = check(state, true).await?;
-        version.needs_update || !version.java_ok || !version.loader_ok
-    } else {
-        needs_setup
-    };
-    if matches!(action, Action::Download) || needs_setup {
-        install::download_modpack(state).await?;
-        let version = check(state, false).await?;
-        if !join_continues(action, pending) {
-            return Ok(Some(version));
+        if version.needs_update || !version.java_ok || !version.loader_ok {
+            return Ok(RunOutcome::RouteToUpdates(Some(version)));
         }
-        // Invite auto-join, Tauri auto-launch-after-sync
-        // (src/lib/auto-launch.ts + UpdateScreen effect, ported as
-        // ops::launch::should_auto_launch_after_sync): a join-triggered
-        // deploy continues into launch with the saved room instead of
-        // stopping on the done version.
-        launch(state, pending, weak).await?;
-        return Ok(Some(version));
     }
-    launch(state, pending, weak).await?;
-    Ok(None)
+    match launch(state, pending, weak).await {
+        Ok(()) => Ok(RunOutcome::Launched),
+        Err(error) if is_pack_recovery_error(&error) => Ok(RunOutcome::RouteToUpdates(None)),
+        Err(error) => Err(error),
+    }
 }
 
 /// Invite auto-join continuation: only a deploy with a saved invite proceeds
@@ -335,7 +367,7 @@ fn display_repaired_path(game_dir: &Path, path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-fn apply_version(data: &mut MainData, version: VersionCheckResult) {
+pub(crate) fn apply_version(data: &mut MainData, version: VersionCheckResult) {
     data.checked = true;
     data.needs_update = version.needs_update;
     data.needs_setup = version.needs_update || !version.java_ok || !version.loader_ok;
@@ -373,6 +405,17 @@ mod tests {
         assert!(!super::join_continues(super::Action::Verify, &pending));
         assert!(!super::join_continues(super::Action::Cancel, &pending));
         *pending.0.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn pack_recovery_errors_detect_stale_and_repair() {
+        assert!(super::is_pack_recovery_error(
+            "PACK_STALE: installed pack is outdated"
+        ));
+        assert!(super::is_pack_recovery_error(
+            "PACK_REPAIR: pack files changed or are missing."
+        ));
+        assert!(!super::is_pack_recovery_error("Java exited with status 1"));
     }
 
     #[test]

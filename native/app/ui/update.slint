@@ -153,6 +153,9 @@ export component UpdateScreen inherits Rectangle {
     // block stays instantiated with `visible` and the stats row anchors to it.
     private property <bool> show-err: root.data.phase == "error" && root.data.error != "";
     private property <bool> show-raw: root.error-details && root.data.error-raw != "";
+    private property <bool> show-file-hint: root.data.progress-unit == "files" && root.transferring;
+    private property <int> progress-tenths: Math.round(Math.min(100, Math.max(0, root.data.progress)) * 10);
+    private property <bool> progress-spinning: root.data.phase == "checking" || (root.data.phase == "launching" && root.data.progress >= 100);
     background: Tokens.background;
     TopoBackdrop { x: 0px; y: 0px; }
     GridBackdrop { x: 0px; y: 0px; intensity: 0.5; }
@@ -181,7 +184,7 @@ export component UpdateScreen inherits Rectangle {
                     font-size: 11px; letter-spacing: 2.42px; color: root.data.mirror-bad ? #c98b8b : root.transferring ? Tokens.primary : Tokens.success; overflow: elide; }
             }
         }
-        panel := GlowPanel { x: 0px; y: summary.y + summary.height + 12px; width: parent.width; height: 252px;
+        panel := GlowPanel { x: 0px; y: summary.y + summary.height + 12px; width: parent.width; height: Math.max(252px, status-row.y + status-row.height + 12px);
             actions := Rectangle { x: 16px; y: 12px; width: parent.width - 32px; height: 64px;
                 if root.game-busy: UpdateAction { x: 0px; y: 0px; label: root.data.game-label; sub: root.data.game-sub;
                     icon: @image-url("../assets/icons/gamepad-2.svg"); enabled: false; }
@@ -189,8 +192,15 @@ export component UpdateScreen inherits Rectangle {
                     sub: root.data.status-message != "" ? root.data.status-message : "...";
                     icon: @image-url("../assets/icons/loader-circle.svg"); spinning: true; enabled: false; }
                 if !root.game-busy && root.data.phase == "downloading" && root.data.can-cancel: UpdateAction { x: 0px; y: 0px;
-                    label: "ОТМЕНА"; sub: "ИДЁТ ОБНОВЛЕНИЕ"; icon: @image-url("../assets/icons/x.svg"); danger: true;
+                    label: "CANCEL"; sub: "ИДЁТ ОБНОВЛЕНИЕ"; icon: @image-url("../assets/icons/x.svg"); danger: true;
                     clicked => { root.cancel(); } }
+                if !root.game-busy && root.data.phase == "downloading" && root.data.can-cancel: ActionArea {
+                    x: 246px; y: 12px; width: 40px; height: 40px; label: "Отменить загрузку";
+                    border-width: 1phx; border-color: self.hovered ? #8a571c : Tokens.border;
+                    clicked => { root.cancel(); }
+                    Rectangle { x: 15px; y: 14px; width: 3px; height: 12px; background: parent.hovered ? Tokens.foreground : Tokens.secondary-foreground; }
+                    Rectangle { x: 22px; y: 14px; width: 3px; height: 12px; background: parent.hovered ? Tokens.foreground : Tokens.secondary-foreground; }
+                }
                 if !root.game-busy && (root.data.phase == "downloading" || root.data.phase == "verifying") && !root.data.can-cancel:
                     UpdateAction { x: 0px; y: 0px; label: "..."; sub: root.status-text;
                         icon: @image-url("../assets/icons/loader-circle.svg"); spinning: true; enabled: false; }
@@ -208,14 +218,14 @@ export component UpdateScreen inherits Rectangle {
                 Text { x: parent.width - self.preferred-width; y: 0px; height: 20px;
                     text: root.data.phase == "checking" ? "ПРОГРЕСС" : root.data.progress-unit == "files" ? "ОБРАБОТАНО ФАЙЛОВ" : "ПРОГРЕСС";
                     font-size: 10px; letter-spacing: 1.8px; color: Tokens.muted-foreground; }
-                if root.data.phase == "checking": Spinner { x: parent.width - 32px; y: 24px; width: 32px; height: 32px; }
-                if root.data.phase != "checking" && root.data.progress-unit == "files": Text {
+                if root.progress-spinning: Spinner { x: parent.width - 32px; y: 24px; width: 32px; height: 32px; }
+                if !root.progress-spinning && root.data.progress-unit == "files": Text {
                     x: parent.width - 220px; y: 22px; width: 220px; height: 28px;
                     text: root.data.file-index + " / " + (root.data.file-count > 0 ? root.data.file-count : "…");
                     font-size: 28px; color: Tokens.foreground; horizontal-alignment: right; }
-                if root.data.phase != "checking" && root.data.progress-unit != "files": HorizontalLayout {
+                if !root.progress-spinning && root.data.progress-unit != "files": HorizontalLayout {
                     x: parent.width - 220px; y: 16px; width: 220px; height: 44px; spacing: 0px; alignment: end;
-                    Text { text: Math.round(root.data.progress * 10) / 10 + ""; font-size: 44px; color: Tokens.foreground; }
+                    Text { text: Math.floor(root.progress-tenths / 10) + "." + Math.mod(root.progress-tenths, 10); font-size: 44px; color: Tokens.foreground; }
                     Text { text: "%"; font-size: 20px; color: Tokens.muted-foreground; }
                 }
             }
@@ -224,7 +234,11 @@ export component UpdateScreen inherits Rectangle {
                 Rectangle { x: 0px; y: 0px; width: parent.width * Math.min(100, Math.max(0, root.data.progress)) / 100; height: parent.height;
                     background: @linear-gradient(90deg, #8a571c, #f5a524 60%, #ffc861); }
             }
-            err-block := Rectangle { x: 16px; y: bar.y + bar.height + 6px;
+            file-hint := Text { x: 16px; y: bar.y + bar.height + 6px; width: parent.width - 32px;
+                height: root.show-file-hint ? 18px : 0px; visible: root.show-file-hint;
+                text: "Крупные файлы скачиваются дольше. Текущий файл, объём и зеркало показаны ниже.";
+                font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; overflow: elide; }
+            err-block := Rectangle { x: 16px; y: (root.show-file-hint ? file-hint.y + file-hint.height : bar.y + bar.height) + 6px;
                 width: parent.width - 32px; visible: root.show-err;
                 height: 18px + (root.data.error-raw != "" ? 20px : 0px) + (root.show-raw ? err-raw.preferred-height + 4px : 0px);
                 err-msg := Text { x: 0px; y: 0px; width: parent.width; height: 18px; text: root.data.error;
@@ -239,13 +253,13 @@ export component UpdateScreen inherits Rectangle {
                 err-raw := Text { x: 0px; y: 42px; width: parent.width; text: root.data.error-raw; visible: root.show-raw;
                     font-family: Tokens.mono; font-size: 10px; color: Tokens.muted-foreground; wrap: word-wrap; }
             }
-            stats := Rectangle { x: 16px; y: root.show-err ? err-block.y + err-block.height + 6px : bar.y + bar.height + 8px;
+            stats := Rectangle { x: 16px; y: root.show-err ? err-block.y + err-block.height + 6px : (root.show-file-hint ? file-hint.y + file-hint.height + 8px : bar.y + bar.height + 8px);
                 width: parent.width - 32px; height: 58px;
                 HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: parent.height; spacing: 1px;
                     UpdateStat { label: "ТЕКУЩИЙ ФАЙЛ"; value: root.data.current-file != "" ? root.data.current-file : "—"; mono: true; }
-                    UpdateStat { label: "ЗАГРУЖЕНО"; value: root.data.progress-unit == "files" ? "—" : root.data.downloaded + " / " + root.data.total; }
-                    UpdateStat { label: "ОСТАЛОСЬ"; value: root.data.remaining; }
-                    UpdateStat { label: "СКОРОСТЬ"; value: root.transferring ? root.data.speed : "—"; accent: true; }
+                    UpdateStat { label: "ЗАГРУЖЕНО"; value: root.data.progress-unit == "files" ? "—" : (root.data.downloaded != "" ? root.data.downloaded : "0 B") + " / " + (root.data.total != "" ? root.data.total : "0 B"); }
+                    UpdateStat { label: "ОСТАЛОСЬ"; value: root.data.remaining != "" ? root.data.remaining : "—"; }
+                    UpdateStat { label: "СКОРОСТЬ"; value: root.transferring ? (root.data.speed != "" ? root.data.speed : "—") : "—"; accent: true; }
                 }
             }
             status-row := Rectangle { x: 16px; y: stats.y + stats.height + 6px; width: parent.width - 32px; height: 14px;
@@ -270,6 +284,10 @@ export component UpdateScreen inherits Rectangle {
                 Rectangle { x: log-head.x + log-head.preferred-width + 12px; y: 17.5px; width: parent.width - self.x - 12px; height: 1px; background: Tokens.secondary; }
                 log-list := Rectangle { x: 12px; y: 32px; width: parent.width - 24px; height: parent.height - 44px; clip: true;
                     VerticalLayout { x: 0px; y: 0px; width: parent.width; height: self.preferred-height; spacing: 4px; alignment: start;
+                        if root.data.log.length == 0: HorizontalLayout { height: 14px; spacing: 16px; alignment: start;
+                            Text { text: "[--:--:--]"; font-family: Tokens.mono; font-size: 11px; color: Tokens.faint; }
+                            Text { text: "Waiting for connection..."; font-family: Tokens.mono; font-size: 11px; color: Tokens.muted-foreground; overflow: elide; }
+                        }
                         for line in root.data.log: HorizontalLayout { height: 14px; spacing: 16px; alignment: start;
                             Text { text: "[" + line.ts + "]"; font-family: Tokens.mono; font-size: 11px; color: Tokens.faint; }
                             Text { text: line.msg; font-family: Tokens.mono; font-size: 11px;
@@ -352,13 +370,14 @@ export component LauncherUpdatePanel inherits Rectangle {
             text: "Новые версии проверяются при запуске лаунчера. Установка начинается по вашей команде.";
             font-size: 12px; color: Tokens.secondary-foreground; wrap: word-wrap; width: parent.width; }
         HorizontalLayout { height: 32px; spacing: 12px; alignment: start;
-            if !root.data.installed: MainButton { label: "Проверить обновления"; text: "ПРОВЕРИТЬ ОБНОВЛЕНИЯ";
+            if !root.data.installed: MainButton { label: "Проверить обновления"; text: "Проверить обновления";
                 icon: @image-url("../assets/icons/refresh-cw.svg"); spinning: root.data.phase == "checking";
                 enabled: !root.busy; clicked => { if self.enabled { root.check(); } } }
-            if root.data.update-version != "" && !root.data.installed: MainButton { label: "Установить обновление"; text: "УСТАНОВИТЬ";
+            if root.data.update-version != "" && !root.data.installed: MainButton { label: "Установить обновление";
+                text: root.busy && root.data.phase != "checking" ? "Обновление выполняется" : "Установить " + root.data.update-version;
                 icon: @image-url("../assets/icons/download.svg"); enabled: !root.busy;
                 clicked => { if self.enabled { root.install(); } } }
-            if root.data.installed: MainButton { label: "Перезапустить лаунчер"; text: "ПЕРЕЗАПУСТИТЬ ЛАУНЧЕР";
+            if root.data.installed: MainButton { label: "Перезапустить лаунчер"; text: "Перезапустить лаунчер";
                 icon: @image-url("../assets/icons/refresh-cw.svg"); enabled: !root.busy;
                 clicked => { if self.enabled { root.restart(); } } }
         }

@@ -22,12 +22,17 @@ import { UpdateScreen, LauncherUpdatePanel, UpdateData, LauncherUpdateData } fro
 import { Tokens } from "tokens.slint";
 import { WindowChrome, Shell } from "shell.slint";
 import { GridBackdrop, TopoBackdrop, CornerTicks, GlowPanel } from "backdrop.slint";
-import { StatusDot } from "controls.slint";
+import { ActionArea, StatusDot } from "controls.slint";
 
 export component AppWindow inherits Window {
     in property <bool> show-main: false;
     in property <bool> show-login: false;
     in property <bool> show-firstrun: false;
+    in property <bool> show-init-error: false;
+    in property <string> init-error;
+    in property <string> init-error-raw;
+    in-out property <bool> init-error-details: false;
+    callback retry-init();
     in property <string> login-mode: "login";
     in-out property <string> login-username;
     in-out property <string> login-password;
@@ -126,6 +131,8 @@ export component AppWindow inherits Window {
     callback update-retry();
     callback update-cancel();
     callback update-launch();
+    callback update-shown();
+    callback open-updates(bool);
     callback launcher-check();
     callback launcher-install();
     callback launcher-restart();
@@ -183,7 +190,7 @@ export component AppWindow inherits Window {
         minimize => { root.minimize(); }
         maximize => { root.maximize(); }
         request-close => { root.request-close(); }
-        if !root.show-login && !root.show-firstrun: Shell {
+        if !root.show-login && !root.show-firstrun && !root.show-init-error: Shell {
             face: root.shell-face;
             active <=> root.active;
             brand: root.brand;
@@ -329,6 +336,67 @@ export component AppWindow inherits Window {
             browse-java => { root.firstrun-browse-java(); }
             ram-text-edited(text) => { root.firstrun-ram-text-edited(text); }
             continue => { root.firstrun-continue(); }
+        }
+        if root.show-init-error: Rectangle {
+            background: Tokens.background;
+            VerticalLayout {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: Math.min(512px, parent.width - 48px);
+                height: self.preferred-height;
+                spacing: 16px;
+                alignment: start;
+                Text {
+                    text: root.init-error;
+                    color: #c98b8b;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                    width: parent.width;
+                }
+                if root.init-error-raw != "": ActionArea {
+                    height: 16px;
+                    width: init-err-toggle.preferred-width + 11px;
+                    label: "Подробности";
+                    clicked => { root.init-error-details = !root.init-error-details; }
+                    Path {
+                        x: 0px; y: 5px; width: 5px; height: 5px;
+                        viewbox-width: 7; viewbox-height: 7;
+                        fill: Tokens.muted-foreground;
+                        commands: root.init-error-details ? "M 0 0 L 7 0 L 3.5 7 Z" : "M 0 0 L 7 3.5 L 0 7 Z";
+                    }
+                    init-err-toggle := Text {
+                        x: 11px; y: 0px; height: parent.height;
+                        text: "Подробности";
+                        font-size: 10px;
+                        letter-spacing: 1px;
+                        color: Tokens.muted-foreground;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.init-error-details && root.init-error-raw != "": Text {
+                    text: root.init-error-raw;
+                    font-family: Tokens.mono;
+                    font-size: 10px;
+                    color: Tokens.muted-foreground;
+                    wrap: word-wrap;
+                    width: parent.width;
+                }
+                ActionArea {
+                    width: retry-init-label.preferred-width + 32px;
+                    height: 40px;
+                    label: "Повторить";
+                    border-width: 1phx;
+                    border-color: self.hovered ? Tokens.primary : Tokens.primary.with-alpha(0.4);
+                    clicked => { root.retry-init(); }
+                    retry-init-label := Text {
+                        x: 16px; y: 0px; height: parent.height;
+                        text: "Повторить";
+                        font-size: 12px;
+                        color: Tokens.foreground;
+                        vertical-alignment: center;
+                    }
+                }
+            }
         }
     }
 }
