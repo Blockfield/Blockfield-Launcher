@@ -1,0 +1,85 @@
+name: Native smoke gate
+
+# Headless real-data smoke for the native Slint launcher: boots the REAL
+# binary (no fixtures/capture mode) against the live public endpoints with a
+# throwaway profile, asserts no fixture markers / footer version / clean log /
+# fast window open / non-blank PNG, and uploads the screenshots. Signed-out
+# screens only (no credentials in CI); no pixel-diff against Tauri baselines.
+on:
+  pull_request:
+    branches: [native/parity-fix, main]
+    paths:
+      - 'native/**'
+      - 'scripts/install-linux-deps.sh'
+      - '.github/workflows/native-smoke.yml'
+  push:
+    branches: [native/parity-fix]
+    paths:
+      - 'native/**'
+      - 'scripts/install-linux-deps.sh'
+      - '.github/workflows/native-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: smoke (scale ${{ matrix.scale }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        scale: ['1', '1.5']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: 1.99.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: native-smoke-ubuntu-24.04
+          workspaces: native/app -> target
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/native/parity-fix' }}
+      - name: Linux display and capture tools
+        timeout-minutes: 8
+        run: scripts/install-linux-deps.sh xvfb x11-utils xdotool imagemagick libfontconfig-dev libxkbcommon-x11-0
+      - name: Build real binary (ci-test)
+        timeout-minutes: 25
+        run: |
+          cd native/app
+          cargo build --locked --profile ci-test --bin blockfield-native
+      - name: Real-data smoke + assertions
+        timeout-minutes: 8
+        env:
+          CARGO_BUILD_JOBS: 4
+        run: |
+          set -euo pipefail
+          cd native/app
+          version=$(python3 ../../scripts/check-version.py --print)
+          out="$RUNNER_TEMP/smoke-${{ matrix.scale }}"
+          rm -rf "$out"
+          sh scripts/smoke_real.sh "$out" "${{ matrix.scale }}" ./target/ci-test/blockfield-native
+          python3 scripts/verify_smoke.py "$out" "${{ matrix.scale }}" "$version"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: native-smoke-scale-${{ matrix.scale }}
+          path: ${{ runner.temp }}/smoke-${{ matrix.scale }}/screen-*.png
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: native-smoke-logs-scale-${{ matrix.scale }}
+          path: ${{ runner.temp }}/smoke-${{ matrix.scale }}
+          retention-days: 7

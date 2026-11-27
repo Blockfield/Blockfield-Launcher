@@ -182,6 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut e2e_golden = None;
     let mut e2e_update = false;
     let mut idle_seconds = None;
+    let mut smoke_text: Option<String> = None;
     let mut dev = false;
     let mut self_check = false;
     let mut idle_self_check_flag = false;
@@ -205,6 +206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--freeze-motion" => app
                 .global::<blockfield_native::MainMotion>()
                 .set_enabled(false),
+            "--smoke-text" => smoke_text = Some(args.next().ok_or("--smoke-text needs a path")?),
             "--self-check" => self_check = true,
             "--idle-self-check" => idle_self_check_flag = true,
             "--dev" => dev = true,
@@ -275,7 +277,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (None, _) => None,
     };
     if let Some(seconds) = idle_seconds {
-        slint::Timer::single_shot(std::time::Duration::from_secs(seconds), || {
+        // Smoke gate: snapshot the settled UI strings just before quitting so
+        // CI can assert on real text without OCR. Never a fixture trigger.
+        let weak = app.as_weak();
+        slint::Timer::single_shot(std::time::Duration::from_secs(seconds), move || {
+            if let (Some(path), Some(app)) = (smoke_text, weak.upgrade())
+                && let Err(error) = std::fs::write(&path, smoke_dump(&app))
+            {
+                eprintln!("smoke-text write failed: {error}");
+            }
             slint::quit_event_loop().expect("finish idle run");
         });
     }
@@ -288,6 +298,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     result?;
     Ok(())
+}
+
+/// Smoke-gate text snapshot: every user-visible string the gate asserts on.
+/// Update-log lines are excluded on purpose: the real checking default also
+/// carries fixed "12:00:01" stamps, so they cannot tell fixtures apart.
+fn smoke_dump(app: &AppWindow) -> String {
+    let main = app.get_main_data();
+    let update = app.get_update_data();
+    let dev = app.get_dev_data();
+    let mut out = [
+        ("show_main", app.get_show_main().to_string()),
+        ("show_login", app.get_show_login().to_string()),
+        ("show_firstrun", app.get_show_firstrun().to_string()),
+        ("show_init_error", app.get_show_init_error().to_string()),
+        ("chrome_title", app.get_chrome_title().to_string()),
+        ("brand", app.get_brand().to_string()),
+        ("subtitle", app.get_subtitle().to_string()),
+        ("username", app.get_username().to_string()),
+        ("role", app.get_role().to_string()),
+        ("launcher_label", app.get_launcher_label().to_string()),
+        ("server_label", app.get_server_label().to_string()),
+        ("support_label", app.get_support_label().to_string()),
+        ("network_label", app.get_network_label().to_string()),
+        ("update_label", app.get_update_label().to_string()),
+        ("login_mode", app.get_login_mode().to_string()),
+        ("login_username", app.get_login_username().to_string()),
+        ("login_error", app.get_login_error().to_string()),
+        ("init_error", app.get_init_error().to_string()),
+        ("stats_board_error", app.get_stats_board_error().to_string()),
+        ("stats_self_error", app.get_stats_self_error().to_string()),
+        ("dev_server", dev.server.to_string()),
+        ("dev_freeze", dev.freeze.to_string()),
+        ("dev_jvm_args", dev.jvm_args.to_string()),
+        ("dev_pack_url", dev.pack_url.to_string()),
+        ("update_phase", update.phase.to_string()),
+        ("update_patch", update.patch.to_string()),
+        ("update_status", update.status_message.to_string()),
+        ("update_description", update.description.to_string()),
+        ("main_players", main.players.to_string()),
+        ("main_ping", main.ping.to_string()),
+        ("main_installed", main.installed.to_string()),
+        ("main_latest", main.latest.to_string()),
+        ("main_size", main.size.to_string()),
+        ("main_server", main.server_address.to_string()),
+        ("main_check_error", main.check_error.to_string()),
+    ]
+    .iter()
+    .map(|(key, value)| format!("{key}={value}"))
+    .collect::<Vec<_>>()
+    .join("\n");
+    out.push('\n');
+    out
 }
 
 #[cfg(test)]
