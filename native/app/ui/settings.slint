@@ -22,7 +22,7 @@ component SettingsScroll inherits Rectangle {
         : 0px;
     private property <length> thumb-travel: Math.max(1px, root.track-height - root.thumb-height);
     private property <float> scroll-ratio: root.scrollable
-        ? Math.max(0, Math.min(1, -flick.viewport-y / root.max-scroll))
+        ? Math.max(0, Math.min(1, -flick.content-y / root.max-scroll))
         : 0;
     clip: true;
     flick := Flickable {
@@ -30,8 +30,8 @@ component SettingsScroll inherits Rectangle {
         y: 0px;
         width: parent.width;
         height: parent.height;
-        viewport-width: self.width;
-        viewport-height: root.content-height;
+        content-width: self.width;
+        content-height: root.content-height;
         interactive: false;
         @children
     }
@@ -62,12 +62,12 @@ component SettingsScroll inherits Rectangle {
                 if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                     if self.mouse-y >= thumb.y && self.mouse-y <= thumb.y + thumb.height {
                         parent.drag-start-y = self.mouse-y;
-                        parent.drag-start-viewport = flick.viewport-y;
+                        parent.drag-start-viewport = flick.content-y;
                     } else {
                         let frac = Math.max(0, Math.min(1, (self.mouse-y - root.track-margin - root.thumb-height / 2) / root.thumb-travel));
-                        flick.viewport-y = -root.max-scroll * frac;
+                        flick.content-y = -root.max-scroll * frac;
                         parent.drag-start-y = self.mouse-y;
-                        parent.drag-start-viewport = flick.viewport-y;
+                        parent.drag-start-viewport = flick.content-y;
                     }
                 }
             }
@@ -75,7 +75,7 @@ component SettingsScroll inherits Rectangle {
                 if self.pressed {
                     let dy = self.mouse-y - parent.drag-start-y;
                     let next = parent.drag-start-viewport - root.max-scroll * (dy / root.thumb-travel);
-                    flick.viewport-y = Math.max(-root.max-scroll, Math.min(0px, next));
+                    flick.content-y = Math.max(-root.max-scroll, Math.min(0px, next));
                 }
             }
         }
