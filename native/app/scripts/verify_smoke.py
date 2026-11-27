@@ -2,18 +2,19 @@
 """Assertions for the real-data smoke: fails on fixture markers, wrong footer
 version, startup crashes, slow window open, or blank screenshots.
 
-Deviations from the first-draft marker list (both match live defaults, so
-they cannot tell fixtures apart): "12:00:01" also ships in the real checking
-log (update.rs checking_log) and bare "/ ПАТЧ" in the real default patch
-("/ ПАТЧ ..."); the gate pins the fixture-exact "/ ПАТЧ 2.75" and the
-update-log model is excluded from the --smoke-text dump.
+Since D7 the fixed "12:00:01" stamps live in fixtures:: only (real runs stamp
+the local time), so it rejoins the marker list and the update-log lines are
+back in the --smoke-text dump. "/ ПАТЧ ..." stays off the list on purpose: it
+is Tauri's exact pre-version placeholder ('update.patch' with '...'), so the
+real default patch carries it too; the gate pins the fixture-exact
+"/ ПАТЧ 2.75" instead.
 """
 
 import subprocess
 import sys
 from pathlib import Path
 
-MARKERS = ("v1.0.19", "CaptureOperator", "127.0.0.1:25565", "/ ПАТЧ 2.75")
+MARKERS = ("v1.0.19", "CaptureOperator", "127.0.0.1:25565", "/ ПАТЧ 2.75", "12:00:01")
 WINDOW_OPEN_BUDGET_S = 60
 
 
