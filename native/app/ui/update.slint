@@ -1,7 +1,7 @@
 import { Tokens } from "tokens.slint";
 import { ActionArea, StatusDot } from "controls.slint";
 import { GridBackdrop, TopoBackdrop, GlowPanel } from "backdrop.slint";
-import { MainButton, MainMotion, Spinner } from "main-controls.slint";
+import { MainMotion, Spinner } from "main-controls.slint";
 
 // Pack-sync screen (nav "ОБНОВЛЕНИЯ") + launcher self-update panel (settings
 // tab "ЛАУНЧЕР"). Mirrors the Tauri UpdateScreen/LauncherUpdatePanel look and
@@ -71,20 +71,27 @@ component SmallLabel inherits Text {
 component UpdateStat inherits Rectangle {
     in property <string> label;
     in property <string> value;
+    in property <image> icon;
     in property <bool> accent: false;
     in property <bool> mono: false;
     background: Tokens.chrome;
-    SmallLabel { x: 12px; y: 8px; width: parent.width - 24px; height: 14px; text: root.label; font-size: 9px; letter-spacing: 1.44px; overflow: elide; }
-    Text { x: 12px; y: 24px; width: parent.width - 24px; height: 18px; text: root.value; font-size: 12px; letter-spacing: 1.44px; color: root.accent ? Tokens.success : Tokens.neutral-100; font-family: root.mono ? Tokens.mono : Tokens.sans; vertical-alignment: center; overflow: elide; }
+    HorizontalLayout { x: 12px; y: 8px; width: parent.width - 24px; height: 14px; spacing: 8px; alignment: start;
+        if root.icon.width > 0: Image { width: 13px; height: 13px; source: root.icon; colorize: Tokens.muted-foreground; accessible-role: none; }
+        SmallLabel { text: root.label; font-size: 9px; letter-spacing: 1.26px; overflow: elide; }
+    }
+    Text { x: 12px; y: 28px; width: parent.width - 24px; height: 18px; text: root.value; font-size: 12px; letter-spacing: 1.44px; color: root.accent ? Tokens.success : Tokens.neutral-100; font-family: root.mono ? Tokens.mono : Tokens.sans; vertical-alignment: center; overflow: elide; }
 }
 
 component UpdateStep inherits Rectangle {
     in property <string> label;
     // 0 pending, 1 active, 2 done
     in property <int> state;
-    height: 26px;
-    Rectangle { x: 0px; y: 10px; width: 8px; height: 8px; border-radius: 4px;
-        background: root.state == 2 ? Tokens.success : root.state == 1 ? Tokens.primary : Tokens.secondary;
+    in property <bool> last: false;
+    height: 34px;
+    Rectangle { x: 0px; y: 13px; width: 8px; height: 8px; border-radius: 4px;
+        background: root.state == 2 ? Tokens.success : root.state == 1 ? Tokens.primary : #3a2c1d;
+        drop-shadow-blur: root.state == 1 ? 10px : root.state == 2 ? 6px : 0px;
+        drop-shadow-color: root.state == 1 ? Tokens.primary.with-alpha(0.7) : root.state == 2 ? Tokens.success.with-alpha(0.5) : transparent;
     }
     Text { x: 20px; y: 0px; width: parent.width - 120px; height: parent.height; text: root.label; font-size: 11px; letter-spacing: 1.32px;
         color: root.state == 1 ? Tokens.foreground : root.state == 2 ? Tokens.secondary-foreground : Tokens.muted-foreground;
@@ -92,7 +99,7 @@ component UpdateStep inherits Rectangle {
     Text { x: parent.width - self.preferred-width; y: 0px; height: parent.height;
         text: root.state == 2 ? "ГОТОВО" : root.state == 1 ? "В РАБОТЕ" : "В ОЧЕРЕДИ";
         font-size: 9px; letter-spacing: 1.44px; color: Tokens.muted-foreground; vertical-alignment: center; }
-    Rectangle { x: 0px; y: parent.height - 1phx; width: parent.width; height: 1phx; background: Tokens.secondary; }
+    if !root.last: Rectangle { x: 0px; y: parent.height - 1phx; width: parent.width; height: 1phx; background: Tokens.secondary; }
 }
 
 component UpdateAction inherits Rectangle {
@@ -101,31 +108,61 @@ component UpdateAction inherits Rectangle {
     in property <image> icon;
     in property <bool> spinning: false;
     in property <bool> danger: false;
+    in property <bool> retry-style: false;
+    in property <bool> show-corners: true;
     in property <bool> enabled: true;
     callback clicked();
     width: 230px; height: 64px;
     touch := ActionArea { x: 0px; y: 0px; label: root.label; enabled: root.enabled;
         clicked => { if root.enabled { root.clicked(); } } }
     opacity: root.enabled ? 1 : 0.6;
-    background: root.danger ? #1a0e0e : @linear-gradient(180deg, #2a2116, #11100d);
+    background: root.danger ? #1a0e0e : root.retry-style ? #1a1008 : !root.enabled ? Tokens.chrome : @linear-gradient(180deg, #2a2116, #11100d);
     border-width: 1phx;
-    border-color: root.danger ? #7a3838 : root.enabled && touch.hovered ? Tokens.primary : root.danger ? #3a2828 : Tokens.primary.with-alpha(0.5);
+    border-color: root.danger ? (touch.hovered ? #7a3838 : #3a2828)
+        : root.retry-style ? (touch.hovered ? Tokens.primary : #8a571c)
+        : !root.enabled ? Tokens.border
+        : touch.hovered ? Tokens.primary : Tokens.primary.with-alpha(0.5);
     animate border-color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
-    for corner in 4: Rectangle {
-        x: Math.mod(corner, 2) == 0 ? 1px : parent.width - 13px; y: corner < 2 ? 1px : parent.height - 13px; width: 12px; height: 12px;
-        Rectangle { y: 0px; x: Math.mod(corner, 2) == 0 ? 0px : 11px; width: 1px; background: root.danger ? #7a3838 : Tokens.primary; }
-        Rectangle { x: 0px; y: corner < 2 ? 0px : 11px; height: 1px; background: root.danger ? #7a3838 : Tokens.primary; }
+    if root.show-corners: Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        for corner in 4: Rectangle {
+            x: Math.mod(corner, 2) == 0 ? 1px : parent.width - 13px; y: corner < 2 ? 1px : parent.height - 13px; width: 12px; height: 12px;
+            Rectangle { y: 0px; x: Math.mod(corner, 2) == 0 ? 0px : 11px; width: 1px; background: root.danger ? #7a3838 : !root.enabled ? #3a2c1d : Tokens.primary; }
+            Rectangle { x: 0px; y: corner < 2 ? 0px : 11px; height: 1px; background: root.danger ? #7a3838 : !root.enabled ? #3a2c1d : Tokens.primary; }
+        }
     }
     HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: parent.height; alignment: center; spacing: 16px;
         Rectangle { width: 18px; height: 64px;
             if root.spinning: Spinner { x: 0px; y: 23px; width: 18px; height: 18px; }
             if !root.spinning && root.icon.width > 0: Image { x: 0px; y: 23px; width: 18px; height: 18px; source: root.icon;
-                colorize: root.danger ? #c98b8b : Tokens.foreground; }
+                colorize: root.danger ? #c98b8b : root.retry-style ? Tokens.primary : Tokens.foreground; accessible-role: none; }
         }
         VerticalLayout { alignment: center; spacing: 4px;
-            Text { text: root.label; color: root.danger ? #c98b8b : Tokens.foreground; font-size: 17px; font-weight: Tokens.weight-medium; letter-spacing: 3.4px; height: 17px; }
-            Text { text: root.sub; color: root.danger ? #7a3838 : Tokens.secondary-foreground; font-size: 9px; font-weight: Tokens.weight-medium; letter-spacing: 1.44px; height: 9px; }
+            Text { text: root.label; color: root.danger ? #c98b8b : root.retry-style ? Tokens.primary : !root.enabled ? Tokens.muted-foreground : Tokens.foreground; font-size: 17px; font-weight: Tokens.weight-medium; letter-spacing: 3.4px; height: 17px; }
+            Text { text: root.sub; color: root.danger ? #7a3838 : root.retry-style ? Tokens.muted-foreground : !root.enabled ? Tokens.faint : Tokens.secondary-foreground; font-size: 9px; font-weight: Tokens.weight-medium; letter-spacing: 1.44px; height: 9px; }
         }
+    }
+}
+
+component LauncherActionButton inherits ActionArea {
+    in property <string> text: root.label;
+    in property <image> icon;
+    in property <bool> spinning: false;
+    in property <bool> primary: false;
+    width: caption.preferred-width + (root.icon.width > 0 ? 22px : 0px) + 32px;
+    height: 40px;
+    opacity: root.enabled ? 1 : 0.5;
+    background: root.primary ? Tokens.border : transparent;
+    border-width: 1phx;
+    border-color: root.hovered ? Tokens.primary : #8a571c;
+    animate border-color { duration: MainMotion.enabled ? Tokens.transition : 0ms; easing: Tokens.transition-easing; }
+    HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: parent.height;
+        padding-left: 16px; padding-right: 16px; spacing: 8px; alignment: center;
+        if root.icon.width > 0: Rectangle { width: 14px; height: parent.height;
+            if root.spinning: Spinner { x: 0px; y: (parent.height - 14px) / 2; width: 14px; height: 14px; }
+            if !root.spinning: Image { x: 0px; y: (parent.height - 14px) / 2; width: 14px; height: 14px; source: root.icon; colorize: Tokens.foreground; accessible-role: none; }
+        }
+        caption := Text { text: root.text; font-size: 12px; color: Tokens.foreground; vertical-alignment: center; }
     }
 }
 
@@ -145,12 +182,11 @@ export component UpdateScreen inherits Rectangle {
         root.data.phase == "complete" ? (root.data.status-message != "" ? root.data.status-message : "АКТУАЛЬНО") :
         root.data.phase == "uptodate" ? "АКТУАЛЬНО" :
         root.data.phase == "error" ? (root.data.error != "" ? root.data.error : "ОБНОВЛЕНИЕ МОДПАКА") : "ОБНОВЛЕНИЕ МОДПАКА";
+    private property <color> op-status-color: root.data.phase == "error" ? #c98b8b : Tokens.primary;
     private property <color> status-color: root.data.phase == "error" ? #c98b8b :
         root.data.phase == "complete" || root.data.phase == "uptodate" ? Tokens.success : Tokens.primary;
-    private property <string> mirror-status: root.transferring ? root.data.speed :
+    private property <string> mirror-status: root.transferring ? (root.data.speed != "" ? root.data.speed : "—") :
         root.data.mirror-status != "" ? root.data.mirror-status : "ПРОВЕРКА...";
-    // Error block geometry: ids inside `if` are invisible to siblings, so the
-    // block stays instantiated with `visible` and the stats row anchors to it.
     private property <bool> show-err: root.data.phase == "error" && root.data.error != "";
     private property <bool> show-raw: root.error-details && root.data.error-raw != "";
     private property <bool> show-file-hint: root.data.progress-unit == "files" && root.transferring;
@@ -162,44 +198,62 @@ export component UpdateScreen inherits Rectangle {
     content := Rectangle {
         x: (parent.width - self.width) / 2; y: 20px; width: Math.min(1600px, parent.width) - 40px; height: parent.height - 40px;
         operation := SmallLabel { x: 0px; y: 0px; height: 15px; text: "ПОДГОТОВКА ИГРЫ"; letter-spacing: 2.8px; }
-        status-label := Text { x: parent.width - self.preferred-width; y: 0px; height: 15px; text: root.status-text;
-            font-size: 10px; letter-spacing: 1.6px; color: root.status-color; vertical-alignment: center; overflow: elide; }
-        Rectangle { x: operation.preferred-width + 12px; y: 7.5px; width: status-label.x - self.x - 12px; height: 1px; background: Tokens.secondary; }
-        summary := Rectangle { x: 0px; y: Tokens.line-height(15px, 1phx) + 12px; height: 52px;
-            HorizontalLayout { x: 0px; y: 0px; height: 34px; spacing: 12px; alignment: start;
-                Text { text: root.data.operation; color: #fafafa; font-size: 26px; font-weight: Tokens.weight-medium; letter-spacing: 1.56px; vertical-alignment: center; }
-                Text { text: root.data.patch; color: Tokens.muted-foreground; font-size: 10px; letter-spacing: 1.8px; vertical-alignment: bottom; height: 26px; }
+        status-box := HorizontalLayout { x: parent.width - self.preferred-width; y: 0px; height: 15px; spacing: 8px; alignment: end;
+            Rectangle { width: 6px; height: 15px;
+                StatusDot { x: 0px; y: 4.5px; tint: root.op-status-color; }
             }
-            Text { x: 0px; y: 36px; width: Math.min(620px, parent.width - 280px); height: 16px; text: root.data.description;
-                color: Tokens.secondary-foreground; font-size: 12px; overflow: elide; }
-            mirror := Rectangle { x: parent.width - 240px; y: 0px; width: 240px; height: 52px; background: Tokens.chrome;
+            Text { text: root.status-text; font-size: 10px; letter-spacing: 1.6px; color: root.op-status-color; vertical-alignment: center; overflow: elide; }
+        }
+        Rectangle { x: operation.preferred-width + 12px; y: 7.5px; width: Math.max(0px, status-box.x - self.x - 12px); height: 1px; background: Tokens.secondary; }
+        summary := Rectangle { x: 0px; y: 31px; width: parent.width;
+            height: Math.max(82px, root.show-err ? err-block.y + err-block.height : 82px);
+            HorizontalLayout { x: 0px; y: 0px; height: 30px; spacing: 12px; alignment: start;
+                Text { text: root.data.operation; color: #fafafa; font-size: 26px; font-weight: Tokens.weight-medium; letter-spacing: 1.56px; vertical-alignment: center; }
+                Text { text: root.data.patch; color: Tokens.muted-foreground; font-size: 10px; letter-spacing: 1.8px; vertical-alignment: bottom; height: 24px; }
+            }
+            // Mirrors Tauri theme.css `@media (height <= 800px) { .update-summary p { display: none; } }`:
+            // omit the redundant description on 720p windows so the progress card matches Tauri geometry.
+            if !root.show-err && root.height > 800px: Text { x: 0px; y: 36px; width: Math.min(520px, parent.width - 260px); height: 32px;
+                text: root.data.description; color: Tokens.secondary-foreground; font-size: 12px; wrap: word-wrap; }
+            err-block := Rectangle { x: 0px; y: 34px; width: parent.width - 260px; visible: root.show-err;
+                height: (root.data.error-raw != "" ? 18px : 0px) + (root.show-raw ? err-raw.preferred-height + 6px : 0px);
+                if root.data.error-raw != "": ActionArea { x: 0px; y: 0px; width: err-toggle.preferred-width + 11px; height: 16px; label: "Подробности";
+                    clicked => { root.error-details = !root.error-details; }
+                    Path { x: 0px; y: 5px; width: 5px; height: 5px; viewbox-width: 7; viewbox-height: 7; fill: Tokens.muted-foreground; commands: root.error-details ? "M 0 0 L 7 0 L 3.5 7 Z" : "M 0 0 L 7 3.5 L 0 7 Z"; }
+                    err-toggle := SmallLabel { x: 11px; y: 0px; height: parent.height; text: "Подробности"; letter-spacing: 1px; }
+                }
+                err-raw := Text { x: 0px; y: 20px; width: parent.width; text: root.data.error-raw; visible: root.show-raw;
+                    font-family: Tokens.mono; font-size: 10px; color: Tokens.muted-foreground; wrap: word-wrap; }
+            }
+            mirror := Rectangle { x: parent.width - 240px; y: 0px; width: 240px; height: 82px; background: Tokens.chrome;
                 border-width: 1phx; border-color: Tokens.border;
-                SmallLabel { x: 12px; y: 6px; height: 12px; text: "ЗЕРКАЛО"; font-size: 9px; letter-spacing: 1.6px; }
-                Text { x: 12px; y: 18px; width: parent.width - 24px; height: 16px; text: root.data.mirror-name;
+                SmallLabel { x: 16px; y: 10px; height: 14px; text: "ЗЕРКАЛО"; font-size: 10px; letter-spacing: 1.6px; }
+                Text { x: 16px; y: 32px; width: parent.width - 32px; height: 18px; text: root.data.mirror-name;
                     font-size: 13px; letter-spacing: 2.34px; color: Tokens.neutral-100; overflow: elide; }
-                Path { x: 12px; y: 38px; width: 7px; height: 7px; viewbox-width: 7; viewbox-height: 7;
+                Path { x: 16px; y: 60px; width: 6px; height: 6px; viewbox-width: 7; viewbox-height: 7;
                     fill: root.data.mirror-bad ? #c98b8b : root.transferring ? Tokens.primary : Tokens.success;
                     commands: "M 0 0 L 7 3.5 L 0 7 Z"; }
-                Text { x: 25px; y: 34px; width: parent.width - 37px; height: 14px; text: root.mirror-status;
+                Text { x: 28px; y: 56px; width: parent.width - 44px; height: 16px; text: root.mirror-status;
                     font-size: 11px; letter-spacing: 2.42px; color: root.data.mirror-bad ? #c98b8b : root.transferring ? Tokens.primary : Tokens.success; overflow: elide; }
             }
         }
-        panel := GlowPanel { x: 0px; y: summary.y + summary.height + 12px; width: parent.width; height: Math.max(252px, status-row.y + status-row.height + 12px);
-            actions := Rectangle { x: 16px; y: 12px; width: parent.width - 32px; height: 64px;
+        panel := GlowPanel { x: 0px; y: summary.y + summary.height + 16px; width: parent.width;
+            height: status-row.y + status-row.height + 16px;
+            actions := Rectangle { x: 16px; y: 16px; width: parent.width - 32px; height: 64px;
                 if root.game-busy: UpdateAction { x: 0px; y: 0px; label: root.data.game-label; sub: root.data.game-sub;
                     icon: @image-url("../assets/icons/gamepad-2.svg"); enabled: false; }
                 if !root.game-busy && root.data.phase == "launching": UpdateAction { x: 0px; y: 0px; label: "ЗАПУСК";
                     sub: root.data.status-message != "" ? root.data.status-message : "...";
                     icon: @image-url("../assets/icons/loader-circle.svg"); spinning: true; enabled: false; }
                 if !root.game-busy && root.data.phase == "downloading" && root.data.can-cancel: UpdateAction { x: 0px; y: 0px;
-                    label: "CANCEL"; sub: "ИДЁТ ОБНОВЛЕНИЕ"; icon: @image-url("../assets/icons/x.svg"); danger: true;
+                    label: "CANCEL"; sub: "ИДЁТ ОБНОВЛЕНИЕ"; icon: @image-url("../assets/icons/pause.svg"); danger: true; show-corners: false;
                     clicked => { root.cancel(); } }
                 if !root.game-busy && root.data.phase == "downloading" && root.data.can-cancel: ActionArea {
                     x: 246px; y: 12px; width: 40px; height: 40px; label: "Отменить загрузку";
                     border-width: 1phx; border-color: self.hovered ? #8a571c : Tokens.border;
                     clicked => { root.cancel(); }
-                    Rectangle { x: 15px; y: 14px; width: 3px; height: 12px; background: parent.hovered ? Tokens.foreground : Tokens.secondary-foreground; }
-                    Rectangle { x: 22px; y: 14px; width: 3px; height: 12px; background: parent.hovered ? Tokens.foreground : Tokens.secondary-foreground; }
+                    Image { x: 13px; y: 13px; width: 14px; height: 14px; source: @image-url("../assets/icons/pause.svg");
+                        colorize: parent.hovered ? Tokens.foreground : Tokens.secondary-foreground; accessible-role: none; }
                 }
                 if !root.game-busy && (root.data.phase == "downloading" || root.data.phase == "verifying") && !root.data.can-cancel:
                     UpdateAction { x: 0px; y: 0px; label: "..."; sub: root.status-text;
@@ -211,11 +265,11 @@ export component UpdateScreen inherits Rectangle {
                     spinning: root.data.launching; enabled: !root.data.launching;
                     clicked => { root.launch(); } }
                 if !root.game-busy && root.data.phase == "error": UpdateAction { x: 0px; y: 0px; label: "ПОВТОРИТЬ";
-                    sub: "RETRY DEPLOYMENT"; icon: @image-url("../assets/icons/refresh-cw.svg");
+                    sub: "RETRY DEPLOYMENT"; icon: @image-url("../assets/icons/refresh-cw.svg"); retry-style: true; show-corners: false;
                     clicked => { root.retry(); } }
                 if !root.game-busy && root.data.phase == "checking": UpdateAction { x: 0px; y: 0px; label: "...";
                     sub: "ПРОВЕРКА ОБНОВЛЕНИЙ..."; icon: @image-url("../assets/icons/loader-circle.svg"); spinning: true; enabled: false; }
-                Text { x: parent.width - self.preferred-width; y: 0px; height: 20px;
+                Text { x: parent.width - self.preferred-width; y: 0px; height: 18px;
                     text: root.data.phase == "checking" ? "ПРОГРЕСС" : root.data.progress-unit == "files" ? "ОБРАБОТАНО ФАЙЛОВ" : "ПРОГРЕСС";
                     font-size: 10px; letter-spacing: 1.8px; color: Tokens.muted-foreground; }
                 if root.progress-spinning: Spinner { x: parent.width - 32px; y: 24px; width: 32px; height: 32px; }
@@ -229,88 +283,76 @@ export component UpdateScreen inherits Rectangle {
                     Text { text: "%"; font-size: 20px; color: Tokens.muted-foreground; }
                 }
             }
-            bar := Rectangle { x: 16px; y: actions.y + actions.height + 8px; width: parent.width - 32px; height: 10px;
+            bar := Rectangle { x: 16px; y: actions.y + actions.height + 12px; width: parent.width - 32px; height: 10px;
                 background: Tokens.chrome; border-width: 1phx; border-color: Tokens.border; clip: true;
                 Rectangle { x: 0px; y: 0px; width: parent.width * Math.min(100, Math.max(0, root.data.progress)) / 100; height: parent.height;
                     background: @linear-gradient(90deg, #8a571c, #f5a524 60%, #ffc861); }
             }
-            file-hint := Text { x: 16px; y: bar.y + bar.height + 6px; width: parent.width - 32px;
+            file-hint := Text { x: 16px; y: bar.y + bar.height + 8px; width: parent.width - 32px;
                 height: root.show-file-hint ? 18px : 0px; visible: root.show-file-hint;
                 text: "Крупные файлы скачиваются дольше. Текущий файл, объём и зеркало показаны ниже.";
                 font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; overflow: elide; }
-            err-block := Rectangle { x: 16px; y: (root.show-file-hint ? file-hint.y + file-hint.height : bar.y + bar.height) + 6px;
-                width: parent.width - 32px; visible: root.show-err;
-                height: 18px + (root.data.error-raw != "" ? 20px : 0px) + (root.show-raw ? err-raw.preferred-height + 4px : 0px);
-                err-msg := Text { x: 0px; y: 0px; width: parent.width; height: 18px; text: root.data.error;
-                    font-size: 11px; color: #c98b8b; overflow: elide; }
-                // Raw backend error behind "Подробности", like the main
-                // screen and Tauri ErrorDetail; hidden when there is no raw.
-                if root.data.error-raw != "": ActionArea { x: 0px; y: 22px; width: err-toggle.preferred-width + 11px; height: 16px; label: "Подробности";
-                    clicked => { root.error-details = !root.error-details; }
-                    Path { x: 0px; y: 5px; width: 5px; height: 5px; viewbox-width: 7; viewbox-height: 7; fill: Tokens.muted-foreground; commands: root.error-details ? "M 0 0 L 7 0 L 3.5 7 Z" : "M 0 0 L 7 3.5 L 0 7 Z"; }
-                    err-toggle := SmallLabel { x: 11px; y: 0px; height: parent.height; text: "Подробности"; letter-spacing: 1px; }
-                }
-                err-raw := Text { x: 0px; y: 42px; width: parent.width; text: root.data.error-raw; visible: root.show-raw;
-                    font-family: Tokens.mono; font-size: 10px; color: Tokens.muted-foreground; wrap: word-wrap; }
-            }
-            stats := Rectangle { x: 16px; y: root.show-err ? err-block.y + err-block.height + 6px : (root.show-file-hint ? file-hint.y + file-hint.height + 8px : bar.y + bar.height + 8px);
+            stats := Rectangle { x: 16px; y: root.show-file-hint ? file-hint.y + file-hint.height + 12px : bar.y + bar.height + 16px;
                 width: parent.width - 32px; height: 58px;
-                HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: parent.height; spacing: 1px;
-                    UpdateStat { label: "ТЕКУЩИЙ ФАЙЛ"; value: root.data.current-file != "" ? root.data.current-file : "—"; mono: true; }
-                    UpdateStat { label: "ЗАГРУЖЕНО"; value: root.data.progress-unit == "files" ? "—" : (root.data.downloaded != "" ? root.data.downloaded : "0 B") + " / " + (root.data.total != "" ? root.data.total : "0 B"); }
-                    UpdateStat { label: "ОСТАЛОСЬ"; value: root.data.remaining != "" ? root.data.remaining : "—"; }
-                    UpdateStat { label: "СКОРОСТЬ"; value: root.transferring ? (root.data.speed != "" ? root.data.speed : "—") : "—"; accent: true; }
+                border-width: 1phx; border-color: Tokens.border; background: Tokens.secondary;
+                HorizontalLayout { x: 1phx; y: 1phx; width: parent.width - 2phx; height: parent.height - 2phx; spacing: 1px;
+                    UpdateStat { icon: @image-url("../assets/icons/file-box.svg"); label: "ТЕКУЩИЙ ФАЙЛ"; value: root.data.current-file != "" ? root.data.current-file : "—"; mono: true; }
+                    UpdateStat { icon: @image-url("../assets/icons/hard-drive.svg"); label: "ЗАГРУЖЕНО"; value: root.data.progress-unit == "files" ? "—" : (root.data.downloaded != "" ? root.data.downloaded : "0 B") + " / " + (root.data.total != "" ? root.data.total : "0 B"); }
+                    UpdateStat { icon: @image-url("../assets/icons/download.svg"); label: "ОСТАЛОСЬ"; value: root.data.remaining != "" ? root.data.remaining : "—"; }
+                    UpdateStat { icon: @image-url("../assets/icons/zap.svg"); label: "СКОРОСТЬ"; value: root.transferring ? (root.data.speed != "" ? root.data.speed : "—") : "—"; accent: true; }
                 }
             }
-            status-row := Rectangle { x: 16px; y: stats.y + stats.height + 6px; width: parent.width - 32px; height: 14px;
-                StatusDot { x: 0px; y: 4px; tint: root.status-color; pulse: root.transferring || root.data.phase == "verifying"; }
-                Text { x: 14px; y: 0px; height: parent.height; text: root.status-text; font-size: 10px;
+            status-row := Rectangle { x: 16px; y: stats.y + stats.height + 12px; width: parent.width - 32px; height: 16px;
+                StatusDot { x: 0px; y: 5px; tint: root.status-color; pulse: root.transferring || root.data.phase == "verifying"; }
+                Text { x: 14px; y: 0px; width: parent.width - 170px; height: parent.height; text: root.status-text; font-size: 10px;
                     letter-spacing: 1.6px; color: root.status-color; vertical-alignment: center; overflow: elide; }
                 Text { x: parent.width - self.preferred-width; y: 0px; height: parent.height;
                     text: root.data.phase == "complete" ? "ФАЙЛЫ ПРОВЕРЕНЫ" : root.data.phase == "uptodate" ? "ВЕРСИЯ ПРОВЕРЕНА" : "ПРОВЕРКА ФАЙЛОВ";
                     font-size: 10px; letter-spacing: 1.6px; color: Tokens.muted-foreground; vertical-alignment: center; }
             }
         }
-        lists := Rectangle { x: 0px; y: panel.y + panel.height + 8px; width: parent.width; height: parent.height - self.y;
+        lists := Rectangle { x: 0px; y: panel.y + panel.height + 12px; width: parent.width; height: parent.height - self.y;
             border-width: 1phx; border-color: Tokens.border; background: Tokens.secondary;
             log-pane := Rectangle { x: 1phx; y: 1phx; width: (parent.width - 2phx - 1px) * 1.35 / 2.35; height: parent.height - 2phx;
                 background: Tokens.chrome;
-                log-head := Rectangle { x: 12px; y: 10px; width: parent.width - 24px; height: 15px;
-                    Text { x: 0px; y: 0px; height: parent.height; text: "ЖУРНАЛ ОБНОВЛЕНИЯ"; font-size: 10px;
+                log-head := Rectangle { x: 16px; y: 16px; width: parent.width - 32px; height: 15px;
+                    Rectangle { x: 0px; y: 4.5px; width: 6px; height: 6px; background: Tokens.primary; }
+                    log-title := Text { x: 18px; y: 0px; height: parent.height; text: "ЖУРНАЛ ОБНОВЛЕНИЯ"; font-size: 10px;
                         letter-spacing: 1.8px; color: Tokens.foreground; vertical-alignment: center; }
-                    Text { x: parent.width - self.preferred-width; y: 0px; height: parent.height; text: "SYNC-PHASE-2";
+                    log-code := Text { x: parent.width - self.preferred-width; y: 0px; height: parent.height; text: "SYNC-PHASE-2";
                         font-size: 9px; letter-spacing: 2.52px; color: Tokens.faint; vertical-alignment: center; }
+                    Rectangle { x: log-title.x + log-title.preferred-width + 12px; y: 7.5px; width: Math.max(0px, log-code.x - 12px - self.x); height: 1px; background: Tokens.secondary; }
                 }
-                Rectangle { x: log-head.x + log-head.preferred-width + 12px; y: 17.5px; width: parent.width - self.x - 12px; height: 1px; background: Tokens.secondary; }
-                log-list := Rectangle { x: 12px; y: 32px; width: parent.width - 24px; height: parent.height - 44px; clip: true;
+                log-list := Rectangle { x: 16px; y: 43px; width: parent.width - 32px; height: parent.height - 59px; clip: true;
                     VerticalLayout { x: 0px; y: 0px; width: parent.width; height: self.preferred-height; spacing: 4px; alignment: start;
-                        if root.data.log.length == 0: HorizontalLayout { height: 14px; spacing: 16px; alignment: start;
+                        if root.data.log.length == 0: HorizontalLayout { spacing: 16px; alignment: start;
                             Text { text: "[--:--:--]"; font-family: Tokens.mono; font-size: 11px; color: Tokens.faint; }
-                            Text { text: "Waiting for connection..."; font-family: Tokens.mono; font-size: 11px; color: Tokens.muted-foreground; overflow: elide; }
+                            Text { text: "Waiting for connection..."; font-family: Tokens.mono; font-size: 11px; color: Tokens.muted-foreground; wrap: word-wrap; horizontal-stretch: 1; }
                         }
-                        for line in root.data.log: HorizontalLayout { height: 14px; spacing: 16px; alignment: start;
+                        for line in root.data.log: HorizontalLayout { spacing: 16px; alignment: start;
                             Text { text: "[" + line.ts + "]"; font-family: Tokens.mono; font-size: 11px; color: Tokens.faint; }
                             Text { text: line.msg; font-family: Tokens.mono; font-size: 11px;
                                 color: line.tone == 0 ? Tokens.success : line.tone == 1 ? Tokens.primary : line.tone == 3 ? #c98b8b : Tokens.secondary-foreground;
-                                overflow: elide; }
+                                wrap: word-wrap; horizontal-stretch: 1; }
                         }
                     }
                 }
             }
             steps-pane := Rectangle { x: log-pane.x + log-pane.width + 1px; y: 1phx; width: parent.width - self.x - 1phx;
                 height: parent.height - 2phx; background: Tokens.chrome;
-                steps-head := Rectangle { x: 12px; y: 10px; width: parent.width - 24px; height: 15px;
-                    Text { x: 0px; y: 0px; height: parent.height; text: "ЭТАПЫ ЗАПУСКА"; font-size: 10px;
+                steps-head := Rectangle { x: 16px; y: 16px; width: parent.width - 32px; height: 15px;
+                    Rectangle { x: 0px; y: 4.5px; width: 6px; height: 6px; background: Tokens.primary; }
+                    steps-title := Text { x: 18px; y: 0px; height: parent.height; text: "ЭТАПЫ ЗАПУСКА"; font-size: 10px;
                         letter-spacing: 1.8px; color: Tokens.foreground; vertical-alignment: center; }
-                    Text { x: parent.width - self.preferred-width; y: 0px; height: parent.height; text: "SEQ";
+                    steps-code := Text { x: parent.width - self.preferred-width; y: 0px; height: parent.height; text: "SEQ";
                         font-size: 9px; letter-spacing: 2.52px; color: Tokens.faint; vertical-alignment: center; }
+                    Rectangle { x: steps-title.x + steps-title.preferred-width + 12px; y: 7.5px; width: Math.max(0px, steps-code.x - 12px - self.x); height: 1px; background: Tokens.secondary; }
                 }
-                Rectangle { x: steps-head.x + steps-head.preferred-width + 12px; y: 17.5px; width: parent.width - self.x - 12px; height: 1px; background: Tokens.secondary; }
-                VerticalLayout { x: 12px; y: 34px; width: parent.width - 24px; height: self.preferred-height; spacing: 2px; alignment: start;
+                VerticalLayout { x: 16px; y: 43px; width: parent.width - 32px; height: self.preferred-height; spacing: 0px; alignment: start;
                     UpdateStep { label: "ПРОВЕРКА ФАЙЛОВ"; state: root.data.step0; }
                     UpdateStep { label: "ЗАГРУЗКА ОБНОВЛЕНИЯ"; state: root.data.step1; }
                     UpdateStep { label: "ПОДГОТОВКА MINECRAFT"; state: root.data.step2; }
-                    UpdateStep { label: "ЗАПУСК"; state: root.data.step3; }
+                    UpdateStep { label: "ЗАПУСК"; state: root.data.step3; last: true; }
                 }
             }
         }
@@ -336,50 +378,52 @@ export component LauncherUpdatePanel inherits Rectangle {
         root.data.phase == "restarting" ? "Перезапускаем лаунчер…" : "Не удалось завершить обновление";
     private property <color> status-color: root.data.phase == "error" ? #c98b8b :
         root.data.phase == "current" || root.data.phase == "installed" ? Tokens.success : Tokens.foreground;
-    background: Tokens.background;
-    VerticalLayout { x: 0px; y: 0px; width: parent.width; height: self.preferred-height; spacing: 8px; alignment: start;
-        HorizontalLayout { height: 22px; spacing: 8px; alignment: start;
-            Text { text: "Обновление лаунчера"; font-size: 18px; color: Tokens.foreground; vertical-alignment: center; }
-            Text { text: "Текущая версия: " + root.data.current-version; font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; }
-        }
-        Text { text: root.status-text; font-size: 13px; color: root.status-color; wrap: word-wrap; width: parent.width; }
-        if root.transferring: Rectangle { height: 40px;
-            Rectangle { x: 0px; y: 0px; width: parent.width; height: 8px; background: Tokens.chrome;
-                border-width: 1phx; border-color: Tokens.border; clip: true;
-                Rectangle { x: 0px; y: 0px; width: parent.width * (root.data.phase == "downloading" ? root.data.percent : 100) / 100;
-                    height: parent.height; background: Tokens.primary; }
+    background: transparent;
+    header := Rectangle { x: 0px; y: 12px; width: parent.width; height: 24px;
+        Text { x: 0px; y: 0px; height: parent.height; text: "Обновление лаунчера"; font-size: 18px; color: Tokens.foreground; vertical-alignment: center; }
+        Text { x: parent.width - self.preferred-width; y: 0px; height: parent.height; text: "Текущая версия: " + root.data.current-version; font-size: 12px; color: Tokens.secondary-foreground; vertical-alignment: center; }
+    }
+    body := Rectangle { x: 0px; y: 52px; width: parent.width; height: Math.max(0px, actions.y - self.y - 16px); clip: true;
+        VerticalLayout { x: 0px; y: 0px; width: parent.width; height: self.preferred-height; spacing: 12px; alignment: start;
+            Text { text: root.status-text; font-size: 13px; color: root.status-color; wrap: word-wrap; width: parent.width; }
+            if root.transferring: Rectangle { height: 40px;
+                Rectangle { x: 0px; y: 0px; width: parent.width; height: 8px; background: Tokens.chrome;
+                    border-width: 1phx; border-color: Tokens.border; clip: true;
+                    Rectangle { x: 0px; y: 0px; width: parent.width * (root.data.phase == "downloading" ? root.data.percent : 100) / 100;
+                        height: parent.height; background: Tokens.primary; }
+                }
+                Text { x: 0px; y: 12px; height: 16px; text: root.data.downloaded + (root.data.has-total ? " / " + root.data.total : " · размер не указан сервером");
+                    font-size: 12px; color: Tokens.secondary-foreground; }
+                if root.data.has-total: Text { x: parent.width - self.preferred-width; y: 12px; height: 16px;
+                    text: root.data.percent + "%"; font-size: 12px; color: Tokens.secondary-foreground; }
             }
-            Text { x: 0px; y: 12px; height: 16px; text: root.data.downloaded + (root.data.has-total ? " / " + root.data.total : " · размер не указан сервером");
-                font-size: 12px; color: Tokens.secondary-foreground; }
-            if root.data.has-total: Text { x: parent.width - self.preferred-width; y: 12px; height: 16px;
-                text: root.data.percent + "%"; font-size: 12px; color: Tokens.secondary-foreground; }
+            if root.data.checked-at != "": Text { text: "Последняя проверка: " + root.data.checked-at; font-size: 11px;
+                color: Tokens.secondary-foreground; }
+            if root.data.error != "": Text { text: root.data.error; font-size: 12px; color: #c98b8b; wrap: word-wrap; width: parent.width; }
+            if root.data.error-raw != "": ActionArea { height: 16px; width: panel-toggle.preferred-width + 11px; label: "Подробности";
+                clicked => { root.error-details = !root.error-details; }
+                Path { x: 0px; y: 5px; width: 5px; height: 5px; viewbox-width: 7; viewbox-height: 7; fill: Tokens.muted-foreground; commands: root.error-details ? "M 0 0 L 7 0 L 3.5 7 Z" : "M 0 0 L 7 3.5 L 0 7 Z"; }
+                panel-toggle := SmallLabel { x: 11px; y: 0px; height: parent.height; text: "Подробности"; font-size: 10px; letter-spacing: 1px; }
+            }
+            if root.error-details && root.data.error-raw != "": Text { text: root.data.error-raw; font-size: 10px;
+                font-family: Tokens.mono; color: Tokens.muted-foreground; wrap: word-wrap; width: parent.width; }
+            if root.data.error == "" && root.data.update-body != "": Text { text: root.data.update-body; font-size: 12px;
+                color: Tokens.secondary-foreground; wrap: word-wrap; width: parent.width; }
+            if root.data.error == "" && root.data.update-body == "": Text {
+                text: "Новые версии проверяются при запуске лаунчера. Установка начинается по вашей команде.";
+                font-size: 12px; color: Tokens.secondary-foreground; wrap: word-wrap; width: parent.width; }
         }
-        if root.data.checked-at != "": Text { text: "Последняя проверка: " + root.data.checked-at; font-size: 11px;
-            color: Tokens.secondary-foreground; }
-        if root.data.error != "": Text { text: root.data.error; font-size: 12px; color: #c98b8b; wrap: word-wrap; width: parent.width; }
-        if root.data.error-raw != "": ActionArea { height: 16px; width: panel-toggle.preferred-width + 11px; label: "Подробности";
-            clicked => { root.error-details = !root.error-details; }
-            Path { x: 0px; y: 5px; width: 5px; height: 5px; viewbox-width: 7; viewbox-height: 7; fill: Tokens.muted-foreground; commands: root.error-details ? "M 0 0 L 7 0 L 3.5 7 Z" : "M 0 0 L 7 3.5 L 0 7 Z"; }
-            panel-toggle := SmallLabel { x: 11px; y: 0px; height: parent.height; text: "Подробности"; font-size: 10px; letter-spacing: 1px; }
-        }
-        if root.error-details && root.data.error-raw != "": Text { text: root.data.error-raw; font-size: 10px;
-            font-family: Tokens.mono; color: Tokens.muted-foreground; wrap: word-wrap; width: parent.width; }
-        if root.data.error == "" && root.data.update-body != "": Text { text: root.data.update-body; font-size: 12px;
-            color: Tokens.secondary-foreground; wrap: word-wrap; width: parent.width; }
-        if root.data.error == "" && root.data.update-body == "": Text {
-            text: "Новые версии проверяются при запуске лаунчера. Установка начинается по вашей команде.";
-            font-size: 12px; color: Tokens.secondary-foreground; wrap: word-wrap; width: parent.width; }
-        HorizontalLayout { height: 32px; spacing: 12px; alignment: start;
-            if !root.data.installed: MainButton { label: "Проверить обновления"; text: "Проверить обновления";
-                icon: @image-url("../assets/icons/refresh-cw.svg"); spinning: root.data.phase == "checking";
-                enabled: !root.busy; clicked => { if self.enabled { root.check(); } } }
-            if root.data.update-version != "" && !root.data.installed: MainButton { label: "Установить обновление";
-                text: root.busy && root.data.phase != "checking" ? "Обновление выполняется" : "Установить " + root.data.update-version;
-                icon: @image-url("../assets/icons/download.svg"); enabled: !root.busy;
-                clicked => { if self.enabled { root.install(); } } }
-            if root.data.installed: MainButton { label: "Перезапустить лаунчер"; text: "Перезапустить лаунчер";
-                icon: @image-url("../assets/icons/refresh-cw.svg"); enabled: !root.busy;
-                clicked => { if self.enabled { root.restart(); } } }
-        }
+    }
+    actions := HorizontalLayout { x: 0px; y: parent.height - 52px; width: parent.width; height: 40px; spacing: 12px; alignment: start;
+        if !root.data.installed: LauncherActionButton { label: "Проверить обновления"; text: "Проверить обновления";
+            icon: @image-url("../assets/icons/refresh-cw.svg"); spinning: root.data.phase == "checking";
+            enabled: !root.busy; clicked => { if self.enabled { root.check(); } } }
+        if root.data.update-version != "" && !root.data.installed: LauncherActionButton { label: "Установить обновление";
+            text: root.busy && root.data.phase != "checking" ? "Обновление выполняется" : "Установить " + root.data.update-version;
+            icon: @image-url("../assets/icons/download.svg"); primary: true; enabled: !root.busy;
+            clicked => { if self.enabled { root.install(); } } }
+        if root.data.installed: LauncherActionButton { label: "Перезапустить лаунчер"; text: "Перезапустить лаунчер";
+            icon: @image-url("../assets/icons/refresh-cw.svg"); primary: true; enabled: !root.busy;
+            clicked => { if self.enabled { root.restart(); } } }
     }
 }
