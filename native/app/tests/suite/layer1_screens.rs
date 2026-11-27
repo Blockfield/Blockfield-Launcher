@@ -558,7 +558,7 @@ fn scenario_update_nav_and_retry() {
     let (app, _host) = given_app("update", "default");
     assert_eq!(app.get_update_data().phase, "downloading");
     // …when the operator cancels, the flow errors…
-    when_click_label(&app, "ОТМЕНА");
+    when_click_label(&app, "CANCEL");
     assert_eq!(app.get_update_data().phase, "error");
     // …and retry resets it to checking with a fresh first step.
     when_click_label(&app, "ПОВТОРИТЬ");

@@ -114,6 +114,9 @@ pub fn wire_app(
         if let Some(app) = weak.upgrade() {
             app.set_active(index);
             skin::sync_visibility(&app, &navigate_host);
+            if index == 1 {
+                app.invoke_update_shown();
+            }
             if index == 2 {
                 app.invoke_stats_shown();
             }
@@ -123,6 +126,7 @@ pub fn wire_app(
     let update_host = skin_host.clone();
     app.on_launcher_update(move || {
         if let Some(app) = weak.upgrade() {
+            app.set_settings_tab(4);
             app.set_active(3);
             skin::sync_visibility(&app, &update_host);
         }
@@ -194,6 +198,13 @@ pub fn wire_app(
     app.global::<SelectSearch>()
         .on_find(|options, search| fixtures::find_option(&options, &search));
     app.global::<MainText>().on_launch_sub(main_ops::launch_sub);
+    app.global::<MainText>().on_friendly_error(|raw, context| {
+        let context = launcher_core::errors::ErrorContext::from_slug(&context)
+            .unwrap_or(launcher_core::errors::ErrorContext::Launch);
+        launcher_core::errors::friendly_error(&raw, context)
+            .message
+            .into()
+    });
     let weak = app.as_weak();
     app.on_deploy(move || {
         if let Some(app) = weak.upgrade() {

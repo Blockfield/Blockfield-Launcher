@@ -241,75 +241,92 @@ impl Backend {
             crate::settings_tabs::wire(app, None);
             return;
         };
-        crate::content::reset_cache();
-        app.global::<SettingsForm>().set_loading(true);
-        app.set_settings_tab(0);
-        // The auth gate owns the window until sign-in: logged-out users must
-        // never see the main Shell, even though settings init runs up front.
-        app.set_show_main(false);
-        app.set_show_login(false);
-        app.set_show_firstrun(false);
-        app.set_dev_build(launcher_core::dev::is_dev_build());
-        apply_dev_status(app);
-        app.set_update_label("".into());
-        app.set_main_data(initial_main_data());
-        crate::content::apply_shell_defaults(app);
-        crate::content::spawn_fetch(app.as_weak(), &handle);
-        let events = bridge::sink(app);
         let weak = app.as_weak();
-        let route_handle = handle.clone();
-        handle.spawn(async move {
-            let initialized = tokio::task::spawn_blocking(move || {
-                let state = runtime::build_state(events)?;
-                // SettingsResponse keeps its fields private; serialize the redacted op response.
-                let settings = settings::load_settings(&state).map_err(std::io::Error::other)?;
-                let settings = serde_json::to_value(settings)?;
-                Ok::<_, std::io::Error>((state, settings))
-            })
-            .await
-            .map_err(std::io::Error::other)
-            .and_then(|result| result);
-            let (state, settings) = match initialized {
-                Ok(initialized) => initialized,
-                Err(error) => {
-                    let message = format!("Cannot initialize launcher: {error}");
-                    eprintln!("{message}");
-                    let _ = weak.upgrade_in_event_loop(move |app| {
-                        apply_init_error(&app, message);
-                    });
-                    return;
-                }
-            };
-            let status = account_status(&state).await;
-            let stored_username = settings["username"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                let handle = route_handle.clone();
-                crate::auth::attach(&app, state.clone(), handle.clone());
-                match status {
-                    Ok(status) => crate::auth::enter_startup(&app, state, handle, status),
-                    Err(error) => crate::auth::show_login_error(&app, &stored_username, &error),
-                }
-            });
+        let retry_handle = handle.clone();
+        app.on_retry_init(move || {
+            if let Some(app) = weak.upgrade() {
+                run_startup(&app, retry_handle.clone());
+            }
         });
+        run_startup(app, handle);
     }
 }
 
-/// Show a fatal init failure on the main screen. Startup hides every
-/// screen until auth resolves, so without this the error would sit in
-/// empty chrome nobody can see.
+fn run_startup(app: &AppWindow, handle: Handle) {
+    crate::content::reset_cache();
+    app.global::<SettingsForm>().set_loading(true);
+    app.set_settings_tab(0);
+    // The auth gate owns the window until sign-in: logged-out users must
+    // never see the main Shell, even though settings init runs up front.
+    app.set_show_main(false);
+    app.set_show_login(false);
+    app.set_show_firstrun(false);
+    app.set_show_init_error(false);
+    app.set_init_error("".into());
+    app.set_init_error_raw("".into());
+    app.set_init_error_details(false);
+    app.set_dev_build(launcher_core::dev::is_dev_build());
+    apply_dev_status(app);
+    app.set_update_label("".into());
+    app.set_main_data(initial_main_data());
+    crate::content::apply_shell_defaults(app);
+    crate::content::spawn_fetch(app.as_weak(), &handle);
+    let events = bridge::sink(app);
+    let weak = app.as_weak();
+    let route_handle = handle.clone();
+    handle.spawn(async move {
+        let initialized = tokio::task::spawn_blocking(move || {
+            let state = runtime::build_state(events)?;
+            // SettingsResponse keeps its fields private; serialize the redacted op response.
+            let settings = settings::load_settings(&state).map_err(std::io::Error::other)?;
+            let settings = serde_json::to_value(settings)?;
+            Ok::<_, std::io::Error>((state, settings))
+        })
+        .await
+        .map_err(std::io::Error::other)
+        .and_then(|result| result);
+        let (state, settings) = match initialized {
+            Ok(initialized) => initialized,
+            Err(error) => {
+                let message = format!("Cannot initialize launcher: {error}");
+                eprintln!("{message}");
+                let _ = weak.upgrade_in_event_loop(move |app| {
+                    apply_init_error(&app, message);
+                });
+                return;
+            }
+        };
+        let status = account_status(&state).await;
+        let stored_username = settings["username"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            let handle = route_handle.clone();
+            crate::auth::attach(&app, state.clone(), handle.clone());
+            match status {
+                Ok(status) => crate::auth::enter_startup(&app, state, handle, status),
+                // Auth failures land on LoginScreen with friendly_error +
+                // first-run eligibility (D5), inside D2's run_startup wrapper.
+                Err(error) => crate::auth::show_login_error(&app, &stored_username, &error),
+            }
+        });
+    });
+}
+
+/// Show a fatal init failure on its dedicated centered screen with retry
+/// (Tauri `App.tsx` `configError` parity) instead of landing on MainScreen.
 pub fn apply_init_error(app: &AppWindow, message: String) {
-    // The settings overlay would otherwise hide this error and block input.
+    let friendly = friendly_error(&message, ErrorContext::SettingsLoad);
     app.global::<SettingsForm>().set_loading(false);
-    app.set_show_main(true);
-    let mut data = app.get_main_data();
-    data.checking = false;
-    data.check_error = message.clone().into();
-    app.set_main_data(data);
-    // TOP has no live data without init: show the failure there too
-    // instead of leaving the board on its loading spinner.
+    app.set_show_main(false);
+    app.set_show_login(false);
+    app.set_show_firstrun(false);
+    app.set_init_error(friendly.message.into());
+    app.set_init_error_raw(friendly.raw.into());
+    app.set_init_error_details(false);
+    app.set_show_init_error(true);
+    // TOP has no live data without init: keep the error state populated.
     app.set_stats_board_state(1);
     app.set_stats_board_error(message.clone().into());
     app.set_stats_self_state(2);
@@ -415,6 +432,7 @@ pub fn trigger_pack_check(
             }
             match result {
                 Ok(version) => {
+                    crate::update::apply_version_patch(&app, &version);
                     data.checked = true;
                     data.needs_update = version.needs_update;
                     data.needs_setup =
@@ -551,6 +569,7 @@ pub fn select_profile(
                 app.set_rooms(ModelRc::default());
                 app.set_room_names(ModelRc::default());
                 app.set_main_data(data);
+                crate::update::invalidate_sync(&app);
 
                 sync_footer_server_label(&app);
                 trigger_pack_check(&app, state.clone(), handle.clone(), false);
@@ -617,6 +636,7 @@ pub fn on_settings_saved(app: &AppWindow, state: Arc<LauncherAppState>, handle: 
     data.checked = false;
     data.check_error = "".into();
     app.set_main_data(data);
+    crate::update::invalidate_sync(app);
     trigger_pack_check(app, state.clone(), handle.clone(), false);
     trigger_server_refresh(app, state, handle);
 }
@@ -633,6 +653,7 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
     set_committed_workshop_server("");
     app.set_show_login(false);
     app.set_show_firstrun(false);
+    app.set_show_init_error(false);
     app.set_show_main(true);
     app.set_dev_build(launcher_core::dev::is_dev_build());
     apply_dev_status(app);
@@ -1085,6 +1106,7 @@ mod tests {
     fn server_refresh_preserves_game_state_and_clears_stale_rooms() {
         use launcher_net::status::ServerStatus;
         use slint::Model;
+        let _serial = crate::main_ops::test_serial();
         i_slint_backend_testing::init_no_event_loop();
         let app = crate::AppWindow::new().unwrap();
         app.set_server_label("IP · raknet;workshop.blockfield.pro:25567".into());
