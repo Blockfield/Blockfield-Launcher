@@ -1,0 +1,295 @@
+//! Fail-before parity tests for D2 (UpdateScreen, LauncherUpdatePanel,
+//! MainScreen error/routing, fatal init error screen).
+//!
+//! Uses `init_no_event_loop` once per test binary, driving the real Slint UI
+//! tree and production wiring (`wire_app`, `bridge::apply`, `backend::apply_init_error`).
+
+use blockfield_native::{
+    AppWindow, LauncherUpdateData, MainData, UpdateData, backend, bridge, fixtures, update,
+    wire_app,
+};
+use i_slint_backend_testing::ElementHandle;
+use launcher_app::{DownloadMirrorPayload, LauncherAppState, LauncherEvent};
+use launcher_core::game::{GamePhase, GameStatus};
+use launcher_net::download::{DownloadProgressPayload, ProgressUnit};
+use slint::{ComponentHandle, Model};
+
+fn has_text(app: &AppWindow, text: &str) -> bool {
+    ElementHandle::find_by_accessible_label(app, text)
+        .next()
+        .is_some()
+}
+
+#[test]
+fn update_flow_parity_suite() {
+    i_slint_backend_testing::init_no_event_loop();
+
+    test_f04_bridge_updates_update_screen();
+    test_f04_default_update_data_matches_tauri();
+    test_f08_footer_click_and_launcher_update_panel_sync();
+    test_f11_main_screen_errors_use_friendly_error();
+    test_f19_fatal_init_error_dedicated_screen_with_retry();
+    test_f22_file_progress_hint_banner();
+    test_f26_launcher_panel_labels_and_version();
+    test_f28_progress_precision_and_cancel_label();
+}
+
+fn test_f04_bridge_updates_update_screen() {
+    let app = AppWindow::new().unwrap();
+    wire_app(&app, backend::Backend::Fixtures).unwrap();
+    app.set_show_main(true);
+    app.set_active(1);
+    app.set_update_data(UpdateData {
+        phase: "downloading".into(),
+        mirror_name: "blockfield.pro".into(),
+        ..Default::default()
+    });
+
+    bridge::apply(
+        &app,
+        LauncherEvent::GameStatus(GameStatus {
+            phase: GamePhase::Running,
+            revision: 1,
+        }),
+    );
+    let data = app.get_update_data();
+    assert_eq!(
+        data.game_phase, "running",
+        "F04: GameStatus reaches UpdateData"
+    );
+    assert_eq!(data.game_label, "В ИГРЕ", "F04: game_label matches Tauri");
+    assert_eq!(
+        data.game_sub, "Закройте игру, чтобы запустить снова",
+        "F04: game_sub matches Tauri"
+    );
+
+    bridge::apply(
+        &app,
+        LauncherAppState::status_event("modpack", "Синхронизация модов", true),
+    );
+    let data = app.get_update_data();
+    assert_eq!(data.phase, "downloading", "F04: Status updates phase");
+    assert_eq!(data.status_message, "Синхронизация модов");
+    assert!(data.can_cancel, "F04: cancelable flag forwarded");
+    assert_eq!(data.step1, 1, "F04: modpack phase activates step1");
+    assert!(
+        data.log.row_count() >= 1,
+        "F04: Status appends to update log"
+    );
+
+    bridge::apply(
+        &app,
+        LauncherEvent::DownloadMirror(DownloadMirrorPayload {
+            name: "Gcore CDN".into(),
+            speed: Some("12.4".into()),
+        }),
+    );
+    let data = app.get_update_data();
+    assert_eq!(
+        data.mirror_name, "Gcore CDN",
+        "F04: DownloadMirror updates mirror_name"
+    );
+
+    let mut progress = DownloadProgressPayload::files("mods/blockfield.jar".into(), 1, 4);
+    progress.unit = ProgressUnit::Bytes;
+    progress.total_bytes_downloaded = 512;
+    progress.total_bytes_all = 2048;
+    bridge::apply(&app, LauncherEvent::DownloadProgress(progress));
+    let data = app.get_update_data();
+    assert_eq!(data.progress_unit, "bytes");
+    assert_eq!(data.current_file, "mods/blockfield.jar");
+    assert_eq!(data.downloaded, "512 B");
+    assert_eq!(data.total, "2 KB");
+    assert_eq!(data.remaining, "3");
+    assert!((data.progress - 25.0).abs() < 0.01);
+
+    bridge::apply(
+        &app,
+        LauncherAppState::status_event("runtime", "Подготовка Minecraft", false),
+    );
+    let data = app.get_update_data();
+    assert_eq!(data.step1, 2, "F04: runtime marks step1 done");
+    assert_eq!(data.step2, 1, "F04: runtime activates step2");
+    assert!(!data.can_cancel);
+}
+
+fn test_f04_default_update_data_matches_tauri() {
+    let data = update::default_data();
+    assert_eq!(
+        data.patch, "/ ПАТЧ ...",
+        "F28: ASCII ellipsis in initial patch"
+    );
+    assert_eq!(data.downloaded, "0 B", "F04: initial downloaded bytes");
+    assert_eq!(data.total, "0 B", "F04: initial total bytes");
+    assert_eq!(data.remaining, "—", "F04: initial remaining placeholder");
+    assert_eq!(data.speed, "—", "F04: initial speed placeholder");
+}
+
+fn test_f08_footer_click_and_launcher_update_panel_sync() {
+    let app = AppWindow::new().unwrap();
+    wire_app(&app, backend::Backend::Fixtures).unwrap();
+    app.set_show_main(true);
+    app.set_active(0);
+    app.set_settings_tab(0);
+
+    // Clicking the footer version button opens Settings -> Лаунчер (tab 4).
+    app.invoke_launcher_update();
+    assert_eq!(app.get_active(), 3, "F08: footer click opens Settings");
+    assert_eq!(
+        app.get_settings_tab(),
+        4,
+        "F08: footer click opens Settings tab 4 (Лаунчер)"
+    );
+
+    // Default launcher update data carries the real crate version, not "—".
+    let fresh = update::default_launcher_data();
+    assert_eq!(
+        fresh.current_version,
+        env!("CARGO_PKG_VERSION"),
+        "F08: current_version initialized from crate version"
+    );
+
+    // Panel phase changes mirror into Shell footer update_label.
+    fixtures::apply_launcher_update(&app, "idle").unwrap();
+    app.set_update_label("".into());
+    app.invoke_launcher_check();
+    assert_eq!(
+        app.get_update_label(),
+        "Доступна 1.0.20",
+        "F08: available update mirrors to footer update_label"
+    );
+    app.invoke_launcher_install();
+    assert_eq!(
+        app.get_update_label(),
+        "Перезапустить",
+        "F08: installed update mirrors to footer update_label"
+    );
+}
+
+fn test_f11_main_screen_errors_use_friendly_error() {
+    let app = AppWindow::new().unwrap();
+    wire_app(&app, backend::Backend::Fixtures).unwrap();
+    fixtures::apply_main(&app, "main", "default").unwrap();
+    app.show().unwrap();
+
+    // Network check error uses network-specific friendly message, not static fallback.
+    let mut data: MainData = app.get_main_data();
+    data.check_error = "error trying to connect: dns error".into();
+    data.launch_error = "".into();
+    app.set_main_data(data);
+    assert!(
+        has_text(
+            &app,
+            "Нет доступа к серверу сборки blockfield.pro — проверьте интернет и повторите."
+        ),
+        "F11: check_error renders network friendly_error message"
+    );
+
+    // PACK_REPAIR launch error uses repair wording from friendly_error, not generic launch failure.
+    let mut data = app.get_main_data();
+    data.check_error = "".into();
+    data.launch_error = "PACK_REPAIR: pack files changed or are missing.".into();
+    app.set_main_data(data);
+    assert!(
+        has_text(
+            &app,
+            "Файлы игры повреждены — откройте «Обновления», чтобы восстановить их."
+        ),
+        "F11: launch_error renders PACK_REPAIR friendly_error message"
+    );
+}
+
+fn test_f19_fatal_init_error_dedicated_screen_with_retry() {
+    let app = AppWindow::new().unwrap();
+    wire_app(&app, backend::Backend::Fixtures).unwrap();
+    app.show().unwrap();
+    backend::apply_init_error(&app, "Cannot initialize launcher: permission denied".into());
+    assert!(
+        !app.get_show_main(),
+        "F19: fatal init error must not land on MainScreen"
+    );
+    assert!(
+        has_text(
+            &app,
+            "Не удалось загрузить настройки. Проверьте доступ к папке настроек и повторите."
+        ),
+        "F19: fatal init error shows SettingsLoad friendly message"
+    );
+    assert!(
+        has_text(&app, "Повторить"),
+        "F19: fatal init error screen offers Повторить button"
+    );
+}
+
+fn test_f22_file_progress_hint_banner() {
+    let app = AppWindow::new().unwrap();
+    wire_app(&app, backend::Backend::Fixtures).unwrap();
+    fixtures::apply_update(&app, "default").unwrap();
+    let mut data = app.get_update_data();
+    data.phase = "downloading".into();
+    data.progress_unit = "files".into();
+    app.set_update_data(data);
+    app.show().unwrap();
+    assert!(
+        has_text(
+            &app,
+            "Крупные файлы скачиваются дольше. Текущий файл, объём и зеркало показаны ниже."
+        ),
+        "F22: files-mode downloading renders fileProgressHint banner"
+    );
+}
+
+fn test_f26_launcher_panel_labels_and_version() {
+    let app = AppWindow::new().unwrap();
+    wire_app(&app, backend::Backend::Fixtures).unwrap();
+    fixtures::apply_settings(&app).unwrap();
+    app.set_settings_tab(4);
+    app.set_launcher_update_data(LauncherUpdateData {
+        phase: "available".into(),
+        current_version: "2.0.1".into(),
+        update_version: "2.0.2".into(),
+        ..Default::default()
+    });
+    app.show().unwrap();
+    assert!(
+        has_text(&app, "Установить 2.0.2"),
+        "F26: install button interpolates target version in sentence case"
+    );
+    app.set_launcher_update_data(LauncherUpdateData {
+        phase: "downloading".into(),
+        current_version: "2.0.1".into(),
+        update_version: "2.0.2".into(),
+        ..Default::default()
+    });
+    assert!(
+        has_text(&app, "Обновление выполняется"),
+        "F26: install button shows busy label while downloading"
+    );
+    app.set_launcher_update_data(LauncherUpdateData {
+        phase: "installed".into(),
+        current_version: "2.0.1".into(),
+        update_version: "2.0.2".into(),
+        installed: true,
+        ..Default::default()
+    });
+    assert!(
+        has_text(&app, "Перезапустить лаунчер"),
+        "F26: restart button uses Tauri sentence case"
+    );
+}
+
+fn test_f28_progress_precision_and_cancel_label() {
+    let app = AppWindow::new().unwrap();
+    wire_app(&app, backend::Backend::Fixtures).unwrap();
+    fixtures::apply_update(&app, "complete").unwrap();
+    app.show().unwrap();
+    assert!(
+        has_text(&app, "100.0"),
+        "F28: progress readout keeps 1 fixed decimal (100.0%)"
+    );
+    fixtures::apply_update(&app, "default").unwrap();
+    assert!(
+        has_text(&app, "CANCEL"),
+        "F28: cancel button label matches Tauri CANCEL"
+    );
+}
