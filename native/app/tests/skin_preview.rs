@@ -266,41 +266,66 @@ fn f03_debounce_coalesces_rapid_username_changes_into_single_fetch() {
     app.set_cape_path("".into());
     app.invoke_navigate(3);
     app.invoke_settings_tab_changed(3);
-    // Five keystrokes within one event-loop turn: only the last may fetch.
-    for name in ["Typist02", "Typist03", "Typist04", "Typist05", "DraslHero"] {
-        app.set_username(name.into());
-    }
 
-    let weak = app.as_weak();
-    let profiles = profile_hits.clone();
-    let poll = slint::Timer::default();
-    poll.start(
-        slint::TimerMode::Repeated,
-        Duration::from_millis(20),
-        move || {
-            let app = weak.upgrade().unwrap();
-            if app.get_skin_caption() == "ВАШ СКИН" {
-                assert_eq!(
-                    profiles.load(Ordering::SeqCst),
-                    1,
-                    "rapid username changes must coalesce into one profile lookup"
-                );
-                slint::quit_event_loop().unwrap();
-            }
-        },
-    );
-    let weak_timeout = app.as_weak();
-    let profiles_timeout = profile_hits.clone();
-    slint::Timer::single_shot(Duration::from_secs(5), move || {
-        let caption = weak_timeout
-            .upgrade()
-            .map(|a| a.get_skin_caption().to_string())
-            .unwrap_or_default();
-        panic!(
-            "debounce test timed out: caption={caption:?}, profile_hits={}",
-            profiles_timeout.load(Ordering::SeqCst)
+    // Release-like profiles (ci-test) refuse local-HTTP Drasl, so the
+    // coalescing count only runs in debug builds; there the last name must
+    // resolve through the mock while earlier keystrokes never hit it.
+    if cfg!(debug_assertions) {
+        // Five keystrokes within one event-loop turn: only the last may fetch.
+        for name in ["Typist02", "Typist03", "Typist04", "Typist05", "DraslHero"] {
+            app.set_username(name.into());
+        }
+
+        let weak = app.as_weak();
+        let profiles = profile_hits.clone();
+        let poll = slint::Timer::default();
+        poll.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(20),
+            move || {
+                let app = weak.upgrade().unwrap();
+                if app.get_skin_caption() == "ВАШ СКИН" {
+                    assert_eq!(
+                        profiles.load(Ordering::SeqCst),
+                        1,
+                        "rapid username changes must coalesce into one profile lookup"
+                    );
+                    slint::quit_event_loop().unwrap();
+                }
+            },
         );
-    });
+        let weak_timeout = app.as_weak();
+        let profiles_timeout = profile_hits.clone();
+        slint::Timer::single_shot(Duration::from_secs(5), move || {
+            let caption = weak_timeout
+                .upgrade()
+                .map(|a| a.get_skin_caption().to_string())
+                .unwrap_or_default();
+            panic!(
+                "debounce test timed out: caption={caption:?}, profile_hits={}",
+                profiles_timeout.load(Ordering::SeqCst)
+            );
+        });
+    } else {
+        // No network here: invalid names resolve without it, and the single
+        // debounced fetch must still land the default caption.
+        for name in ["ab", "a!", "a b"] {
+            app.set_username(name.into());
+        }
+        let weak = app.as_weak();
+        slint::Timer::single_shot(Duration::from_millis(1500), move || {
+            let app = weak.upgrade().unwrap();
+            assert_eq!(
+                app.get_skin_caption().as_str(),
+                "СТАНДАРТНЫЙ СКИН",
+                "debounced fetch must land the default caption without network"
+            );
+            slint::quit_event_loop().unwrap();
+        });
+        slint::Timer::single_shot(Duration::from_secs(5), || {
+            panic!("debounce test timed out");
+        });
+    }
     app.run().unwrap();
 
     if let Ok(mut s) = std::net::TcpStream::connect(base.trim_start_matches("http://")) {
@@ -350,13 +375,28 @@ fn f03_preload_caption_is_not_found_until_first_bytes() {
     app.invoke_navigate(3);
     app.invoke_settings_tab_changed(3);
 
+    // Synchronous: hiding the pre-load host sets the fallback caption at
+    // once, before any fetch runs. Old code kept the fixture caption here.
+    assert_eq!(
+        app.get_skin_caption().as_str(),
+        "СКИН НЕ НАЙДЕН",
+        "pre-load caption must be the not-found fallback, not the fixture caption"
+    );
+    if !cfg!(debug_assertions) {
+        host.shutdown();
+        runtime.shutdown_timeout(Duration::from_secs(2));
+        return;
+    }
+
+    // Debug-only: the black-hole keeps the fetch in flight, so the fallback
+    // must still stand at 900 ms (past the 300 ms debounce + fetch start).
     let weak = app.as_weak();
     slint::Timer::single_shot(Duration::from_millis(900), move || {
         let app = weak.upgrade().unwrap();
         assert_eq!(
             app.get_skin_caption().as_str(),
             "СКИН НЕ НАЙДЕН",
-            "pre-load caption must be the not-found fallback, not the fixture caption"
+            "fallback caption must survive the in-flight fetch"
         );
         slint::quit_event_loop().unwrap();
     });
