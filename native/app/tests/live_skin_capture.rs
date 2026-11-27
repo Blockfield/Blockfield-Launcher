@@ -101,6 +101,15 @@ fn spawn_red_drasl(skin_png: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
 
 #[test]
 fn live_skin_capture_red_drasl_preview() {
+    // Release-semantics builds (the CI `ci-test` profile) reject the
+    // plain-http mock Drasl (`drasl_base` in
+    // `core/launcher-net/src/account.rs` allows http to localhost in debug
+    // builds only, mirroring Tauri). This stays a manual VM evidence step
+    // (`xvfb-run cargo test --test live_skin_capture`); the CI caption
+    // behavior is covered by `tests/skin_preview.rs`.
+    if !cfg!(debug_assertions) {
+        return;
+    }
     // Real window: winit + Skia CPU raster, like Layer-2 e2e under Xvfb.
     slint::BackendSelector::new()
         .backend_name("winit".into())
