@@ -76,6 +76,7 @@ struct LiveBackend {
 enum PendingPreview {
     AttachLive(Arc<LauncherAppState>, Handle),
     Invalidate,
+    FetchNow,
     Apply {
         host_key: (String, String, bool),
         skin: Option<Vec<u8>>,
@@ -109,6 +110,7 @@ pub fn invalidate_preview(app: &AppWindow) {
 struct SkinController {
     host: Rc<PreviewHost>,
     live: RefCell<Option<LiveBackend>>,
+    debounce: Timer,
 }
 
 impl SkinController {
@@ -130,6 +132,10 @@ impl SkinController {
                     live.upload_rev.set(live.upload_rev.get().wrapping_add(1));
                     live.last_key.replace(None);
                 }
+            }
+            Some(PendingPreview::FetchNow) => {
+                self.spawn_fetch(app);
+                return;
             }
             Some(PendingPreview::Apply {
                 host_key,
@@ -193,12 +199,45 @@ impl SkinController {
             }
             return;
         }
-        live.last_key.replace(Some(key.clone()));
-        let generation = live.generation.fetch_add(1, Ordering::SeqCst) + 1;
         if !live.staged.get() {
             // Avoid initializing wgpu with the bundled fixture skin before real bytes arrive.
+            // Tauri shows its "not found" fallback until then (SkinPreview.tsx).
             self.host.set_tab_visible(false);
+            app.set_skin_caption(FALLBACK_CAPTION.into());
         }
+        // 300 ms single-shot debounce like Tauri SettingsScreen: every
+        // keystroke restarts the timer, the fetch spawns only on fire.
+        // `last_key` updates at fire time, so leaving the tab mid-debounce
+        // simply drops the fetch and re-arms on return.
+        let weak = app.as_weak();
+        self.debounce.start(
+            slint::TimerMode::SingleShot,
+            Duration::from_millis(300),
+            move || {
+                let Some(app) = weak.upgrade() else { return };
+                dispatch_pending(&app, PendingPreview::FetchNow);
+            },
+        );
+    }
+
+    /// Spawn the off-UI-thread `preview_skin` fetch for the current inputs.
+    fn spawn_fetch(&self, app: &AppWindow) {
+        let live_borrow = self.live.borrow();
+        let Some(live) = live_borrow.as_ref() else {
+            return;
+        };
+        if !skin_visible(app) {
+            return;
+        }
+        let key = LiveKey {
+            username: app.get_username().to_string(),
+            skin_path: app.get_skin_path().to_string(),
+            cape_path: app.get_cape_path().to_string(),
+            slim: app.get_slim(),
+            upload_rev: live.upload_rev.get(),
+        };
+        live.last_key.replace(Some(key.clone()));
+        let generation = live.generation.fetch_add(1, Ordering::SeqCst) + 1;
 
         let state = live.state.clone();
         let gen_counter = live.generation.clone();
@@ -393,6 +432,7 @@ pub fn attach(app: &AppWindow, activity: &Rc<Activity>) -> std::io::Result<Rc<Pr
     let controller = Rc::new(SkinController {
         host: host.clone(),
         live: RefCell::new(None),
+        debounce: Timer::default(),
     });
     let sync_weak = app.as_weak();
     app.on_skin_preview_sync(move || {

@@ -218,6 +218,13 @@ fn f13_hook_error_shows_persistent_dismissible_alert() {
         &app,
         LauncherAppState::status_event("hook-error", msg, false),
     );
+    // Tauri MainScreen sets launchStatus on every status incl. hook-error,
+    // so the Play subtitle flashes the hook message while the alert persists.
+    assert_eq!(
+        app.get_main_data().launch_status.as_str(),
+        msg,
+        "hook-error must still update launch_status like Tauri"
+    );
     // Subsequent launch status and Idle must NOT wipe the hook-error alert.
     bridge::apply(
         &app,

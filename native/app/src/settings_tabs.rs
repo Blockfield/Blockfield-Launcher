@@ -14,6 +14,8 @@ use crate::{AppWindow, SettingsData, SettingsForm};
 
 type Core = Option<(Arc<LauncherAppState>, Handle)>;
 
+const DEFAULT_LANG: &str = "ru";
+
 pub fn apply_response(app: &AppWindow, value: &serde_json::Value) {
     let max = ram_limit_gb(value["maxRamMb"].as_f64().unwrap_or(0.0));
     app.global::<SettingsForm>().set_data(SettingsData {
@@ -31,7 +33,7 @@ pub fn apply_response(app: &AppWindow, value: &serde_json::Value) {
             .unwrap_or_default()
             .into(),
         post_exit: value["postExitCommand"].as_str().unwrap_or_default().into(),
-        lang: value["lang"].as_str().unwrap_or("ru").into(),
+        lang: DEFAULT_LANG.into(),
     });
     let form = app.global::<SettingsForm>();
     form.set_presets(ModelRc::new(VecModel::from(
@@ -65,7 +67,7 @@ pub fn config_from_form(data: &SettingsData) -> Result<LauncherConfig, String> {
         hide_while_playing: data.hide_while_playing,
         pre_launch_command: data.pre_launch.to_string(),
         post_exit_command: data.post_exit.to_string(),
-        lang: data.lang.to_string(),
+        lang: DEFAULT_LANG.into(),
         ..LauncherConfig::default()
     })
 }
@@ -161,42 +163,13 @@ pub fn wire(app: &AppWindow, core: Core) {
     let profile_snapshot = saved.clone();
     app.global::<SettingsForm>().on_profile(move |workshop| {
         let Some(app) = weak.upgrade() else { return };
-        let form = app.global::<SettingsForm>();
-        if form.get_data().workshop == workshop {
-            return;
-        }
         if let Some((state, handle)) = &profile_core {
-            let state = state.clone();
-            let weak = app.as_weak();
-            form.set_blocked(true);
-            handle.spawn(async move {
-                let profile = if workshop {
-                    ClientProfile::Workshop
-                } else {
-                    ClientProfile::Game
-                };
-                let result = settings::select_profile(&state, profile)
-                    .await
-                    .and_then(|value| serde_json::to_value(value).map_err(|e| e.to_string()));
-                let _ = weak.upgrade_in_event_loop(move |app| match result {
-                    Ok(value) => {
-                        apply_response(&app, &value);
-                        app.global::<SettingsForm>().set_blocked(false);
-                        // Profile switch settled: a waiting invite retries now.
-                        crate::bridge::retry_pending_join(&app);
-                    }
-                    Err(error) => {
-                        let friendly = friendly_error(&error, ErrorContext::SelectProfile);
-                        app.global::<SettingsForm>()
-                            .set_error(friendly.message.into());
-                        app.global::<SettingsForm>()
-                            .set_raw_error(friendly.raw.into());
-                        app.global::<SettingsForm>().set_blocked(false);
-                        crate::bridge::retry_pending_join(&app);
-                    }
-                });
-            });
+            crate::backend::select_profile(&app, state.clone(), handle.clone(), workshop);
         } else {
+            let form = app.global::<SettingsForm>();
+            if form.get_data().workshop == workshop {
+                return;
+            }
             let mut data = form.get_data();
             data.workshop = workshop;
             data.game_dir = if workshop {
@@ -232,10 +205,20 @@ pub fn wire(app: &AppWindow, core: Core) {
         form.set_raw_error("".into());
         if let Some((state, handle)) = &save_core {
             let state = state.clone();
+            let resync_state = state.clone();
+            let resync_handle = handle.clone();
             let weak = app.as_weak();
+            let saved_workshop_server = config.workshop_server.clone();
             handle.spawn_blocking(move || {
                 let result = settings::save_settings(&state, &state.app_data_dir, config);
-                let _ = weak.upgrade_in_event_loop(move |app| save_result(&app, result));
+                let _ = weak.upgrade_in_event_loop(move |app| {
+                    let ok = result.is_ok();
+                    save_result(&app, result);
+                    if ok {
+                        crate::backend::set_committed_workshop_server(&saved_workshop_server);
+                        crate::backend::on_settings_saved(&app, resync_state, resync_handle);
+                    }
+                });
             });
         } else {
             let result = if data.java_path == "/missing/java" {
@@ -263,7 +246,12 @@ pub fn wire(app: &AppWindow, core: Core) {
                 let result = settings::load_settings(&state)
                     .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()));
                 let _ = weak.upgrade_in_event_loop(move |app| match result {
-                    Ok(value) => apply_response(&app, &value),
+                    Ok(value) => {
+                        crate::backend::set_committed_workshop_server(
+                            value["workshopServer"].as_str().unwrap_or_default(),
+                        );
+                        apply_response(&app, &value);
+                    }
                     Err(error) => save_result(&app, Err(error)),
                 });
             });
@@ -313,14 +301,15 @@ pub fn wire(app: &AppWindow, core: Core) {
                             .await
                     };
                     let _ = weak.upgrade_in_event_loop(move |app| {
-                        account_result(&app, password_change, result.map(|_| ()))
+                        let kept = result.map(|status| crate::auth::status_username(&status));
+                        account_result(&app, password_change, kept)
                     });
                 });
             } else {
                 let result = if password_change && password.len() < 8 {
                     Err("Drasl: Invalid password".into())
                 } else {
-                    Ok(())
+                    Ok(app.get_username().to_string())
                 };
                 account_result(&app, password_change, result);
             }
@@ -346,18 +335,16 @@ pub fn wire(app: &AppWindow, core: Core) {
     });
 }
 
-fn account_result(app: &AppWindow, password_change: bool, result: Result<(), String>) {
+fn account_result(app: &AppWindow, password_change: bool, result: Result<String, String>) {
     let form = app.global::<SettingsForm>();
     form.set_account_busy(false);
     match result {
-        Ok(()) => {
+        Ok(username) => {
             form.set_password("".into());
             form.set_password_open(false);
             form.set_password_changed(password_change);
             if !password_change {
-                // The login screen unit consumes the account-expired event; never retain a password in UI state.
-                app.set_username("".into());
-                crate::bridge::apply(app, launcher_app::LauncherEvent::AccountExpired);
+                crate::auth::show_login_logout(app, &username);
             }
         }
         Err(error) => {

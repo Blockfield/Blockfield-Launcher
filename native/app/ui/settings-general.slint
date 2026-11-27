@@ -9,21 +9,23 @@ export component SettingsGeneral inherits Rectangle {
     private property <length> directory-height: 75px;
     private property <length> workshop-height: SettingsForm.data.workshop ? 90px : 0px;
     height: root.account-height + root.directory-height + root.workshop-height + 90px + 75px + 90px;
+    private property <length> account-top-y: (SettingsForm.password-open || SettingsForm.account-error != "" || SettingsForm.password-changed) ? 0px : 5px;
     SettingRow {
         x: 0px; y: 0px; width: parent.width; row-height: root.account-height;
         icon: @image-url("../assets/icons/user-round.svg"); label: "АККАУНТ";
         hint: ["Никнейм в игре. Пароль нужен для", "входа в лаунчер."];
-        Text { x: 0px; y: 5px; width: parent.width - 284px - 270px; height: 40px; text: root.username; font-family: Tokens.mono; font-size: 12px; color: Tokens.neutral-200; vertical-alignment: center; overflow: elide; }
-        FormButton { y: 5px; x: parent.width - 284px - self.width - logout.width - 8px; text: "СМЕНИТЬ ПАРОЛЬ"; icon: @image-url("../assets/icons/key-round.svg");
+        Text { x: 0px; y: root.account-top-y; width: parent.width - 284px - 270px; height: 40px; text: root.username; font-family: Tokens.mono; font-size: 12px; color: Tokens.neutral-200; vertical-alignment: center; overflow: elide; }
+        FormButton { y: root.account-top-y; x: parent.width - 284px - self.width - logout.width - 8px; text: "СМЕНИТЬ ПАРОЛЬ"; icon: @image-url("../assets/icons/key-round.svg");
             clicked => { SettingsForm.password-open = !SettingsForm.password-open; if SettingsForm.password-open { password.focus(); } }
         }
-        logout := FormButton { y: 5px; x: parent.width - 284px - self.width; text: "ВЫЙТИ"; icon: @image-url("../assets/icons/log-out.svg"); enabled: !SettingsForm.account-busy; clicked => { SettingsForm.logout(); } }
-        password := FormInput { y: 48px; width: parent.width - 284px - password-save.width + 1px; visible: SettingsForm.password-open; label: "Новый пароль"; placeholder: "Новый пароль"; password: true; value <=> SettingsForm.password;
+        logout := FormButton { y: root.account-top-y; x: parent.width - 284px - self.width; text: "ВЫЙТИ"; icon: @image-url("../assets/icons/log-out.svg"); enabled: !SettingsForm.account-busy; clicked => { SettingsForm.logout(); } }
+        password-save := FormButton { y: 48px; x: parent.width - 284px - self.width; visible: SettingsForm.password-open; text: SettingsForm.account-busy ? "" : "СОХРАНИТЬ"; busy: SettingsForm.account-busy; enabled: !SettingsForm.account-busy && SettingsForm.password != ""; clicked => { SettingsForm.change-password(); } }
+        // Declared after password-save so the amber focus border paints cleanly over the shared 1px edge (CSS focus:z-10).
+        password := FormInput { x: 0px; y: 48px; width: parent.width - 284px - password-save.width + 1px; visible: SettingsForm.password-open; label: "Новый пароль"; placeholder: "Новый пароль"; password: true; value <=> SettingsForm.password;
             accepted => { if SettingsForm.password != "" && !SettingsForm.account-busy { SettingsForm.change-password(); } }
         }
-        password-save := FormButton { y: 48px; x: parent.width - 284px - self.width; visible: SettingsForm.password-open; text: SettingsForm.account-busy ? "" : "СОХРАНИТЬ"; busy: SettingsForm.account-busy; enabled: !SettingsForm.account-busy && SettingsForm.password != ""; clicked => { SettingsForm.change-password(); } }
-        account-error := FormError { y: SettingsForm.password-open ? 96px : 48px; width: parent.width - 284px; visible: SettingsForm.account-error != ""; message: SettingsForm.account-error; raw: SettingsForm.account-raw-error; }
-        Text { y: 48px; visible: SettingsForm.password-changed; text: "ПАРОЛЬ ИЗМЕНЁН"; color: Tokens.primary; font-size: 11px; }
+        account-error := FormError { x: 0px; y: SettingsForm.password-open ? 96px : 48px; width: parent.width - 284px; visible: SettingsForm.account-error != ""; message: SettingsForm.account-error; raw: SettingsForm.account-raw-error; }
+        Text { x: 0px; y: 48px; visible: SettingsForm.password-changed; text: "ПАРОЛЬ ИЗМЕНЁН"; color: Tokens.primary; font-size: 11px; }
     }
     SettingRow {
         y: root.account-height; width: parent.width; row-height: root.directory-height;

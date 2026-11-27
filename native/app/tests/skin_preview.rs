@@ -27,12 +27,21 @@ use launcher_net::{
 use slint::ComponentHandle;
 use tokio::sync::{Mutex, RwLock};
 
-fn spawn_mock_drasl(skin_png: Vec<u8>) -> (String, Arc<AtomicUsize>, std::thread::JoinHandle<()>) {
+fn spawn_mock_drasl(
+    skin_png: Vec<u8>,
+) -> (
+    String,
+    Arc<AtomicUsize>,
+    Arc<AtomicUsize>,
+    std::thread::JoinHandle<()>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock drasl");
     let addr = listener.local_addr().unwrap();
     let base = format!("http://{addr}");
     let hits = Arc::new(AtomicUsize::new(0));
+    let profile_hits = Arc::new(AtomicUsize::new(0));
     let hits_clone = hits.clone();
+    let all_clone = profile_hits.clone();
     let base_clone = base.clone();
     let handle = std::thread::spawn(move || {
         let _ = listener.set_nonblocking(false);
@@ -52,6 +61,9 @@ fn spawn_mock_drasl(skin_png: Vec<u8>) -> (String, Arc<AtomicUsize>, std::thread
             if path == "/__stop" {
                 let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
                 break;
+            }
+            if path.starts_with("/users/profiles/minecraft/") {
+                all_clone.fetch_add(1, Ordering::SeqCst);
             }
             if path == "/users/profiles/minecraft/DraslHero" {
                 hits_clone.fetch_add(1, Ordering::SeqCst);
@@ -99,7 +111,7 @@ fn spawn_mock_drasl(skin_png: Vec<u8>) -> (String, Arc<AtomicUsize>, std::thread
             }
         }
     });
-    (base, hits, handle)
+    (base, hits, profile_hits, handle)
 }
 
 fn state_with_skins(skins_base: Option<String>, username: &str) -> LauncherAppState {
@@ -160,7 +172,7 @@ fn f03_skin_tab_fetches_real_drasl_skin_and_sets_source_caption() {
 
     // Valid 64x64 PNG fixture bytes (bundled vanilla steve) for mock Drasl texture.
     let skin_png = include_bytes!("../../../assets/skins/steve.png").to_vec();
-    let (base, hits, server) = spawn_mock_drasl(skin_png);
+    let (base, hits, _profiles, server) = spawn_mock_drasl(skin_png);
     let skins_opt = cfg!(debug_assertions).then(|| base.clone());
     let state = Arc::new(state_with_skins(skins_opt, "DraslHero"));
     skin_upload::wire_upload(&app, state, runtime.handle().clone());
@@ -225,6 +237,134 @@ fn f03_skin_tab_fetches_real_drasl_skin_and_sets_source_caption() {
         let _ = s.write_all(b"GET /__stop HTTP/1.1\r\nHost: localhost\r\n\r\n");
     }
     let _ = server.join();
+    host.shutdown();
+    runtime.shutdown_timeout(Duration::from_secs(2));
+}
+
+#[test]
+fn f03_debounce_coalesces_rapid_username_changes_into_single_fetch() {
+    // Fail-before for review item 4 (300 ms debounce like Tauri
+    // SettingsScreen): five rapid username changes must spawn exactly one
+    // profile lookup, not one Drasl chain per keystroke.
+    i_slint_backend_testing::init_integration_test_with_system_time();
+    let app = AppWindow::new().unwrap();
+    let runtime = runtime::new().unwrap();
+    let (host, _activity) = wire_app(&app, Backend::Fixtures).unwrap();
+
+    let skin_png = include_bytes!("../../../assets/skins/steve.png").to_vec();
+    let (base, _hits, profile_hits, server) = spawn_mock_drasl(skin_png);
+    let skins_opt = if cfg!(debug_assertions) {
+        Some(base.clone())
+    } else {
+        None
+    };
+    let state = Arc::new(state_with_skins(skins_opt, "DraslHero"));
+    skin_upload::wire_upload(&app, state, runtime.handle().clone());
+
+    app.set_username("Starter01".into());
+    app.set_skin_path("".into());
+    app.set_cape_path("".into());
+    app.invoke_navigate(3);
+    app.invoke_settings_tab_changed(3);
+    // Five keystrokes within one event-loop turn: only the last may fetch.
+    for name in ["Typist02", "Typist03", "Typist04", "Typist05", "DraslHero"] {
+        app.set_username(name.into());
+    }
+
+    let weak = app.as_weak();
+    let profiles = profile_hits.clone();
+    let poll = slint::Timer::default();
+    poll.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(20),
+        move || {
+            let app = weak.upgrade().unwrap();
+            if app.get_skin_caption() == "ВАШ СКИН" {
+                assert_eq!(
+                    profiles.load(Ordering::SeqCst),
+                    1,
+                    "rapid username changes must coalesce into one profile lookup"
+                );
+                slint::quit_event_loop().unwrap();
+            }
+        },
+    );
+    let weak_timeout = app.as_weak();
+    let profiles_timeout = profile_hits.clone();
+    slint::Timer::single_shot(Duration::from_secs(5), move || {
+        let caption = weak_timeout
+            .upgrade()
+            .map(|a| a.get_skin_caption().to_string())
+            .unwrap_or_default();
+        panic!(
+            "debounce test timed out: caption={caption:?}, profile_hits={}",
+            profiles_timeout.load(Ordering::SeqCst)
+        );
+    });
+    app.run().unwrap();
+
+    if let Ok(mut s) = std::net::TcpStream::connect(base.trim_start_matches("http://")) {
+        let _ = s.write_all(b"GET /__stop HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    }
+    let _ = server.join();
+    host.shutdown();
+    runtime.shutdown_timeout(Duration::from_secs(2));
+}
+
+#[test]
+fn f03_preload_caption_is_not_found_until_first_bytes() {
+    // Fail-before for review item 5: while the first fetch is in flight the
+    // host stays hidden and the caption must be the not-found fallback
+    // (Tauri SkinPreview shows `fallback` when `data?.skin` is null), never
+    // the fixture "ВАШ СКИН".
+    i_slint_backend_testing::init_integration_test_with_system_time();
+    let app = AppWindow::new().unwrap();
+    let runtime = runtime::new().unwrap();
+    let (host, _activity) = wire_app(&app, Backend::Fixtures).unwrap();
+
+    // Black-hole Drasl: accept the profile lookup and never reply, so the
+    // fetch stays in flight past the assertion.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind black-hole drasl");
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for _ in 0..4 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            std::thread::sleep(Duration::from_secs(10));
+        }
+    });
+    let skins_opt = if cfg!(debug_assertions) {
+        Some(base)
+    } else {
+        None
+    };
+    let state = Arc::new(state_with_skins(skins_opt, "DraslHero"));
+    skin_upload::wire_upload(&app, state, runtime.handle().clone());
+
+    app.set_username("DraslHero".into());
+    app.set_skin_path("".into());
+    app.set_cape_path("".into());
+    app.invoke_navigate(3);
+    app.invoke_settings_tab_changed(3);
+
+    let weak = app.as_weak();
+    slint::Timer::single_shot(Duration::from_millis(900), move || {
+        let app = weak.upgrade().unwrap();
+        assert_eq!(
+            app.get_skin_caption().as_str(),
+            "СКИН НЕ НАЙДЕН",
+            "pre-load caption must be the not-found fallback, not the fixture caption"
+        );
+        slint::quit_event_loop().unwrap();
+    });
+    slint::Timer::single_shot(Duration::from_secs(5), || {
+        panic!("pre-load caption test timed out");
+    });
+    app.run().unwrap();
+
     host.shutdown();
     runtime.shutdown_timeout(Duration::from_secs(2));
 }

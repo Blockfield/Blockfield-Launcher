@@ -88,9 +88,16 @@ pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), St
         online: state != "offline",
         rooms_available: true,
         players: if state == "offline" { "—" } else { "24" }.into(),
+        players_max: if state == "offline" { "" } else { "/ 100" }.into(),
         ping: if state == "offline" { "—" } else { "32" }.into(),
         region: "EU".into(),
         location: "Frankfurt".into(),
+        server_address: if state == "offline" {
+            ""
+        } else {
+            "play.blockfield.pro:25565"
+        }
+        .into(),
         installed: if state == "error" { "..." } else { "2.75" }.into(),
         latest: if state == "error" { "..." } else { "2.75" }.into(),
         size: if state == "error" { "—" } else { "1.0 GB" }.into(),
@@ -269,9 +276,11 @@ pub fn apply_login(app: &AppWindow, variant: &str) -> Result<(), String> {
     app.set_login_password("".into());
     app.set_login_busy(false);
     app.set_login_error("".into());
+    app.set_login_raw_error("".into());
     app.set_login_name_valid(true);
     app.set_login_can_submit(false);
     app.set_show_login(true);
+    app.set_login_focus_trigger(app.get_login_focus_trigger().wrapping_add(1));
     Ok(())
 }
 
@@ -285,6 +294,7 @@ pub fn apply_firstrun(app: &AppWindow) -> Result<(), String> {
     app.set_firstrun_presets(ModelRc::new(VecModel::from(vec![4, 6, 8, 12, 16])));
     app.set_firstrun_saving(false);
     app.set_firstrun_error("".into());
+    app.set_firstrun_raw_error("".into());
     app.set_show_firstrun(true);
     Ok(())
 }
@@ -696,6 +706,23 @@ pub fn apply_launcher_update(app: &AppWindow, scenario: &str) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn offline_fixture_omits_players_max_and_server_address() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = crate::AppWindow::new().unwrap();
+        apply_main(&app, "offline", "default").unwrap();
+        let offline = app.get_main_data();
+        assert!(!offline.online);
+        assert_eq!(offline.players_max, "");
+        assert_eq!(offline.server_address, "");
+
+        apply_main(&app, "main", "default").unwrap();
+        let online = app.get_main_data();
+        assert!(online.online);
+        assert_eq!(online.players_max, "/ 100");
+        assert_eq!(online.server_address, "play.blockfield.pro:25565");
+    }
+
     #[test]
     fn select_typeahead_handles_cyrillic_and_prefixes() {
         let options = ModelRc::new(VecModel::from(vec!["Игра".into(), "Мастерская".into()]));

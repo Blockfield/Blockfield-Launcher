@@ -10,7 +10,7 @@ import "../assets/fonts/Inter-800.ttf";
 export { SelectSearch, MainMotion, MainText } from "main-controls.slint";
 export { SettingsForm, SettingsData } from "settings-model.slint";
 export { WindowActivity } from "controls.slint";
-import { MainScreen, MainData } from "main.slint";
+import { MainScreen, MainData, MainFeature } from "main.slint";
 import { Room } from "rooms.slint";
 import { DevData } from "dev.slint";
 import { SettingsForm } from "settings-model.slint";
@@ -22,12 +22,17 @@ import { UpdateScreen, LauncherUpdatePanel, UpdateData, LauncherUpdateData } fro
 import { Tokens } from "tokens.slint";
 import { WindowChrome, Shell } from "shell.slint";
 import { GridBackdrop, TopoBackdrop, CornerTicks, GlowPanel } from "backdrop.slint";
-import { StatusDot } from "controls.slint";
+import { ActionArea, StatusDot } from "controls.slint";
 
 export component AppWindow inherits Window {
     in property <bool> show-main: false;
     in property <bool> show-login: false;
     in property <bool> show-firstrun: false;
+    in property <bool> show-init-error: false;
+    in property <string> init-error;
+    in property <string> init-error-raw;
+    in-out property <bool> init-error-details: false;
+    callback retry-init();
     in property <string> login-mode: "login";
     in-out property <string> login-username;
     in-out property <string> login-password;
@@ -35,7 +40,9 @@ export component AppWindow inherits Window {
     in property <bool> login-name-valid: true;
     in property <bool> login-busy: false;
     in property <string> login-error;
+    in property <string> login-raw-error;
     in property <bool> login-can-submit: false;
+    in property <int> login-focus-trigger: 0;
     in-out property <string> firstrun-game-dir;
     in-out property <string> firstrun-java-path;
     in-out property <int> firstrun-ram: 4;
@@ -43,7 +50,15 @@ export component AppWindow inherits Window {
     in property <[int]> firstrun-presets;
     in property <bool> firstrun-saving: false;
     in property <string> firstrun-error;
+    in property <string> firstrun-raw-error;
+    in-out property <bool> firstrun-pending: false;
     in property <MainData> main-data;
+    in property <[MainFeature]> main-features: [
+        { icon: "flag", title: "ЗАХВАТ ТОЧЕК", description: "Сражайтесь за контроль точек и сохраняйте билеты своей команды." },
+        { icon: "swords", title: "КЛАССЫ", description: "Штурмовик и марксман. Доступность инженера, снайпера и оператора FPV зависит от настроек и числа игроков." },
+        { icon: "crosshair", title: "СНАРЯЖЕНИЕ", description: "Выбирайте комплект оружия из вариантов, доступных вашему классу." },
+        { icon: "gamepad-2", title: "ИГРОВОЕ МЕНЮ", description: "Выбирайте режим, класс и точку высадки через планшет в игре." },
+    ];
     in property <[Room]> rooms;
     in property <[string]> room-names;
     in-out property <bool> workshop: false;
@@ -125,6 +140,8 @@ export component AppWindow inherits Window {
     callback update-retry();
     callback update-cancel();
     callback update-launch();
+    callback update-shown();
+    callback open-updates(bool);
     callback launcher-check();
     callback launcher-install();
     callback launcher-restart();
@@ -167,6 +184,7 @@ export component AppWindow inherits Window {
     callback navigate(int);
     callback launcher-update();
     callback support();
+    callback window-focused();
     title: root.chrome-title + (root.dev-build ? " DEV" : "");
     preferred-width: 1280px;
     preferred-height: 720px;
@@ -182,7 +200,7 @@ export component AppWindow inherits Window {
         minimize => { root.minimize(); }
         maximize => { root.maximize(); }
         request-close => { root.request-close(); }
-        if !root.show-login && !root.show-firstrun: Shell {
+        if !root.show-login && !root.show-firstrun && !root.show-init-error: Shell {
             face: root.shell-face;
             active <=> root.active;
             brand: root.brand;
@@ -202,6 +220,7 @@ export component AppWindow inherits Window {
             support => { root.support(); }
             if root.show-main && root.active == 0: MainScreen {
                 data: root.main-data;
+                features: root.main-features;
                 rooms: root.rooms;
                 room-names: root.room-names;
                 workshop <=> root.workshop;
@@ -308,7 +327,9 @@ export component AppWindow inherits Window {
             name-valid: root.login-name-valid;
             busy: root.login-busy;
             error: root.login-error;
+            raw-error: root.login-raw-error;
             can-submit: root.login-can-submit;
+            focus-trigger: root.login-focus-trigger;
             submit => { root.login-submit(); }
             toggle-mode => { root.login-toggle-mode(); }
             logout => { root.login-logout(); }
@@ -324,10 +345,72 @@ export component AppWindow inherits Window {
             presets: root.firstrun-presets;
             saving: root.firstrun-saving;
             error: root.firstrun-error;
+            raw-error: root.firstrun-raw-error;
             browse-dir => { root.firstrun-browse-dir(); }
             browse-java => { root.firstrun-browse-java(); }
             ram-text-edited(text) => { root.firstrun-ram-text-edited(text); }
             continue => { root.firstrun-continue(); }
+        }
+        if root.show-init-error: Rectangle {
+            background: Tokens.background;
+            VerticalLayout {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: Math.min(512px, parent.width - 48px);
+                height: self.preferred-height;
+                spacing: 16px;
+                alignment: start;
+                Text {
+                    text: root.init-error;
+                    color: #c98b8b;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                    width: parent.width;
+                }
+                if root.init-error-raw != "": ActionArea {
+                    height: 16px;
+                    width: init-err-toggle.preferred-width + 11px;
+                    label: "Подробности";
+                    clicked => { root.init-error-details = !root.init-error-details; }
+                    Path {
+                        x: 0px; y: 5px; width: 5px; height: 5px;
+                        viewbox-width: 7; viewbox-height: 7;
+                        fill: Tokens.muted-foreground;
+                        commands: root.init-error-details ? "M 0 0 L 7 0 L 3.5 7 Z" : "M 0 0 L 7 3.5 L 0 7 Z";
+                    }
+                    init-err-toggle := Text {
+                        x: 11px; y: 0px; height: parent.height;
+                        text: "Подробности";
+                        font-size: 10px;
+                        letter-spacing: 1px;
+                        color: Tokens.muted-foreground;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.init-error-details && root.init-error-raw != "": Text {
+                    text: root.init-error-raw;
+                    font-family: Tokens.mono;
+                    font-size: 10px;
+                    color: Tokens.muted-foreground;
+                    wrap: word-wrap;
+                    width: parent.width;
+                }
+                ActionArea {
+                    width: retry-init-label.preferred-width + 32px;
+                    height: 40px;
+                    label: "Повторить";
+                    border-width: 1phx;
+                    border-color: self.hovered ? Tokens.primary : Tokens.primary.with-alpha(0.4);
+                    clicked => { root.retry-init(); }
+                    retry-init-label := Text {
+                        x: 16px; y: 0px; height: parent.height;
+                        text: "Повторить";
+                        font-size: 12px;
+                        color: Tokens.foreground;
+                        vertical-alignment: center;
+                    }
+                }
+            }
         }
     }
 }

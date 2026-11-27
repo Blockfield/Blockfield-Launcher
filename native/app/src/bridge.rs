@@ -22,14 +22,18 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
     // Tauri MainScreen.tsx pending-room effect re-runs on every readiness
     // dep change; arm the one-shot retry below for the events that change
     // readiness on this thread (the rest retry at their own set_main_data).
+    let was_busy = matches!(data.phase.as_str(), "launching" | "running" | "finishing");
     let mut retry = false;
+    let mut game_became_idle = false;
     match event {
         LauncherEvent::Status(status) => {
             if status.phase == "hook-error" {
-                app.set_command_error(status.message.into());
-                return;
+                // F13 shell alert persists; launch_status still flashes the
+                // hook message like Tauri MainScreen.tsx.
+                app.set_command_error(status.message.clone().into());
             }
-            data.launch_status = status.message.into();
+            data.launch_status = status.message.clone().into();
+            crate::update::apply_status(app, &status);
         }
         LauncherEvent::GameStatus(status) => {
             data.phase = match status.phase {
@@ -44,6 +48,8 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
                 data.launch_status = "".into();
                 data.progress = -1;
             }
+            game_became_idle = was_busy && status.phase == GamePhase::Idle;
+            crate::update::apply_game_status(app, &status);
             retry = true;
         }
         LauncherEvent::DownloadProgress(progress) => {
@@ -53,8 +59,13 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
             };
             data.progress = percent(done, total);
             if !progress.file_path.is_empty() {
-                data.launch_status = progress.file_path.into();
+                data.launch_status = progress.file_path.clone().into();
             }
+            crate::update::apply_progress(app, &progress);
+        }
+        LauncherEvent::DownloadMirror(mirror) => {
+            crate::update::apply_mirror(app, &mirror);
+            return;
         }
         LauncherEvent::RoomPending => {
             data.pending_room = true;
@@ -66,14 +77,17 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
         LauncherEvent::AccountExpired => {
             // Tauri answers `account://expired` with the login screen; the
             // stored username stays so the user can sign straight back in.
+            app.set_role("ИГРОК".into());
+            data.can_workshop = false;
+            data.profile_blocked = false;
+            data.profile_error = "".into();
             crate::auth::show_login_expired(app);
-        }
-        event => {
-            eprintln!("Launcher event has no native UI target yet: {event:?}");
-            return;
         }
     }
     app.set_main_data(data);
+    if game_became_idle {
+        crate::backend::retry_pending_profile_if_idle(app);
+    }
     if retry {
         retry_pending_join(app);
     }

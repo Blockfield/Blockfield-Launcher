@@ -22,13 +22,17 @@ export component SettingsRuntime inherits Rectangle {
             slider := Rectangle {
                 x: 48px; y: 15px; width: parent.width - 188px; height: 6px;
                 private property <float> fraction: (SettingsForm.data.ram - 2) / Math.max(1, SettingsForm.data.max-ram - 2);
-                background: Tokens.chrome; border-width: 1phx; border-color: Tokens.border;
+                background: Tokens.chrome; border-width: 1px; border-color: Tokens.border;
                 accessible-role: AccessibleRole.slider; accessible-label: "Выделенная память, ГБ";
                 accessible-action-increment => { SettingsForm.set-ram(SettingsForm.data.ram + 1); }
                 accessible-action-decrement => { SettingsForm.set-ram(SettingsForm.data.ram - 1); }
                 accessible-value: SettingsForm.data.ram; accessible-value-minimum: 2; accessible-value-maximum: SettingsForm.data.max-ram;
-                Rectangle { x: 0px; y: 0px; width: parent.width * slider.fraction; height: parent.height; background: @linear-gradient(90deg, #8a571c, #f5a524); }
-                Rectangle { x: parent.width * slider.fraction - 6px; y: -3px; width: 12px; height: 12px; background: Tokens.primary; border-width: 1phx; border-color: Tokens.background; }
+                Rectangle { x: 1px; y: 1px; width: (parent.width - 2px) * slider.fraction; height: parent.height - 2px; background: @linear-gradient(90deg, #8a571c, #f5a524); }
+                Rectangle {
+                    x: 1px + (parent.width - 2px) * slider.fraction - 6px; y: -3px; width: 12px; height: 12px;
+                    background: Tokens.primary; border-width: 1px; border-color: Tokens.background;
+                    drop-shadow-blur: 8px; drop-shadow-color: #f5a524.with-alpha(0.6);
+                }
                 slider-keys := FocusScope {
                     key-pressed(event) => {
                         if event.text == Key.RightArrow || event.text == Key.UpArrow { SettingsForm.set-ram(SettingsForm.data.ram + 1); }

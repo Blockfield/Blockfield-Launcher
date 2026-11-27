@@ -3,6 +3,7 @@ pub mod avatars;
 pub mod backend;
 pub mod bridge;
 pub mod capture;
+pub mod content;
 pub mod deep_link;
 pub mod e2e;
 pub mod fixtures;
@@ -50,6 +51,8 @@ pub fn maintenance_banner(maintenance: slint::SharedString) -> slint::SharedStri
     if trimmed.is_empty() || trimmed == "Идут технические работы" {
         return "Идут технические работы. Матчи откроются после завершения работ.".into();
     }
+    // Intentional Tauri deviation: RoomList.tsx renders `${maintenance}` verbatim,
+    // we add the missing terminal period for a full sentence.
     let sep = if trimmed.ends_with(['.', '!', '?']) {
         ""
     } else {
@@ -82,7 +85,6 @@ pub fn wire_app(
     app: &AppWindow,
     backend: backend::Backend,
 ) -> std::io::Result<(Rc<PreviewHost>, Rc<window_activity::Activity>)> {
-    fixtures::apply(app);
     let weak = app.as_weak();
     app.on_minimize(move || {
         if let Some(app) = weak.upgrade() {
@@ -119,12 +121,21 @@ pub fn wire_app(
     });
     let weak = app.as_weak();
     let activity = Rc::new(window_activity::Activity::default());
+    let focus_weak = app.as_weak();
+    activity.set_on_focus(move || {
+        if let Some(app) = focus_weak.upgrade() {
+            app.invoke_window_focused();
+        }
+    });
     let skin_host = skin::attach(app, &activity)?;
     let navigate_host = skin_host.clone();
     app.on_navigate(move |index| {
         if let Some(app) = weak.upgrade() {
             app.set_active(index);
             skin::sync_visibility(&app, &navigate_host);
+            if index == 1 {
+                app.invoke_update_shown();
+            }
             if index == 2 {
                 app.invoke_stats_shown();
             }
@@ -134,6 +145,7 @@ pub fn wire_app(
     let update_host = skin_host.clone();
     app.on_launcher_update(move || {
         if let Some(app) = weak.upgrade() {
+            app.set_settings_tab(4);
             app.set_active(3);
             skin::sync_visibility(&app, &update_host);
         }
@@ -205,6 +217,13 @@ pub fn wire_app(
     app.global::<SelectSearch>()
         .on_find(|options, search| fixtures::find_option(&options, &search));
     app.global::<MainText>().on_launch_sub(main_ops::launch_sub);
+    app.global::<MainText>().on_friendly_error(|raw, context| {
+        let context = launcher_core::errors::ErrorContext::from_slug(&context)
+            .unwrap_or(launcher_core::errors::ErrorContext::Launch);
+        launcher_core::errors::friendly_error(&raw, context)
+            .message
+            .into()
+    });
     app.global::<MainText>()
         .on_maintenance_banner(maintenance_banner);
     let weak = app.as_weak();
