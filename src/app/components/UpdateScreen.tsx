@@ -1,0 +1,1000 @@
+import { useGameState, gameStateLabel, launchGame } from '../../lib/game-state'
+import { checkModpack, invalidateModpackCheck, useModpackVersion } from '../../lib/modpack-check'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  Play,
+  Gamepad2,
+  Pause,
+  Download,
+  HardDrive,
+  FileBox,
+  Zap,
+  LoaderCircle,
+  RefreshCw,
+} from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
+import type { UnlistenFn } from '@tauri-apps/api/event'
+import { GridBackdrop, TopoBackdrop } from './Backdrop'
+import { ErrorDetail, GlowPanel, OperationBar, SectionHeader, StatusDot } from './ui-bits'
+import { useI18n, type TKey, type TFunction } from '../i18n'
+import { OPERATION_NAME } from '../constants'
+import {
+  listenDownloadMirror,
+  listenDownloadProgress,
+  listenLauncherStatus,
+} from '../../lib/events'
+import type {
+  DownloadMirror,
+  DownloadProgress,
+  LauncherStatus,
+  VersionCheckResult,
+} from '../../lib/api'
+import { localizedContentText, useLauncherContent } from '../../lib/content'
+import { friendlyError, type ErrorContext } from '../../lib/errors'
+import { shouldAutoLaunchAfterSync } from '../../lib/auto-launch'
+
+type StepStatus = 'done' | 'active' | 'pending'
+type Phase =
+  'checking' | 'downloading' | 'verifying' | 'launching' | 'complete' | 'error' | 'uptodate'
+
+/** Whether we're running inside Tauri (vs browser dev). */
+const isTauri = () => '__TAURI_INTERNALS__' in window
+
+/** Format bytes per second into a human-readable string. */
+function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec < 1024) return `${Math.round(bytesPerSec)} B/s`
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`
+  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
+}
+
+function formatMirror(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url || '—'
+  }
+}
+
+/** Format bytes into human-readable string. */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+/** Generate a timestamp string for the operation log. */
+function timestamp(): string {
+  const now = new Date()
+  return now.toTimeString().slice(0, 8)
+}
+
+type LogEntry = { ts: string; tone: 'ok' | 'info' | 'dim' | 'warn'; msg: string }
+type SpeedSample = { bytes: number; time: number }
+const SPEED_UPDATE_MS = 750
+
+// 4 stages max (fit the panel with no scroll at the min 1280x720 window): merges the
+// backend's finer-grained phases (setup/java/loader/prune/modpack -> download,
+// runtime/integrity -> prepare).
+const INITIAL_STEPS: Array<{ label: TKey; status: StepStatus }> = [
+  { label: 'update.step.verify', status: 'pending' },
+  { label: 'update.step.download', status: 'pending' },
+  { label: 'update.step.prepare', status: 'pending' },
+  { label: 'update.step.launch', status: 'pending' },
+]
+
+const freshSteps = () => INITIAL_STEPS.map((step) => ({ ...step }))
+
+export function UpdateScreen({
+  updateRequest,
+  autoLaunchRequest,
+}: {
+  updateRequest: number
+  autoLaunchRequest: number
+}) {
+  const { lang, t } = useI18n()
+  const game = useGameState()
+  const gameBusy = game.phase !== 'idle'
+  const content = useLauncherContent()
+  const [phase, setPhase] = useState<Phase>('checking')
+  const [statusMessage, setStatusMessage] = useState('')
+  const [canCancel, setCanCancel] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [progressUnit, setProgressUnit] = useState<'bytes' | 'files'>('bytes')
+  const [currentFile, setCurrentFile] = useState('')
+  const [fileIdx, setFileIdx] = useState(0)
+  const [fileCount, setFileCount] = useState(0)
+  const [downloadedBytes, setDownloadedBytes] = useState(0)
+  const [totalBytes, setTotalBytes] = useState(0)
+  const [speed, setSpeed] = useState('—')
+  const [mirror, setMirror] = useState('—')
+  const [installerMirror, setInstallerMirror] = useState<DownloadMirror | null>(null)
+  const [mirrorOnline, setMirrorOnline] = useState<boolean | null>(null)
+  const [logLines, setLogLines] = useState<LogEntry[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [errorContext, setErrorContext] = useState<ErrorContext>('modpack-check')
+  // Single source of truth (src/lib/modpack-check.ts): same store "Играть" reads, so the
+  // patch number shown here can't drift from what the deploy tab shows.
+  const sharedVersion = useModpackVersion()
+  const [launching, setLaunching] = useState(false)
+  const [steps, setSteps] = useState<Array<{ label: TKey; status: StepStatus }>>(freshSteps)
+  const [runToken, setRunToken] = useState(0)
+  // Newest Play-triggered routing seen; consumed once the game starts itself.
+  // Manual visits never bump the prop, so plain updates stay put.
+  const lastAutoLaunchRef = useRef(0)
+
+  const unlistenRef = useRef<UnlistenFn | null>(null)
+  const unlistenMirrorRef = useRef<UnlistenFn | null>(null)
+  const unlistenStatusRef = useRef<UnlistenFn | null>(null)
+  const speedSampleRef = useRef<SpeedSample | null>(null)
+  const cancelledRef = useRef(false)
+  const startedRef = useRef(false)
+  const runningRef = useRef(false)
+  const lastRequestRef = useRef(updateRequest)
+  const syncedVersionRef = useRef<string | null>(null)
+
+  const addLog = useCallback((msg: string, tone: LogEntry['tone'] = 'info') => {
+    setLogLines((prev) => [...prev.slice(-49), { ts: timestamp(), tone, msg }])
+  }, [])
+
+  const setStep = useCallback((index: number, status: StepStatus) => {
+    setSteps((prev) => prev.map((s, i) => (i === index ? { ...s, status } : s)))
+  }, [])
+
+  const resetSpeed = useCallback(() => {
+    speedSampleRef.current = null
+    setSpeed('—')
+  }, [])
+
+  const applyMirror = useCallback(
+    (mirror: DownloadMirror) => {
+      setInstallerMirror(mirror)
+      resetSpeed()
+    },
+    [resetSpeed],
+  )
+
+  const applyProgress = useCallback(
+    (p: DownloadProgress) => {
+      const unit = p.unit ?? 'bytes'
+      setProgressUnit(unit)
+      setFileIdx(p.fileIndex)
+      setFileCount(p.fileCount)
+      if (p.filePath) setCurrentFile(p.filePath)
+      setTotalBytes(p.totalBytesAll)
+      setDownloadedBytes(p.totalBytesDownloaded)
+      if (unit === 'files') {
+        setProgress(p.fileCount > 0 ? Math.min(100, (p.fileIndex / p.fileCount) * 100) : 0)
+        resetSpeed()
+        return
+      }
+      if (p.totalBytesAll > 0) {
+        const pct = (p.totalBytesDownloaded / p.totalBytesAll) * 100
+        setProgress(Math.min(100, pct))
+        setTotalBytes(p.totalBytesAll)
+      }
+
+      const now = performance.now()
+      const previous = speedSampleRef.current
+      const finished = p.totalBytesAll > 0 && p.totalBytesDownloaded >= p.totalBytesAll
+      if (!previous) {
+        speedSampleRef.current = { bytes: p.totalBytesDownloaded, time: now }
+        setSpeed(p.speedBytesPerSec > 0 ? formatSpeed(p.speedBytesPerSec) : '—')
+        return
+      }
+
+      if (!finished && now - previous.time < SPEED_UPDATE_MS) return
+
+      const bytesPerSec =
+        now > previous.time
+          ? ((p.totalBytesDownloaded - previous.bytes) * 1000) / (now - previous.time)
+          : p.speedBytesPerSec
+      speedSampleRef.current = { bytes: p.totalBytesDownloaded, time: now }
+      setSpeed(bytesPerSec > 0 && !finished ? formatSpeed(bytesPerSec) : '—')
+    },
+    [resetSpeed],
+  )
+
+  const applyBackendStatus = useCallback(
+    (status: LauncherStatus) => {
+      setStatusMessage(status.message)
+      setCanCancel(status.cancelable)
+      addLog(status.message, status.phase === 'ready' ? 'ok' : 'info')
+      // The panel names the pack's download source only while packwiz-installer runs.
+      if (status.phase !== 'modpack') setInstallerMirror(null)
+
+      if (
+        status.phase === 'setup' ||
+        status.phase === 'java' ||
+        status.phase === 'loader' ||
+        status.phase === 'prune' ||
+        status.phase === 'modpack'
+      ) {
+        setPhase('downloading')
+        setStep(1, 'active')
+        return
+      }
+
+      if (status.phase === 'runtime') {
+        setPhase('downloading')
+        setStep(1, 'done')
+        setStep(2, 'active')
+        return
+      }
+
+      if (status.phase === 'ready') {
+        setCanCancel(false)
+        setStep(1, 'done')
+        setStep(2, 'done')
+        return
+      }
+
+      if (status.phase === 'launch') {
+        setPhase('launching')
+        setCanCancel(false)
+        setStep(2, 'done')
+        setStep(3, 'active')
+      }
+    },
+    [addLog, setStep],
+  )
+
+  // Start the update flow on mount
+  useEffect(() => {
+    if (!isTauri()) {
+      queueMicrotask(() => {
+        setPhase('error')
+        setError('Update flow requires the Tauri desktop environment.')
+        addLog('ERROR: Not running inside Tauri — update unavailable', 'warn')
+      })
+      return
+    }
+
+    // Guard against React StrictMode double-mount in dev
+    if (startedRef.current) return
+    startedRef.current = true
+    runningRef.current = true
+
+    const run = async () => {
+      unlistenStatusRef.current = await listenLauncherStatus(applyBackendStatus)
+      cancelledRef.current = false
+      setPhase('checking')
+      setCanCancel(false)
+      setInstallerMirror(null)
+      resetSpeed()
+      addLog('Establishing connection to deployment server...', 'info')
+
+      // Step 1: Check for updates
+      setStep(0, 'active')
+      let versionResult: VersionCheckResult
+      try {
+        versionResult = await checkModpack()
+        setMirror(formatMirror(versionResult.mirror))
+        setMirrorOnline(true)
+        addLog(
+          `Manifest fetched: remote=${versionResult.remoteVersion}, installed=${versionResult.installedVersion}`,
+          'ok',
+        )
+      } catch (e) {
+        setMirrorOnline(false)
+        addLog(`ERROR: Failed to fetch manifest — ${String(e)}`, 'warn')
+        setPhase('error')
+        setErrorContext('modpack-check')
+        setError(String(e))
+        return
+      }
+
+      setStep(0, 'done')
+
+      const needJava = versionResult.java && !versionResult.javaOk
+      const needLoader = !versionResult.loaderOk
+      const needModpack = versionResult.needsUpdate
+      const needAnyDownload = needModpack || needJava || needLoader
+
+      if (needLoader) {
+        addLog('Fabric runtime required — will install', 'info')
+      }
+      if (needJava) {
+        addLog(`Java ${versionResult.java!.version} required — will install`, 'info')
+      }
+
+      if (!needAnyDownload) {
+        addLog('Modpack is up to date — no download needed.', 'ok')
+        setProgress(100)
+        setFileCount(versionResult.fileCount)
+        setTotalBytes(versionResult.totalSize)
+        setDownloadedBytes(versionResult.totalSize)
+        setPhase('uptodate')
+        setStep(0, 'done')
+        setStep(1, 'done')
+        setStep(2, 'done')
+        // Step 3 (launch) stays pending until the player actually launches.
+        return
+      }
+
+      setFileCount(versionResult.fileCount)
+      setTotalBytes(versionResult.totalSize)
+
+      setStep(1, 'active')
+      addLog(
+        `Update needed: ${versionResult.installedVersion} → ${versionResult.remoteVersion}`,
+        'info',
+      )
+      addLog('Waiting for backend install tasks...', 'info')
+      setPhase('downloading')
+
+      // Listen for progress events
+      const unlisten = await listenDownloadProgress(applyProgress)
+      unlistenRef.current = unlisten
+
+      try {
+        unlistenMirrorRef.current = await listenDownloadMirror(applyMirror)
+        await invoke('download_modpack')
+        addLog('Install tasks complete.', 'ok')
+        setProgress(100)
+        setCanCancel(false)
+        setStep(1, 'done')
+        setStep(2, 'active')
+      } catch (e) {
+        if (cancelledRef.current) {
+          addLog('Download cancelled by operator.', 'dim')
+          setPhase('error')
+          setError('Download cancelled')
+        } else {
+          addLog(`ERROR: Download failed — ${String(e)}`, 'warn')
+          setPhase('error')
+          setErrorContext('modpack-download')
+          setError(String(e))
+        }
+        return
+      } finally {
+        unlistenRef.current?.()
+        unlistenRef.current = null
+        unlistenMirrorRef.current?.()
+        unlistenMirrorRef.current = null
+      }
+
+      invalidateModpackCheck()
+      // packwiz-installer verifies hashes during the sync above.
+      setPhase('verifying')
+      setStatusMessage('')
+      setCanCancel(false)
+      addLog('Finalizing verified files...', 'info')
+
+      addLog('File integrity checked by packwiz-installer during sync.', 'ok')
+      setStep(2, 'done')
+
+      addLog(`Modpack ${versionResult.remoteVersion} installed successfully.`, 'ok')
+      addLog('Ready for deployment.', 'info')
+      setStatusMessage('')
+      setProgressUnit('bytes')
+      setProgress(100)
+      setPhase('complete')
+    }
+
+    void run()
+      .catch((error) => {
+        setPhase('error')
+        setErrorContext('modpack-download')
+        setError(String(error))
+        setCanCancel(false)
+      })
+      .finally(() => {
+        runningRef.current = false
+        unlistenStatusRef.current?.()
+        unlistenStatusRef.current = null
+      })
+
+    return () => {
+      unlistenRef.current?.()
+      unlistenMirrorRef.current?.()
+      unlistenStatusRef.current?.()
+    }
+  }, [addLog, applyBackendStatus, applyMirror, applyProgress, resetSpeed, runToken, setStep])
+
+  const handleRetry = useCallback(() => {
+    cancelledRef.current = false
+    startedRef.current = false
+    invalidateModpackCheck()
+    setError(null)
+    setStatusMessage('')
+    setCanCancel(false)
+    setLogLines([])
+    setProgress(0)
+    setProgressUnit('bytes')
+    setCurrentFile('')
+    setFileIdx(0)
+    setFileCount(0)
+    setDownloadedBytes(0)
+    setTotalBytes(0)
+    setMirror('—')
+    setInstallerMirror(null)
+    setMirrorOnline(null)
+    setPhase('checking')
+    resetSpeed()
+    setSteps(freshSteps())
+    setRunToken((value) => value + 1)
+  }, [resetSpeed])
+
+  useEffect(() => {
+    if (lastRequestRef.current === updateRequest) return
+    lastRequestRef.current = updateRequest
+    // The screen stays mounted to preserve downloads while navigating between tabs.
+    if (!runningRef.current && !gameBusy && !launching) handleRetry()
+  }, [updateRequest, gameBusy, launching, handleRetry])
+
+  // App.tsx polls the shared version store on a timer/focus regardless of the active tab.
+  // If it finds a newer pack while this screen is sitting idle, re-run the sync here too —
+  // otherwise "Обновления" would keep showing the version it last synced against.
+  useEffect(() => {
+    const remote = sharedVersion?.remoteVersion
+    if (remote === undefined) return
+    if (syncedVersionRef.current === null) {
+      syncedVersionRef.current = remote
+      return
+    }
+    if (syncedVersionRef.current === remote) return
+    syncedVersionRef.current = remote
+    if (!runningRef.current && !gameBusy && !launching) handleRetry()
+  }, [sharedVersion, gameBusy, launching, handleRetry])
+
+  const handleCancel = useCallback(async () => {
+    cancelledRef.current = true
+    setStatusMessage('Cancelling download...')
+    setCanCancel(false)
+    if (isTauri()) {
+      try {
+        await invoke('cancel_download')
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [])
+
+  const handleLaunch = useCallback(async () => {
+    if (!isTauri() || launching || gameBusy) return
+    setLaunching(true)
+    setPhase('launching')
+    setStatusMessage(t('main.launching'))
+    setCanCancel(false)
+    setInstallerMirror(null)
+    resetSpeed()
+    addLog('Launching game...', 'info')
+    setStep(3, 'active')
+    try {
+      unlistenStatusRef.current = await listenLauncherStatus(applyBackendStatus)
+      unlistenRef.current = await listenDownloadProgress(applyProgress)
+      unlistenMirrorRef.current = await listenDownloadMirror(applyMirror)
+      await launchGame()
+      addLog('Game process started.', 'ok')
+      setStatusMessage('')
+      setStep(3, 'done')
+      setPhase('complete')
+    } catch (e) {
+      // A newer pack published mid-download, or a failed launch file check:
+      // re-run the sync instead of dying. One-shot via the consumed
+      // auto-launch request, so a heal that keeps failing ends in the error
+      // phase instead of looping.
+      if (String(e).includes('PACK_STALE') || String(e).includes('PACK_REPAIR')) {
+        addLog('A newer pack appeared — re-syncing.', 'info')
+        handleRetry()
+        return
+      }
+      addLog(`ERROR: Launch failed — ${String(e)}`, 'warn')
+      setPhase('error')
+      setErrorContext('launch')
+      setError(String(e))
+    } finally {
+      unlistenRef.current?.()
+      unlistenRef.current = null
+      unlistenMirrorRef.current?.()
+      unlistenMirrorRef.current = null
+      unlistenStatusRef.current?.()
+      unlistenStatusRef.current = null
+      setLaunching(false)
+    }
+  }, [
+    addLog,
+    applyBackendStatus,
+    applyMirror,
+    applyProgress,
+    handleRetry,
+    launching,
+    gameBusy,
+    resetSpeed,
+    setStep,
+    t,
+  ])
+
+  // Continue a Play press that routed here: launch once the sync is done.
+  useEffect(() => {
+    if (
+      !shouldAutoLaunchAfterSync({
+        phase,
+        playTriggered: autoLaunchRequest !== lastAutoLaunchRef.current,
+        launching,
+        gameBusy,
+      })
+    )
+      return
+    // One-shot: consume before launching so a mid-launch PACK_STALE re-sync
+    // ends on the done screen instead of looping.
+    lastAutoLaunchRef.current = autoLaunchRequest
+    void handleLaunch()
+  }, [phase, autoLaunchRequest, launching, gameBusy, handleLaunch])
+
+  const statusText = () => {
+    if (gameBusy) return gameStateLabel(game.phase)
+    switch (phase) {
+      case 'checking':
+        return t('update.checking')
+      case 'downloading':
+        return statusMessage || t('update.downloading')
+      case 'verifying':
+        return t('update.step.prepare')
+      case 'launching':
+        return statusMessage || t('main.launching')
+      case 'complete':
+        return statusMessage || t('update.uptodate')
+      case 'uptodate':
+        return t('update.uptodate')
+      case 'error':
+        return error ? friendlyError(error, errorContext).message : t('update.updating')
+      default:
+        return t('update.updating')
+    }
+  }
+  const transferring = phase === 'downloading' || phase === 'launching'
+  const downloadSpeed =
+    speed !== '—' ? speed : installerMirror?.speed ? `${installerMirror.speed} MB/s` : '—'
+  const mirrorStatus = transferring
+    ? downloadSpeed
+    : mirrorOnline === null
+      ? t('main.checking')
+      : mirrorOnline
+        ? t('main.online')
+        : t('update.offline')
+  const mirrorStatusClass =
+    mirrorOnline === false ? 'text-[#c98b8b]' : transferring ? 'text-[#F5A524]' : 'text-[#82D66B]'
+  const operationName =
+    localizedContentText(
+      content,
+      lang,
+      'content.operationName',
+      'operationName',
+      'operation_name',
+    ) ?? OPERATION_NAME
+  const updateDescription =
+    localizedContentText(
+      content,
+      lang,
+      'content.updateDescription',
+      'updateDescription',
+      'update_description',
+    ) ?? t('update.description')
+
+  return (
+    <div className="update-screen relative h-full min-h-0 w-full overflow-hidden bg-[#070604]">
+      <TopoBackdrop />
+      <GridBackdrop intensity={0.5} />
+
+      <div className="update-layout screen-layout relative h-full min-h-0 flex flex-col">
+        <OperationBar
+          label={t('update.packageSync')}
+          status={statusText()}
+          statusColor={phase === 'error' ? '#c98b8b' : '#F5A524'}
+        />
+
+        <div className="update-summary flex items-start justify-between gap-4 min-w-0 shrink-0">
+          <div>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
+              <h1 className="tracking-[0.06em] text-[26px] leading-none text-neutral-50">
+                {operationName}
+              </h1>
+              <span className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">
+                {t('update.patch', { v: sharedVersion?.remoteVersion || '...' })}
+              </span>
+            </div>
+            {error ? (
+              <ErrorDetail message={friendlyError(error, errorContext).message} raw={error} />
+            ) : (
+              <p className="hidden md:block text-[12px] leading-snug text-[#C7AE86] max-w-[520px]">
+                {updateDescription}
+              </p>
+            )}
+          </div>
+          <div className="update-mirror shrink-0 border border-[#2A2116] bg-[#0B0906] px-4 py-3 w-[240px]">
+            <div className="text-[10px] tracking-[0.16em] text-[#8E7A5E]">{t('update.mirror')}</div>
+            <div className="mt-2 tracking-[0.18em] text-[13px] text-neutral-100 truncate">
+              {installerMirror?.name ?? mirror}
+            </div>
+            <div className={`mt-2 text-[11px] tracking-[0.22em] ${mirrorStatusClass}`}>
+              ▸ {mirrorStatus}
+            </div>
+          </div>
+        </div>
+
+        <GlowPanel className="p-4">
+          <div className="update-actions flex items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-4">
+              {gameBusy ? (
+                <DeployButton
+                  inGame={game.phase === 'running'}
+                  label={gameStateLabel(game.phase)}
+                  sub={
+                    game.phase === 'running'
+                      ? 'Закройте игру, чтобы запустить снова'
+                      : 'Дождитесь завершения операции'
+                  }
+                  onClick={handleLaunch}
+                  disabled
+                />
+              ) : phase === 'launching' ? (
+                <DeployButton
+                  label={t('main.launching')}
+                  sub={statusMessage || '...'}
+                  onClick={handleLaunch}
+                  disabled
+                />
+              ) : phase === 'downloading' && canCancel ? (
+                <button
+                  onClick={handleCancel}
+                  className="relative h-[64px] w-[160px] md:w-[230px] shrink-0 overflow-hidden border border-[#3a2828] bg-[#1a0e0e] hover:border-[#7a3838] transition-colors"
+                >
+                  <span className="h-full flex items-center justify-center gap-4">
+                    <Pause size={18} className="text-[#c98b8b]" />
+                    <span className="flex flex-col items-start leading-none">
+                      <span className="tracking-[0.2em] text-[17px] text-[#c98b8b]">CANCEL</span>
+                      <span className="tracking-[0.14em] text-[9px] text-[#7a3838] mt-1 text-left">
+                        {t('update.inProgress')}
+                      </span>
+                    </span>
+                  </span>
+                </button>
+              ) : phase === 'downloading' || phase === 'verifying' ? (
+                <LockedButton lockedLabel="..." subLabel={statusText()} />
+              ) : phase === 'complete' || phase === 'uptodate' ? (
+                <DeployButton
+                  label={launching ? t('main.launching') : t('update.playNow')}
+                  sub={launching ? statusMessage || '...' : t('main.enterBattlefield')}
+                  onClick={handleLaunch}
+                  disabled={launching}
+                />
+              ) : phase === 'error' ? (
+                <RetryButton onClick={handleRetry} label={t('update.retry')} />
+              ) : (
+                <LockedButton lockedLabel="..." subLabel={t('update.checking')} />
+              )}
+              {phase === 'downloading' && canCancel && (
+                <button
+                  onClick={handleCancel}
+                  className="h-[40px] w-[40px] grid place-items-center border border-[#2A2116] hover:border-[#8A571C] text-[#C7AE86] hover:text-[#F3E7D0] transition-colors"
+                >
+                  <Pause size={14} />
+                </button>
+              )}
+            </div>
+
+            <div className="text-right">
+              <div className="text-[10px] tracking-[0.18em] text-[#8E7A5E]">
+                {t(progressUnit === 'files' ? 'update.filesProcessed' : 'update.completion')}
+              </div>
+              <div className="tracking-[0.04em] text-[#F3E7D0] leading-none mt-1.5 text-[44px]">
+                {phase === 'checking' || (phase === 'launching' && progress >= 100) ? (
+                  <LoaderCircle size={32} className="animate-spin text-[#8E7A5E] inline-block" />
+                ) : progressUnit === 'files' ? (
+                  <span className="text-[28px] tabular-nums">
+                    {fileIdx} / {fileCount || '…'}
+                  </span>
+                ) : (
+                  <>
+                    {progress.toFixed(1)}
+                    <span className="text-[#8E7A5E] text-[20px]">%</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <ProgressBar progress={progress} />
+          {progressUnit === 'files' && transferring && (
+            <p className="mt-2 text-[12px] text-[#C7AE86]" role="status">
+              {t('update.fileProgressHint')}
+            </p>
+          )}
+
+          <div className="update-stats mt-4 grid grid-cols-2 md:grid-cols-4 gap-px bg-[#18130D] border border-[#2A2116] min-w-0">
+            <SubStat
+              icon={<FileBox size={13} />}
+              label={t('update.currentFile')}
+              value={currentFile || '—'}
+              mono
+            />
+            <SubStat
+              icon={<HardDrive size={13} />}
+              label={t('update.transferred')}
+              value={
+                progressUnit === 'files'
+                  ? '—'
+                  : `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`
+              }
+            />
+            <SubStat
+              icon={<Download size={13} />}
+              label={t('update.remaining')}
+              value={
+                phase === 'downloading' || phase === 'launching'
+                  ? fileCount > 0
+                    ? String(Math.max(0, fileCount - fileIdx))
+                    : '—'
+                  : totalBytes > 0
+                    ? `${fileCount} files`
+                    : '—'
+              }
+            />
+            <SubStat
+              icon={<Zap size={13} />}
+              label={t('update.throughput')}
+              value={phase === 'downloading' || phase === 'launching' ? speed : '—'}
+              accent
+            />
+          </div>
+
+          <div className="mt-3 flex items-center justify-between gap-4 text-[10px] tracking-[0.16em]">
+            <div className="flex min-w-0 items-center gap-2">
+              <StatusDot
+                color={
+                  phase === 'error'
+                    ? '#c98b8b'
+                    : phase === 'complete' || phase === 'uptodate'
+                      ? '#82D66B'
+                      : '#F5A524'
+                }
+                pulse={phase === 'downloading' || phase === 'verifying' || phase === 'launching'}
+              />
+              <span
+                className={`leading-none ${
+                  phase === 'error'
+                    ? 'text-[#c98b8b]'
+                    : phase === 'complete' || phase === 'uptodate'
+                      ? 'text-[#82D66B]'
+                      : 'text-[#F5A524]'
+                }`}
+              >
+                {statusText()}
+              </span>
+            </div>
+            <span className="shrink-0 text-right text-[#8E7A5E]">
+              {phase === 'complete'
+                ? t('update.filesVerified')
+                : phase === 'uptodate'
+                  ? t('update.versionChecked')
+                  : t('update.integrity')}
+            </span>
+          </div>
+        </GlowPanel>
+
+        <div className="update-lists mt-3 min-h-0 flex-1 grid grid-cols-1 md:grid-cols-[minmax(0,1.35fr)_minmax(250px,1fr)] gap-px bg-[#18130D] border border-[#2A2116] overflow-hidden">
+          <div className="bg-[#0B0906] p-3 md:p-4 min-h-0 flex flex-col overflow-hidden">
+            <SectionHeader label={t('update.opLog')} code="SYNC-PHASE-2" />
+            <div
+              tabIndex={0}
+              aria-label={t('update.opLog')}
+              className="mt-3 min-h-0 flex-1 font-mono text-[11px] leading-relaxed text-[#C7AE86] space-y-1 overflow-y-auto overscroll-contain break-words"
+            >
+              {logLines.length === 0 && (
+                <LogLine ts="--:--:--" tone="dim" msg="Waiting for connection..." />
+              )}
+              {logLines.map((line, i) => (
+                <LogLine key={i} ts={line.ts} tone={line.tone} msg={line.msg} />
+              ))}
+            </div>
+          </div>
+          <div className="bg-[#0B0906] p-4 flex flex-col min-h-0">
+            <SectionHeader label={t('update.steps')} code="SEQ" />
+            <div
+              tabIndex={0}
+              aria-label={t('update.steps')}
+              className="mt-3 flex flex-col gap-2 flex-1 min-h-0 overflow-hidden"
+            >
+              {steps.map((step) => (
+                <Step key={step.label} label={t(step.label)} status={step.status} t={t} />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DeployButton({
+  label,
+  sub,
+  onClick,
+  disabled,
+  inGame,
+}: {
+  label: string
+  sub: string
+  onClick: () => void
+  disabled?: boolean
+  inGame?: boolean
+}) {
+  const accent = inGame ? 'border-[#82D66B]' : 'border-[#F5A524]'
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`group relative h-[64px] w-[160px] md:w-[230px] shrink-0 overflow-hidden border bg-gradient-to-b from-[#2A2116] to-[#11100D] transition-all ${inGame ? 'border-[#82D66B]/60 cursor-default' : 'border-[#F5A524]/50 hover:border-[#F5A524] disabled:opacity-60 disabled:cursor-not-allowed'}`}
+      style={{
+        boxShadow: inGame
+          ? undefined
+          : 'inset 0 0 0 1px rgba(245,165,36,0.1), 0 0 40px -8px rgba(245,165,36,0.45)',
+      }}
+    >
+      <span className={`absolute top-0 left-0 w-3 h-3 border-l border-t ${accent}`} />
+      <span className={`absolute top-0 right-0 w-3 h-3 border-r border-t ${accent}`} />
+      <span className={`absolute bottom-0 left-0 w-3 h-3 border-l border-b ${accent}`} />
+      <span className={`absolute bottom-0 right-0 w-3 h-3 border-r border-b ${accent}`} />
+      {!inGame && (
+        <span className="absolute inset-0 bg-[#F5A524]/0 group-hover:bg-[#F5A524]/10 transition-colors" />
+      )}
+      <span className="relative h-full flex items-center justify-center gap-4 px-4">
+        <>
+          {inGame ? (
+            <Gamepad2 size={18} className="text-[#82D66B]" />
+          ) : (
+            <Play size={18} className="text-[#F3E7D0] fill-[#F3E7D0]" />
+          )}
+        </>
+        <span className="flex min-w-0 flex-col items-start leading-none">
+          <span className="tracking-[0.26em] text-[17px] text-[#F3E7D0]">{label}</span>
+          <span
+            className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap tracking-[0.16em] text-[9px] text-[#C7AE86] mt-1 text-left"
+            title={sub}
+          >
+            {sub}
+          </span>
+        </span>
+      </span>
+    </button>
+  )
+}
+
+function RetryButton({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className="relative h-[64px] w-[160px] md:w-[230px] shrink-0 overflow-hidden border border-[#8A571C] bg-[#1a1008] hover:border-[#F5A524] transition-colors"
+    >
+      <span className="h-full flex items-center justify-center gap-4">
+        <RefreshCw size={18} className="text-[#F5A524]" />
+        <span className="flex flex-col items-start leading-none">
+          <span className="tracking-[0.2em] text-[17px] text-[#F5A524]">{label}</span>
+          <span className="tracking-[0.14em] text-[9px] text-[#8E7A5E] mt-1 text-left">
+            RETRY DEPLOYMENT
+          </span>
+        </span>
+      </span>
+    </button>
+  )
+}
+
+function ProgressBar({ progress }: { progress: number }) {
+  return (
+    <div className="relative h-2.5 bg-[#0B0906] border border-[#2A2116] overflow-hidden">
+      <div
+        className="h-full bg-gradient-to-r from-[#8A571C] via-[#F5A524] to-[#FFC861] transition-all duration-200"
+        style={{ width: `${progress}%`, boxShadow: '0 0 16px rgba(245,165,36,0.55)' }}
+      />
+    </div>
+  )
+}
+
+function LockedButton({ lockedLabel, subLabel }: { lockedLabel: string; subLabel: string }) {
+  return (
+    <button
+      disabled
+      className="relative h-[64px] w-[160px] md:w-[230px] shrink-0 overflow-hidden border border-[#2A2116] bg-[#0B0906] opacity-60 cursor-not-allowed"
+    >
+      <span className="absolute top-0 left-0 w-3 h-3 border-l border-t border-[#3A2C1D]" />
+      <span className="absolute top-0 right-0 w-3 h-3 border-r border-t border-[#3A2C1D]" />
+      <span className="absolute bottom-0 left-0 w-3 h-3 border-l border-b border-[#3A2C1D]" />
+      <span className="absolute bottom-0 right-0 w-3 h-3 border-r border-b border-[#3A2C1D]" />
+      <span className="h-full flex items-center justify-center gap-4">
+        <LoaderCircle size={18} className="text-[#5E5040] animate-spin" />
+        <span className="flex flex-col items-start leading-none">
+          <span className="tracking-[0.2em] text-[17px] text-[#8E7A5E]">{lockedLabel}</span>
+          <span className="tracking-[0.14em] text-[9px] text-[#5E5040] mt-1 text-left">
+            {subLabel}
+          </span>
+        </span>
+      </span>
+    </button>
+  )
+}
+
+function SubStat({
+  icon,
+  label,
+  value,
+  mono,
+  accent,
+}: {
+  icon: ReactNode
+  label: string
+  value: string
+  mono?: boolean
+  accent?: boolean
+}) {
+  return (
+    <div className="bg-[#0B0906] px-3 py-2 md:p-4 min-w-0">
+      <div className="flex items-center gap-2 text-[9px] tracking-[0.14em] text-[#8E7A5E]">
+        {icon} {label}
+      </div>
+      <div
+        className={`mt-2 text-[12px] tracking-[0.12em] truncate ${
+          accent ? 'text-[#82D66B]' : 'text-neutral-100'
+        } ${mono ? 'font-mono' : ''}`}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+const LOG_TONE: Record<'ok' | 'info' | 'dim' | 'warn', string> = {
+  ok: 'text-[#82D66B]',
+  info: 'text-[#F5A524]',
+  dim: 'text-[#8E7A5E]',
+  warn: 'text-[#c98b8b]',
+}
+
+function LogLine({
+  ts,
+  tone,
+  msg,
+}: {
+  ts: string
+  tone: 'ok' | 'info' | 'dim' | 'warn'
+  msg: string
+}) {
+  return (
+    <div className="flex gap-4 min-w-0">
+      <span className="text-[#5E5040] shrink-0">[{ts}]</span>
+      <span className={`min-w-0 [overflow-wrap:anywhere] ${LOG_TONE[tone]}`}>{msg}</span>
+    </div>
+  )
+}
+
+const STEP_DOT: Record<StepStatus, string> = {
+  done: 'bg-[#82D66B] shadow-[0_0_6px_rgba(130,214,107,0.5)]',
+  active: 'bg-[#F5A524] animate-pulse shadow-[0_0_10px_rgba(245,165,36,0.7)]',
+  pending: 'bg-[#3A2C1D]',
+}
+const STEP_TEXT: Record<StepStatus, string> = {
+  done: 'text-[#C7AE86]',
+  active: 'text-[#F3E7D0]',
+  pending: 'text-[#8E7A5E]',
+}
+const STEP_TAG: Record<StepStatus, TKey> = {
+  done: 'update.step.done',
+  active: 'update.step.running',
+  pending: 'update.step.queued',
+}
+
+function Step({ label, status, t }: { label: string; status: StepStatus; t: TFunction }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-dashed border-[#18130D] pb-2 last:border-0">
+      <div className="flex items-center gap-3">
+        <span className={`size-2 rounded-full ${STEP_DOT[status]}`} />
+        <span className={`text-[11px] tracking-[0.12em] ${STEP_TEXT[status]}`}>{label}</span>
+      </div>
+      <span className="shrink-0 text-[9px] tracking-[0.16em] text-[#8E7A5E]">
+        {t(STEP_TAG[status])}
+      </span>
+    </div>
+  )
+}

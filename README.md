@@ -15,10 +15,10 @@
 
 Лаунчер сам загрузит Java 21, Minecraft, Fabric и модпак. Адрес сервера — `play.blockfield.pro`.
 
-| Система | Архитектура | Файлы в релизе      |
-| :------ | :---------- | :------------------ |
-| Windows | x86_64      | `.exe` или `.msi`   |
-| Linux   | x86_64      | `.AppImage`, `.deb` |
+| Система | Архитектура | Файлы в релизе              |
+| :------ | :---------- | :-------------------------- |
+| Windows | x86_64      | `.exe` или `.msi`           |
+| Linux   | x86_64      | `.AppImage`, `.deb`, `.rpm` |
 
 ## Что умеет лаунчер
 
@@ -33,16 +33,16 @@
 
 ## Для разработчиков
 
-**Rust · Slint · wgpu**
+**Tauri 2 · Rust · React · TypeScript**
 
 ```sh
 git clone https://github.com/Blockfield/Blockfield-Launcher.git
 cd Blockfield-Launcher
 just setup
-just dev
+just tauri-dev
 ```
 
-Сначала установите Python 3.12.15+, Just 1.58.0, Rust 1.99.0 и системные зависимости Linux (`libfontconfig-dev`, `libxkbcommon-x11-0`). Полные инструкции, устройство проекта и правила выпуска — в [руководстве разработчика](docs/DEVELOPMENT.md).
+Сначала установите Node.js из `.nvmrc`, Python 3.12.15+, Just 1.58.0, Rust 1.99.0 и системные зависимости Tauri. Полные инструкции, устройство проекта и правила выпуска — в [руководстве разработчика](docs/DEVELOPMENT.md).
 
 Игровой стенд, прямой запуск Minecraft и testbot находятся в [workspace](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/DEVELOPING.md). Связи лаунчера, сайта, Drasl и игровых репозиториев — в [общей карте архитектуры](https://github.com/Blockfield/blockfield-workspace/blob/main/docs/ARCHITECTURE.md).
 

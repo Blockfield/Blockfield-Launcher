@@ -31,44 +31,61 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Tag must match package.json version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          v=$(node -p "require('./package.json').version")
+          [ "launcher-v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != package.json version $v"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.21.0'
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # Preinstalled 3.12 bootstraps scripts/toolchain.py --ci (pinned 3.12.15).
-          python-version: '3.12'
+          # Python 3.12 security releases have no Windows builds in setup-python.
+          python-version: ${{ runner.os == 'Linux' && '3.12.15' || '3.14.8' }}
       - name: Cache pinned project tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .cache/quality
             .dev/jdk
-          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
+          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
-      - name: Tag must match native/app/Cargo.toml version
-        if: github.ref_type == 'tag'
-        shell: bash
-        run: |
-          just version-check --tag "$GITHUB_REF_NAME"
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: 1.99.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: core-quality-${{ matrix.os }}
+          # An Ubuntu 24.04 cache broke Ubuntu 22.04 clippy with "can't find crate".
+          # Keep runner images separate.
+          key: ${{ runner.os == 'Linux' && 'gh2204' || format('quality-{0}', matrix.os) }}
           workspaces: . -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: cargo-audit
           fallback: none
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        timeout-minutes: 8
+        run: scripts/install-tauri-deps.sh libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Locate pnpm store
+        id: pnpm-store-1
+        shell: bash
+        run: echo "path=$(python -I -X utf8 scripts/quality.py run pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store-1.outputs.path }}
+          key: pnpm-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: just setup
       - run: just check
       - run: just version-check
       - run: just config-test
+      - run: just build
+      - run: just audit
       - run: just cargo-audit
 
   secret-scan:
@@ -87,8 +104,9 @@ jobs:
           ghcr.io/gitleaks/gitleaks:v8.30.1
           detect --source=/repo --config=/repo/.gitleaks.toml --verbose --redact
 
-  # The draft release is created once, before the build matrix, so the Linux
-  # and Windows jobs upload to one shared draft release.
+  # The draft release is created once, before the build matrix: tauri-action
+  # uploads to this release by id, so the Linux and Windows jobs can no longer
+  # create one draft each for the same tag (launcher#165).
   create-draft:
     name: Create draft release
     if: github.ref_type == 'tag'
@@ -119,7 +137,7 @@ jobs:
           fi
           echo "release-id=$id" >> "$GITHUB_OUTPUT"
 
-  native-release:
+  tauri-release:
     # create-draft is skipped off tags; a skipped need would otherwise skip the main-branch cache build.
     if: >-
       !cancelled()
@@ -138,77 +156,84 @@ jobs:
           # Keep Ubuntu 22.04 as the Linux glibc baseline.
           - name: linux-x86_64
             os: ubuntu-22.04
+            args: ''
           - name: windows-x86_64
             os: windows-2025
+            args: ''
     runs-on: ${{ matrix.os }}
     steps:
-      - if: runner.os == 'Windows'
-        run: git config --global core.longpaths true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+      # Builds validate tags independently while quality checks run in parallel.
+      - name: Tag must match package.json version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          v=$(node -p "require('./package.json').version")
+          [ "launcher-v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != package.json version $v"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.12'
+          python-version: ${{ runner.os == 'Windows' && '3.14.8' || '3.12.15' }}
       - name: Cache pinned project tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .cache/quality
             .dev/jdk
-          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py', 'scripts/package-native-appimage.py') }}
+          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
-      # Builds validate tags independently while quality checks run in parallel.
-      - name: Tag must match native/app/Cargo.toml version
-        if: github.ref_type == 'tag'
-        shell: bash
-        run: |
-          just version-check --tag "$GITHUB_REF_NAME"
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: 1.99.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: native-release-${{ matrix.os }}
+          key: github-${{ matrix.os }}-${{ matrix.name }}
           workspaces: |
-            native/app -> target
             . -> target
+            src-tauri -> src-tauri/target
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Linux build deps
         if: runner.os == 'Linux'
         timeout-minutes: 8
-        run: scripts/install-linux-deps.sh libfontconfig-dev libxkbcommon-x11-0 squashfs-tools
-      - name: Cache NSIS on Windows
-        if: runner.os == 'Windows'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        run: scripts/install-tauri-deps.sh libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Locate pnpm store
+        id: pnpm-store-3
+        shell: bash
+        run: echo "path=$(python -I -X utf8 scripts/quality.py run pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: C:\Program Files (x86)\NSIS
-          key: nsis-v1-${{ runner.os }}-${{ runner.arch }}
-      - name: Ensure NSIS on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $nsis = 'C:\Program Files (x86)\NSIS'
-          if ((Get-Command makensis -ErrorAction SilentlyContinue) -or (Test-Path "$nsis\makensis.exe")) {
-            if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
-              Add-Content -Path $env:GITHUB_PATH -Value $nsis
-            }
-          } else {
-            choco install nsis --no-progress -y
-          }
-      - run: just version-check
+          path: ${{ steps.pnpm-store-3.outputs.path }}
+          key: pnpm-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: just setup
       - run: just config-check
         env:
           VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
           VITE_BLOCKFIELD_WORKSHOP_PACK_URL: ${{ vars.VITE_BLOCKFIELD_WORKSHOP_PACK_URL }}
-      - name: Build native launcher
-        shell: bash
+      - name: Patch linuxdeploy GTK plugin for Wayland compatibility and metadata
+        if: runner.os == 'Linux'
+        run: scripts/patch-linuxdeploy.sh
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BLOCKFIELD_DISCORD_APPLICATION_ID: ${{ vars.BLOCKFIELD_DISCORD_APPLICATION_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           VITE_BLOCKFIELD_PACK_URL: ${{ vars.VITE_BLOCKFIELD_PACK_URL }}
           VITE_BLOCKFIELD_WORKSHOP_PACK_URL: ${{ vars.VITE_BLOCKFIELD_WORKSHOP_PACK_URL }}
+          VITE_BRAND: ${{ vars.VITE_BRAND || 'BLOCKFIELD' }}
+          VITE_BRAND_SUBTITLE: ${{ vars.VITE_BRAND_SUBTITLE || 'КОМАНДНЫЕ БОИ' }}
+          VITE_CHROME_TITLE: ${{ vars.VITE_CHROME_TITLE || 'BLOCKFIELD LAUNCHER' }}
+          VITE_OPERATION_NAME: ${{ vars.VITE_OPERATION_NAME || 'BLOCKFIELD' }}
+          VITE_SEASON: ${{ vars.VITE_SEASON || 'Minecraft 1.21.1 · Fabric' }}
+          VITE_SERVER_NAME: ${{ vars.VITE_SERVER_NAME || 'BLOCKFIELD - PRIMARY' }}
+          VITE_SERVER_IP: ${{ vars.VITE_SERVER_IP || 'play.blockfield.pro' }}
+          VITE_COPYRIGHT: ${{ vars.VITE_COPYRIGHT || '2026 BLOCKFIELD' }}
           BLOCKFIELD_MOJANG_MANIFEST_URL: ${{ vars.BLOCKFIELD_MOJANG_MANIFEST_URL || 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json' }}
           BLOCKFIELD_MOJANG_ASSET_BASE_URL: ${{ vars.BLOCKFIELD_MOJANG_ASSET_BASE_URL || 'https://resources.download.minecraft.net' }}
           BLOCKFIELD_FABRIC_META_URL: ${{ vars.BLOCKFIELD_FABRIC_META_URL || 'https://meta.fabricmc.net' }}
@@ -217,85 +242,25 @@ jobs:
           BLOCKFIELD_DEFAULT_RAM_MB: ${{ vars.BLOCKFIELD_DEFAULT_RAM_MB || '4096' }}
           BLOCKFIELD_AUTO_UPDATE: ${{ vars.BLOCKFIELD_AUTO_UPDATE || 'true' }}
           BLOCKFIELD_DEFAULT_LANG: ${{ vars.BLOCKFIELD_DEFAULT_LANG || 'en' }}
-        run: |
-          set -euo pipefail
-          cd native/app
-          cargo build --locked --release --bin blockfield-native
-      - name: Package Linux .deb and .AppImage
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          BLOCKFIELD_DISCORD_APPLICATION_ID: ${{ vars.BLOCKFIELD_DISCORD_APPLICATION_ID }}
-        run: |
-          set -euo pipefail
-          version=$(just python scripts/check-version.py --print)
-          mkdir -p dist-native
-          deb=$(just python scripts/package-native-deb.py \
-            --binary native/app/target/release/blockfield-native \
-            --version "$version" \
-            --output dist-native)
-          dpkg-deb --info "$deb"
-          dpkg-deb --contents "$deb"
-          appimage=$(just python scripts/package-native-appimage.py \
-            --binary native/app/target/release/blockfield-native \
-            --version "$version" \
-            --output dist-native)
-          ls -lh "$appimage"
-      - name: Package Windows MSI and NSIS installers
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          BLOCKFIELD_DISCORD_APPLICATION_ID: ${{ vars.BLOCKFIELD_DISCORD_APPLICATION_ID }}
-        run: |
-          set -euo pipefail
-          version=$(just python scripts/check-version.py --print)
-          mkdir -p dist-native
-          just python scripts/package-native-windows.py \
-            --binary native/app/target/release/blockfield-native.exe \
-            --version "$version" \
-            --output dist-native
-          ls -la dist-native
-      - name: Sign and upload release artifacts
-        if: github.ref_type == 'tag'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          version=$(just python scripts/check-version.py --print)
-          tag="launcher-v$version"
-          shopt -s nullglob
-          artifacts=(
-            dist-native/blockfield-launcher_*.AppImage
-            dist-native/blockfield-launcher_*.deb
-            dist-native/blockfield-launcher_*.msi
-            dist-native/blockfield-launcher_*.exe
-          )
-          [ "${#artifacts[@]}" -gt 0 ] || {
-            echo "No release artifacts built" >&2
-            exit 1
-          }
-          cargo build --locked --release -p blockfield-sign
-          signer="target/release/blockfield-sign"
-          if [ "$RUNNER_OS" = Windows ]; then signer="${signer}.exe"; fi
-          uploads=()
-          for artifact in "${artifacts[@]}"; do
-            "$signer" --app-version "$version" "$artifact"
-            [ -s "${artifact}.sig" ] || {
-              echo "Missing signature for $artifact" >&2
-              exit 1
-            }
-            uploads+=("$artifact" "${artifact}.sig")
-          done
-          gh release upload "$tag" "${uploads[@]}" --clobber
+        with:
+          tauriScript: 'just tauri'
+          args: --config src-tauri/tauri.prod.conf.json ${{ matrix.args }}
+          # Empty on main: the cache run builds and signs but creates no release.
+          # On tags the draft already exists (create-draft job): upload by id so
+          # both matrix jobs share one release instead of creating one each.
+          releaseId: ${{ needs.create-draft.outputs.release-id }}
+          tagName: ${{ github.ref_type == 'tag' && 'launcher-v__VERSION__' || '' }}
+          releaseName: Launcher v__VERSION__
+          releaseBody: Stable release ${{ github.ref_name }} (${{ github.sha }})
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
 
   publish-launcher:
     name: Publish launcher release
     if: github.ref_type == 'tag'
     timeout-minutes: 10
-    needs: [quality, secret-scan, native-release, create-draft]
+    needs: [quality, secret-scan, tauri-release, create-draft]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -307,17 +272,17 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.12'
+          python-version: '3.12.15'
       - name: Cache pinned project tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .cache/quality
             .dev/jdk
-          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
+          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
       - run: python -I -X utf8 scripts/toolchain.py --ci
       - name: Release text
-        uses: ./.github/actions/release-text
+        uses: Blockfield/blockfield-workspace/.github/actions/release-text@cdb1c24c5b88a18221c2d927d3df684c64c4472d
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           RELEASE_TEXT_MODEL: ${{ vars.RELEASE_TEXT_MODEL }}
@@ -325,14 +290,22 @@ jobs:
           mode: release
           version: ${{ github.ref_name }}
           kind: launcher
-          server-repository: none
           out-dir: rn
+      - name: Fetch pinned release-notes check tool
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Blockfield/blockfield-workspace
+          ref: cdb1c24c5b88a18221c2d927d3df684c64c4472d
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout: .github/actions/release-text/release_notes_tool.py
+          path: vendor/release-text
       - name: Validate updater assets and publish the completed draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          version=$(just python scripts/check-version.py --print)
+          version=$(node -p "require('./package.json').version")
           tag="launcher-v$version"
           # gh addresses releases by tag, so pin the pre-created draft by id:
           # exactly one draft must exist for this tag, and it must be ours.
@@ -348,11 +321,11 @@ jobs:
             echo "::error::Expected exactly one draft release for tag $tag, found $count. Delete the stray duplicate drafts and rerun."
             exit 1
           }
-          just python .github/actions/release-text/release_notes_tool.py check rn/release-notes.md \
+          just python vendor/release-text/.github/actions/release-text/release_notes_tool.py check rn/release-notes.md \
             --repository Blockfield/Blockfield-Launcher --version "$tag" --kind launcher
           mkdir -p release
           gh release download "$tag" --dir release
-          just python scripts/prepare-updater.py release "$version" --notes-file rn/release-notes.md
+          just python scripts/prepare-updater.py release "$version"
           gh release upload "$tag" release/latest.json --clobber
           # Имя asset = имя файла; `file#text` задал бы только подпись.
           if gh release download "$tag" --pattern release-notes.md --output rn/published.md 2>/dev/null \
@@ -363,65 +336,3 @@ jobs:
           fi
           [ ! -f rn/announcement.json ] || gh release upload "$tag" rn/announcement.json --clobber
           gh release edit "$tag" --notes-file rn/release-notes.md --draft=false --latest
-
-  publish-native-channel:
-    name: Publish legacy native-channel manifest
-    if: github.ref_type == 'tag'
-    timeout-minutes: 10
-    needs: [publish-launcher]
-    # Keeps existing v2.0.0 native-channel installs updating onto the new
-    # release line (where they switch to latest.json).
-    concurrency:
-      group: launcher-native-channel
-      cancel-in-progress: false
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.12'
-      - name: Cache pinned project tools
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            .cache/quality
-            .dev/jdk
-          key: quality-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/toolchain.py', 'scripts/quality.py', 'dev/quality.py') }}
-      - run: python -I -X utf8 scripts/toolchain.py --ci
-      - name: Publish the rolling native-channel manifest
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          version=$(just python scripts/check-version.py --print)
-          tag="launcher-v$version"
-          mkdir -p release
-          gh release download "$tag" --dir release
-          just python scripts/prepare-updater.py native release "$version"
-          gh release view native-channel >/dev/null 2>&1 || \
-            gh release create native-channel --title "Native channel" \
-              --notes "Rolling compatibility self-update channel; latest-native.json mirrors the latest native release." \
-              --prerelease --latest=false
-          gh release edit native-channel --prerelease --latest=false
-          if download_log=$(gh release download native-channel --pattern latest-native.json \
-              --output release/published-native.json 2>&1); then
-            if ! just python scripts/prepare-updater.py native newer-than \
-              release/published-native.json "$version"; then
-              echo "native channel already newer: upload skipped"
-            else
-              gh release upload native-channel release/latest-native.json --clobber
-            fi
-          elif just python scripts/prepare-updater.py native download-is-missing \
-            "$download_log"; then
-            echo "no published native manifest: uploading"
-            gh release upload native-channel release/latest-native.json --clobber
-          else
-            echo "$download_log" >&2
-            echo "native channel download failed: refusing blind upload" >&2
-            exit 1
-          fi
