@@ -90,7 +90,8 @@ legacy-check *args:
 
 cargo-audit *args:
     import runpy, sys
-    sys.argv = ["scripts/quality.py", "run", 'cargo', 'audit', *sys.argv[1:]]
+    audit_args = list(sys.argv[1:])
+    sys.argv = ["scripts/quality.py", "run", 'cargo', 'audit', *audit_args]
     runpy.run_path("scripts/quality.py", run_name="__main__")
-    sys.argv = ["scripts/quality.py", "run", 'cargo', 'audit', '--file', 'native/app/Cargo.lock', *sys.argv[1:]]
+    sys.argv = ["scripts/quality.py", "run", 'cargo', 'audit', '--file', 'native/app/Cargo.lock', *audit_args]
     runpy.run_path("scripts/quality.py", run_name="__main__")

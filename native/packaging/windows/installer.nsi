@@ -237,6 +237,25 @@ Section Install
   File "/oname=${MAINBINARYNAME}.exe" "${BINARY_PATH}"
 
   !ifndef DEV_BUILD
+    ; Migrate legacy native v2.0.0 NSIS installs (`blockfield-native`) into
+    ; `blockfield-launcher` without touching user game data.
+    ReadRegStr $R8 HKCU "Software\${MANUFACTURER}\blockfield-native" ""
+    ${If} $R8 == ""
+      ${If} ${FileExists} "$LOCALAPPDATA\blockfield-native\blockfield-native.exe"
+        StrCpy $R8 "$LOCALAPPDATA\blockfield-native"
+      ${EndIf}
+    ${EndIf}
+    ${If} $R8 != ""
+      !insertmacro CheckIfAppIsRunning "$R8\blockfield-native.exe"
+      Delete "$R8\blockfield-native.exe"
+      ${If} $R8 != "$INSTDIR"
+        Delete "$R8\uninstall.exe"
+        RMDir "$R8"
+      ${EndIf}
+      DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\blockfield-native"
+      DeleteRegKey HKCU "Software\${MANUFACTURER}\blockfield-native"
+    ${EndIf}
+
     !insertmacro RegisterScheme "blockfield"
     !insertmacro RegisterScheme "discord-${DISCORD_APP_ID}"
   !endif
@@ -260,9 +279,17 @@ Section Install
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${UNINSTKEY}" "EstimatedSize" "$0"
 
+  ; Refresh Start Menu shortcut on installs and legacy native migrations; also
+  ; refresh an existing Desktop shortcut so migrated installs do not keep
+  ; pointing at the removed `blockfield-native.exe`.
   ${If} $UpdateMode <> 1
+  ${OrIf} ${FileExists} "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk"
     CreateDirectory "$SMPROGRAMS\${DISPLAYNAME}"
     CreateShortcut "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  ${EndIf}
+  ${If} $UpdateMode = 1
+  ${AndIf} ${FileExists} "$DESKTOP\${DISPLAYNAME}.lnk"
+    Call CreateDesktopShortcut
   ${EndIf}
 
   ${If} $PassiveMode = 1

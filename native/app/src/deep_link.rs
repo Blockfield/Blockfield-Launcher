@@ -161,8 +161,12 @@ pub fn reg_commands(exe: &str) -> Vec<Vec<String>> {
 }
 
 /// Best-effort registration at startup: never fail the launch, report to
-/// stderr like the Tauri `register_all` warning path.
+/// stderr. DEV builds skip registration so they never overwrite the
+/// production `blockfield://` handler.
 pub fn register() -> std::io::Result<()> {
+    if launcher_core::dev::is_dev_build() {
+        return Ok(());
+    }
     #[cfg(target_os = "linux")]
     return register_linux();
     #[cfg(target_os = "windows")]

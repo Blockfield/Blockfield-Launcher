@@ -263,9 +263,18 @@ class PackageNativeWindowsTests(unittest.TestCase):
         self.assertNotRegex(nsis, r"(?i)\bRmDir\s+/r\b")
         self.assertRegex(nsis, r'(?m)^!include "Win\\RestartManager\.nsh"$')
         rm_calls = re.findall(r"(?m)^\s*!insertmacro CheckIfAppIsRunning (.+)$", nsis)
-        self.assertEqual(len(rm_calls), 2)
-        for args in rm_calls:
-            self.assertEqual(args, '"$INSTDIR\\${MAINBINARYNAME}.exe"')
+        self.assertEqual(
+            rm_calls,
+            [
+                '"$INSTDIR\\${MAINBINARYNAME}.exe"',
+                '"$R8\\blockfield-native.exe"',
+                '"$INSTDIR\\${MAINBINARYNAME}.exe"',
+            ],
+        )
+        self.assertIn(
+            'DeleteRegKey HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\blockfield-native"',
+            nsis,
+        )
         self.assertRegex(
             nsis, r"\$UpdateMode <> 1[\s\S]*ExecWait[^\n]*--uninstall-cleanup"
         )
