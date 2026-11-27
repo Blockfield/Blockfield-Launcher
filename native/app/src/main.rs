@@ -281,10 +281,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // CI can assert on real text without OCR. Never a fixture trigger.
         let weak = app.as_weak();
         slint::Timer::single_shot(std::time::Duration::from_secs(seconds), move || {
-            if let (Some(path), Some(app)) = (smoke_text, weak.upgrade()) {
-                if let Err(error) = std::fs::write(&path, smoke_dump(&app)) {
-                    eprintln!("smoke-text write failed: {error}");
-                }
+            if let (Some(path), Some(app)) = (smoke_text, weak.upgrade())
+                && let Err(error) = std::fs::write(&path, smoke_dump(&app))
+            {
+                eprintln!("smoke-text write failed: {error}");
             }
             slint::quit_event_loop().expect("finish idle run");
         });
