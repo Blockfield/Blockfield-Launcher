@@ -499,125 +499,135 @@ export component StatsScreen inherits Rectangle {
                     width: 300px;
                     clip: true;
                     background: Tokens.chrome;
-                    VerticalLayout {
+                    HorizontalLayout {
                         x: 16px;
                         y: 16px;
                         width: parent.width - 32px;
-                        height: Math.max(0px, parent.height - 52px);
-                        alignment: start;
-                        spacing: 8px;
-                        HorizontalLayout {
-                            height: 12px;
-                            spacing: 12px;
-                            Rectangle { width: 6px; height: 12px; Rectangle { x: 0px; y: 3px; width: 6px; height: 6px; background: Tokens.primary; } }
-                            Text { horizontal-stretch: 0; text: "Вы"; font-size: 10px; letter-spacing: 1.8px; color: Tokens.foreground; vertical-alignment: center; }
-                            Rectangle { horizontal-stretch: 1; height: 12px; Rectangle { x: 0px; y: 5.5px; width: parent.width; height: 1px; background: Tokens.secondary; } }
-                            Text { horizontal-stretch: 0; text: root.self-rank-code; font-size: 9px; letter-spacing: 2.52px; color: Tokens.faint; vertical-alignment: center; }
-                        }
-                        if root.self-state == 0: StatsSpin { vertical-stretch: 0; height: 96px; }
-                        if root.self-state == 1: Text {
-                            text: "Вы ещё не играли";
-                            font-size: 12px;
-                            color: Tokens.muted-foreground;
-                            horizontal-alignment: center;
-                        }
-                        if root.self-state == 2: FormError {
-                            width: parent.width;
-                            message: "Ваша статистика недоступна.";
-                            raw: root.self-error;
-                        }
-                        if root.self-state == 3: VerticalLayout {
+                        height: 12px;
+                        spacing: 12px;
+                        Rectangle { width: 6px; height: 12px; Rectangle { x: 0px; y: 3px; width: 6px; height: 6px; background: Tokens.primary; } }
+                        Text { horizontal-stretch: 0; text: "Вы"; font-size: 10px; letter-spacing: 1.8px; color: Tokens.foreground; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; height: 12px; Rectangle { x: 0px; y: 5.5px; width: parent.width; height: 1px; background: Tokens.secondary; } }
+                        Text { horizontal-stretch: 0; text: root.self-rank-code; font-size: 9px; letter-spacing: 2.52px; color: Tokens.faint; vertical-alignment: center; }
+                    }
+                    self-scroll := Flickable {
+                        x: 16px;
+                        y: 36px;
+                        width: parent.width - 32px;
+                        height: Math.max(0px, parent.height - 75px);
+                        content-width: self.width;
+                        content-height: self-body.preferred-height;
+                        self-body := VerticalLayout {
+                            x: 0px;
+                            y: 0px;
+                            width: self-scroll.width;
                             alignment: start;
                             spacing: 8px;
-                            if root.self-stale: Text {
-                                // e2e hook only, no pixels change.
-                                accessible-role: text;
-                                accessible-label: root.self-stale-label;
-                                text: root.self-stale-label;
-                                font-size: 11px;
-                                color: Tokens.primary;
-                                wrap: word-wrap;
+                            if root.self-state == 0: StatsSpin { vertical-stretch: 0; height: 96px; }
+                            if root.self-state == 1: Text {
+                                text: "Вы ещё не играли";
+                                font-size: 12px;
+                                color: Tokens.muted-foreground;
+                                horizontal-alignment: center;
                             }
-                            HorizontalLayout {
-                                height: 24px;
+                            if root.self-state == 2: FormError {
+                                width: parent.width;
+                                message: "Ваша статистика недоступна.";
+                                raw: root.self-error;
+                            }
+                            if root.self-state == 3: VerticalLayout {
+                                alignment: start;
                                 spacing: 8px;
-                                PlayerHead { y: (parent.height - self.height) / 2; face: root.self-face; }
-                                Text {
-                                    text: root.self-name;
-                                    font-size: 13px;
-                                    color: Tokens.neutral-100;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                    horizontal-stretch: 1;
+                                if root.self-stale: Text {
+                                    // e2e hook only, no pixels change.
+                                    accessible-role: text;
+                                    accessible-label: root.self-stale-label;
+                                    text: root.self-stale-label;
+                                    font-size: 11px;
+                                    color: Tokens.primary;
+                                    wrap: word-wrap;
                                 }
-                            }
-                            // 2x3 bordered cell grid matching Tauri dl.grid.grid-cols-2.gap-px.bg-[#18130D].border.border-[#2A2116].
-                            Rectangle {
-                                background: Tokens.secondary;
-                                border-width: 1phx;
-                                border-color: Tokens.border;
-                                height: self-grid.preferred-height + 2phx;
-                                self-grid := VerticalLayout {
-                                    x: 1phx;
-                                    y: 1phx;
-                                    width: parent.width - 2phx;
-                                    spacing: 1px;
-                                    Rectangle {
-                                        height: Math.max(c-rank.cell-h, c-mmr.cell-h);
-                                        c-rank := StatsCell { x: 0px; y: 0px; width: (parent.width - 1px) / 2; height: parent.height; label: "Место"; value: root.self-rank; }
-                                        c-mmr := StatsCell { x: (parent.width + 1px) / 2; y: 0px; width: parent.width - self.x; height: parent.height; label: "MMR"; value: root.self-mmr; }
-                                    }
-                                    Rectangle {
-                                        height: Math.max(c-battles.cell-h, c-kd.cell-h);
-                                        c-battles := StatsCell { x: 0px; y: 0px; width: (parent.width - 1px) / 2; height: parent.height; label: "Бои / победы"; value: root.self-battles; }
-                                        c-kd := StatsCell { x: (parent.width + 1px) / 2; y: 0px; width: parent.width - self.x; height: parent.height; label: "K/D"; value: root.self-kd; }
-                                    }
-                                    Rectangle {
-                                        height: Math.max(c-captures.cell-h, c-campaigns.cell-h);
-                                        c-captures := StatsCell { x: 0px; y: 0px; width: (parent.width - 1px) / 2; height: parent.height; label: "Захваты"; value: root.self-captures; }
-                                        c-campaigns := StatsCell { x: (parent.width + 1px) / 2; y: 0px; width: parent.width - self.x; height: parent.height; label: "Кампании / победы"; value: root.self-campaigns; }
+                                HorizontalLayout {
+                                    height: 24px;
+                                    spacing: 8px;
+                                    PlayerHead { y: (parent.height - self.height) / 2; face: root.self-face; }
+                                    Text {
+                                        text: root.self-name;
+                                        font-size: 13px;
+                                        color: Tokens.neutral-100;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
                                     }
                                 }
-                            }
-                            if root.rating.length > 0: VerticalLayout {
-                                alignment: start;
-                                spacing: 4px;
-                                Text { text: "Рейтинг"; font-size: 10px; letter-spacing: 1.8px; color: Tokens.muted-foreground; }
-                                VerticalLayout {
-                                    alignment: start;
-                                    spacing: 0px;
-                                    for r in root.rating: HorizontalLayout {
-                                        height: 20px;
-                                        spacing: 8px;
-                                        Text { horizontal-stretch: 1; text: r.when; font-size: 11px; color: Tokens.muted-foreground; vertical-alignment: center; }
-                                        Text { text: r.after; font-size: 11px; color: Tokens.secondary-foreground; vertical-alignment: center; }
-                                        Text {
-                                            text: r.delta;
-                                            font-size: 11px;
-                                            color: r.up ? Tokens.success : #c98b8b;
-                                            vertical-alignment: center;
+                                // 2x3 bordered cell grid matching Tauri dl.grid.grid-cols-2.gap-px.bg-[#18130D].border.border-[#2A2116].
+                                Rectangle {
+                                    background: Tokens.secondary;
+                                    border-width: 1phx;
+                                    border-color: Tokens.border;
+                                    height: self-grid.preferred-height + 2phx;
+                                    self-grid := VerticalLayout {
+                                        x: 1phx;
+                                        y: 1phx;
+                                        width: parent.width - 2phx;
+                                        spacing: 1px;
+                                        Rectangle {
+                                            height: Math.max(c-rank.cell-h, c-mmr.cell-h);
+                                            c-rank := StatsCell { x: 0px; y: 0px; width: (parent.width - 1px) / 2; height: parent.height; label: "Место"; value: root.self-rank; }
+                                            c-mmr := StatsCell { x: (parent.width + 1px) / 2; y: 0px; width: parent.width - self.x; height: parent.height; label: "MMR"; value: root.self-mmr; }
+                                        }
+                                        Rectangle {
+                                            height: Math.max(c-battles.cell-h, c-kd.cell-h);
+                                            c-battles := StatsCell { x: 0px; y: 0px; width: (parent.width - 1px) / 2; height: parent.height; label: "Бои / победы"; value: root.self-battles; }
+                                            c-kd := StatsCell { x: (parent.width + 1px) / 2; y: 0px; width: parent.width - self.x; height: parent.height; label: "K/D"; value: root.self-kd; }
+                                        }
+                                        Rectangle {
+                                            height: Math.max(c-captures.cell-h, c-campaigns.cell-h);
+                                            c-captures := StatsCell { x: 0px; y: 0px; width: (parent.width - 1px) / 2; height: parent.height; label: "Захваты"; value: root.self-captures; }
+                                            c-campaigns := StatsCell { x: (parent.width + 1px) / 2; y: 0px; width: parent.width - self.x; height: parent.height; label: "Кампании / победы"; value: root.self-campaigns; }
                                         }
                                     }
                                 }
-                            }
-                            if root.matches.length > 0: VerticalLayout {
-                                alignment: start;
-                                spacing: 4px;
-                                Text { text: "Последние бои"; font-size: 10px; letter-spacing: 1.8px; color: Tokens.muted-foreground; }
-                                VerticalLayout {
+                                if root.rating.length > 0: VerticalLayout {
                                     alignment: start;
-                                    spacing: 0px;
-                                    for m in root.matches: HorizontalLayout {
-                                        height: 21px;
-                                        spacing: 8px;
-                                        Text { horizontal-stretch: 1; text: m.when + " · " + m.mode; font-size: 11px; color: Tokens.muted-foreground; vertical-alignment: center; overflow: elide; }
-                                        Text {
-                                            text: m.outcome;
-                                            font-size: 11px;
-                                            color: m.good ? Tokens.success : (m.bad ? #c98b8b : Tokens.muted-foreground);
-                                            vertical-alignment: center;
+                                    spacing: 4px;
+                                    Text { text: "Рейтинг"; font-size: 10px; letter-spacing: 1.8px; color: Tokens.muted-foreground; }
+                                    VerticalLayout {
+                                        alignment: start;
+                                        spacing: 0px;
+                                        for r in root.rating: HorizontalLayout {
+                                            height: 18px;
+                                            spacing: 8px;
+                                            Text { horizontal-stretch: 1; text: r.when; font-size: 11px; color: Tokens.muted-foreground; vertical-alignment: center; }
+                                            Text { text: r.after; font-size: 11px; color: Tokens.secondary-foreground; vertical-alignment: center; }
+                                            Text {
+                                                text: r.delta;
+                                                font-size: 11px;
+                                                color: r.up ? Tokens.success : #c98b8b;
+                                                vertical-alignment: center;
+                                            }
                                         }
-                                        Text { text: m.kd; font-size: 11px; color: Tokens.secondary-foreground; vertical-alignment: center; }
+                                    }
+                                }
+                                if root.matches.length > 0: VerticalLayout {
+                                    alignment: start;
+                                    spacing: 4px;
+                                    Text { text: "Последние бои"; font-size: 10px; letter-spacing: 1.8px; color: Tokens.muted-foreground; }
+                                    VerticalLayout {
+                                        alignment: start;
+                                        spacing: 0px;
+                                        for m in root.matches: HorizontalLayout {
+                                            height: 20px;
+                                            spacing: 8px;
+                                            Text { horizontal-stretch: 1; text: m.when + " · " + m.mode; font-size: 11px; color: Tokens.muted-foreground; vertical-alignment: center; overflow: elide; }
+                                            Text {
+                                                text: m.outcome;
+                                                font-size: 11px;
+                                                color: m.good ? Tokens.success : (m.bad ? #c98b8b : Tokens.muted-foreground);
+                                                vertical-alignment: center;
+                                            }
+                                            Text { text: m.kd; font-size: 11px; color: Tokens.secondary-foreground; vertical-alignment: center; }
+                                        }
                                     }
                                 }
                             }
