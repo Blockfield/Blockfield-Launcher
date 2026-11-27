@@ -88,11 +88,16 @@ pub fn apply_main(app: &AppWindow, state: &str, scenario: &str) -> Result<(), St
         online: state != "offline",
         rooms_available: true,
         players: if state == "offline" { "—" } else { "24" }.into(),
-        players_max: "/ 100".into(),
+        players_max: if state == "offline" { "" } else { "/ 100" }.into(),
         ping: if state == "offline" { "—" } else { "32" }.into(),
         region: "EU".into(),
         location: "Frankfurt".into(),
-        server_address: "play.blockfield.pro:25565".into(),
+        server_address: if state == "offline" {
+            ""
+        } else {
+            "play.blockfield.pro:25565"
+        }
+        .into(),
         installed: if state == "error" { "..." } else { "2.75" }.into(),
         latest: if state == "error" { "..." } else { "2.75" }.into(),
         size: if state == "error" { "—" } else { "1.0 GB" }.into(),

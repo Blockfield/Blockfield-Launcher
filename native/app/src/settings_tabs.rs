@@ -206,12 +206,14 @@ pub fn wire(app: &AppWindow, core: Core) {
             let resync_state = state.clone();
             let resync_handle = handle.clone();
             let weak = app.as_weak();
+            let saved_workshop_server = config.workshop_server.clone();
             handle.spawn_blocking(move || {
                 let result = settings::save_settings(&state, &state.app_data_dir, config);
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     let ok = result.is_ok();
                     save_result(&app, result);
                     if ok {
+                        crate::backend::set_committed_workshop_server(&saved_workshop_server);
                         crate::backend::on_settings_saved(&app, resync_state, resync_handle);
                     }
                 });
@@ -242,7 +244,12 @@ pub fn wire(app: &AppWindow, core: Core) {
                 let result = settings::load_settings(&state)
                     .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()));
                 let _ = weak.upgrade_in_event_loop(move |app| match result {
-                    Ok(value) => apply_response(&app, &value),
+                    Ok(value) => {
+                        crate::backend::set_committed_workshop_server(
+                            value["workshopServer"].as_str().unwrap_or_default(),
+                        );
+                        apply_response(&app, &value);
+                    }
                     Err(error) => save_result(&app, Err(error)),
                 });
             });

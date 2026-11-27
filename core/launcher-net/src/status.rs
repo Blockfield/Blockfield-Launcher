@@ -388,6 +388,25 @@ pub async fn fetch_rooms(base: &str) -> Option<RoomsResponse> {
     rooms_response(&value)
 }
 
+const CONTENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Fetch remote CMS `content.json` from the pack host; returns `None` on network, HTTP, or JSON errors.
+pub async fn fetch_content(base: &str) -> Option<serde_json::Value> {
+    let url = format!("{}/content.json", base.trim_end_matches('/'));
+    let response = reqwest::Client::builder()
+        .timeout(CONTENT_TIMEOUT)
+        .build()
+        .ok()?
+        .get(url)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    response.json::<serde_json::Value>().await.ok()
+}
+
 const STATS_TIMEOUT: Duration = Duration::from_secs(5);
 const STATS_QUERY_KEYS: [&str; 6] = ["mode", "period", "season", "sort", "limit", "page"];
 

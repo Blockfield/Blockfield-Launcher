@@ -1,9 +1,6 @@
 //! Remote CMS `content.json` loader and Tauri-parity fallback defaults.
 //! Mirrors `src/lib/content.ts`, `src/lib/api-base.ts`, and `src/app/constants.ts`.
-use std::{
-    sync::{OnceLock, RwLock},
-    time::Duration,
-};
+use std::sync::{OnceLock, RwLock};
 
 use serde_json::Value;
 use slint::{ModelRc, SharedString, VecModel, Weak};
@@ -94,26 +91,25 @@ pub fn content_text<'a>(content: Option<&'a Value>, keys: &[&str]) -> Option<&'a
     None
 }
 
-/// `localizedContentText` (`src/lib/content.ts:44-54`): `translations[lang]` -> `translations.en` -> top-level keys.
+/// `localizedContentText` (`src/lib/content.ts:33-54`): `{ ...en, ...lang }[translation_key]` -> top-level keys.
 pub fn localized_content_text<'a>(
     content: Option<&'a Value>,
     lang: &str,
     translation_key: &str,
     keys: &[&str],
 ) -> Option<&'a str> {
-    if let Some(translations) = content.and_then(|c| c.get("translations")) {
-        for locale in [lang, "en"] {
-            if let Some(value) = translations
-                .get(locale)
+    let translated = content
+        .and_then(|c| c.get("translations"))
+        .and_then(|translations| {
+            let localized = translations.get(lang).and_then(Value::as_object);
+            let english = translations.get("en").and_then(Value::as_object);
+            localized
                 .and_then(|table| table.get(translation_key))
-                .and_then(Value::as_str)
-                && !value.trim().is_empty()
-            {
-                return Some(value);
-            }
-        }
-    }
-    content_text(content, keys)
+                .or_else(|| english.and_then(|table| table.get(translation_key)))
+        })
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    translated.or_else(|| content_text(content, keys))
 }
 
 pub fn default_features() -> Vec<MainFeature> {
@@ -172,6 +168,7 @@ pub fn resolve_features(content: Option<&Value>, lang: &str) -> Vec<MainFeature>
             Some("swords") => "swords",
             Some("truck") => "truck",
             Some("crosshair") => "crosshair",
+            Some("gamepad-2") => "gamepad-2",
             _ => "flag",
         };
         resolved.push(MainFeature {
@@ -313,16 +310,7 @@ pub fn content_base_url() -> Option<String> {
 }
 
 pub async fn fetch_from_base(base: &str) -> Option<Value> {
-    let url = format!("{}/content.json", base.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .ok()?;
-    let response = client.get(url).send().await.ok()?;
-    if !response.status().is_success() {
-        return None;
-    }
-    response.json::<Value>().await.ok()
+    launcher_app::status_ops::launcher_content(base).await
 }
 
 /// Fetch remote `content.json` once at startup and overlay all UI strings.

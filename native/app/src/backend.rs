@@ -61,6 +61,23 @@ fn pack_check_gen() -> &'static AtomicU64 {
     &GEN
 }
 
+/// Advance the modpack-check generation so any older in-flight silent probe
+/// discards its response instead of overwriting a newer manual verify.
+pub fn bump_pack_check_gen() -> u64 {
+    pack_check_gen().fetch_add(1, Ordering::AcqRel) + 1
+}
+
+fn committed_workshop_server() -> &'static Mutex<String> {
+    static SERVER: OnceLock<Mutex<String>> = OnceLock::new();
+    SERVER.get_or_init(|| Mutex::new(String::new()))
+}
+
+pub fn set_committed_workshop_server(server: &str) {
+    *committed_workshop_server()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = server.to_owned();
+}
+
 fn server_refresh_gen() -> &'static AtomicU64 {
     static GEN: AtomicU64 = AtomicU64::new(0);
     &GEN
@@ -170,10 +187,13 @@ pub fn format_footer_server_label(
     }
 }
 
-/// Recompute and apply the footer `server-label` from active profile, workshop server, and CMS `serverIp`.
+/// Recompute and apply the footer `server-label` from active profile, committed workshop server, and CMS `serverIp`.
 pub fn sync_footer_server_label(app: &AppWindow) {
     let main = app.get_main_data();
-    let workshop_server = app.global::<SettingsForm>().get_data().workshop_server;
+    let workshop_server = committed_workshop_server()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let label = format_footer_server_label(
         app.get_workshop(),
         main.profile_blocked,
@@ -501,6 +521,7 @@ pub fn select_profile(
         let _ = weak.upgrade_in_event_loop(move |app| match result {
             Ok(value) => {
                 crate::settings_tabs::apply_response(&app, &value);
+                set_committed_workshop_server(value["workshopServer"].as_str().unwrap_or_default());
                 let actual_workshop = value["activeProfile"] == "workshop";
                 set_workshop_quietly(&app, actual_workshop);
                 app.global::<SettingsForm>().set_blocked(false);
@@ -617,6 +638,7 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
     *pending_profile_retry()
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = None;
+    set_committed_workshop_server("");
     app.set_show_login(false);
     app.set_show_firstrun(false);
     app.set_show_main(true);
@@ -699,7 +721,14 @@ pub fn enter_main(app: &AppWindow, state: Arc<LauncherAppState>, handle: Handle)
             crate::content::apply_cached_or_default(&app);
             crate::skin_upload::wire_upload(&app, settings_state.clone(), settings_handle.clone());
             app.set_username(settings["username"].as_str().unwrap_or_default().into());
-            set_workshop_quietly(&app, settings["activeProfile"] == "workshop");
+            let active_workshop = settings["activeProfile"] == "workshop";
+            set_committed_workshop_server(settings["workshopServer"].as_str().unwrap_or_default());
+            set_workshop_quietly(&app, active_workshop);
+            let mut data = app.get_main_data();
+            data.profile_blocked = data.profile_changing
+                || (active_workshop && !data.can_workshop)
+                || !data.profile_error.is_empty();
+            app.set_main_data(data);
             sync_footer_server_label(&app);
             // Shell avatar follows the signed-in user like Tauri's Shell block.
             crate::avatars::refresh_shell(&app);
