@@ -161,42 +161,13 @@ pub fn wire(app: &AppWindow, core: Core) {
     let profile_snapshot = saved.clone();
     app.global::<SettingsForm>().on_profile(move |workshop| {
         let Some(app) = weak.upgrade() else { return };
-        let form = app.global::<SettingsForm>();
-        if form.get_data().workshop == workshop {
-            return;
-        }
         if let Some((state, handle)) = &profile_core {
-            let state = state.clone();
-            let weak = app.as_weak();
-            form.set_blocked(true);
-            handle.spawn(async move {
-                let profile = if workshop {
-                    ClientProfile::Workshop
-                } else {
-                    ClientProfile::Game
-                };
-                let result = settings::select_profile(&state, profile)
-                    .await
-                    .and_then(|value| serde_json::to_value(value).map_err(|e| e.to_string()));
-                let _ = weak.upgrade_in_event_loop(move |app| match result {
-                    Ok(value) => {
-                        apply_response(&app, &value);
-                        app.global::<SettingsForm>().set_blocked(false);
-                        // Profile switch settled: a waiting invite retries now.
-                        crate::bridge::retry_pending_join(&app);
-                    }
-                    Err(error) => {
-                        let friendly = friendly_error(&error, ErrorContext::SelectProfile);
-                        app.global::<SettingsForm>()
-                            .set_error(friendly.message.into());
-                        app.global::<SettingsForm>()
-                            .set_raw_error(friendly.raw.into());
-                        app.global::<SettingsForm>().set_blocked(false);
-                        crate::bridge::retry_pending_join(&app);
-                    }
-                });
-            });
+            crate::backend::select_profile(&app, state.clone(), handle.clone(), workshop);
         } else {
+            let form = app.global::<SettingsForm>();
+            if form.get_data().workshop == workshop {
+                return;
+            }
             let mut data = form.get_data();
             data.workshop = workshop;
             data.game_dir = if workshop {
@@ -232,10 +203,18 @@ pub fn wire(app: &AppWindow, core: Core) {
         form.set_raw_error("".into());
         if let Some((state, handle)) = &save_core {
             let state = state.clone();
+            let resync_state = state.clone();
+            let resync_handle = handle.clone();
             let weak = app.as_weak();
             handle.spawn_blocking(move || {
                 let result = settings::save_settings(&state, &state.app_data_dir, config);
-                let _ = weak.upgrade_in_event_loop(move |app| save_result(&app, result));
+                let _ = weak.upgrade_in_event_loop(move |app| {
+                    let ok = result.is_ok();
+                    save_result(&app, result);
+                    if ok {
+                        crate::backend::on_settings_saved(&app, resync_state, resync_handle);
+                    }
+                });
             });
         } else {
             let result = if data.java_path == "/missing/java" {

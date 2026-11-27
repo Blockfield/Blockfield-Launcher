@@ -69,14 +69,28 @@ export component ChromeButton inherits ActionArea {
     border-radius: Tokens.radius-sm;
     background: root.hovered ? (root.destructive ? Tokens.close-hover : Tokens.secondary) : transparent;
     animate background { duration: Tokens.transition; easing: Tokens.transition-easing; }
-    Image {
+    if !root.destructive: Image {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         width: root.icon-size;
         height: root.icon-size;
         source: root.icon;
-        colorize: root.destructive && root.hovered ? white : Tokens.muted-foreground;
-        animate colorize { duration: Tokens.transition; easing: Tokens.transition-easing; }
+        colorize: Tokens.muted-foreground;
+        accessible-role: none;
+    }
+    // Vector Path matches Tauri's antialiased 12px close glyph weight at 1x/1.25x/1.5x.
+    if root.destructive: Path {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.icon-size;
+        height: root.icon-size;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        stroke: root.hovered ? white : Tokens.muted-foreground;
+        stroke-width: 1.35px;
+        stroke-line-cap: round;
+        commands: "M 18 6 L 6 18 M 6 6 L 18 18";
+        animate stroke { duration: Tokens.transition; easing: Tokens.transition-easing; }
         accessible-role: none;
     }
 }

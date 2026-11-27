@@ -1,4 +1,4 @@
-//! Fail-before parity tests for D1 (shell + main screen data).
+//! Parity integration tests for D1 (shell + main screen data).
 //! Exercises real production wiring (`wire_app`, `Backend::Core`, `settings_tabs`)
 //! without fixtures so regressions to fixture leaks or stale state fail loudly.
 #![cfg(unix)]
@@ -9,7 +9,10 @@ use std::{
     net::TcpListener,
     path::PathBuf,
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -20,7 +23,7 @@ use blockfield_native::{
 };
 use i_slint_backend_testing::ElementHandle;
 use launcher_core::game::GameSession;
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model, winit_030::winit::event::WindowEvent as WinitEvent};
 
 fn isolated_env(tag: &str, pack_url: Option<&str>) -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -50,11 +53,13 @@ fn isolated_env(tag: &str, pack_url: Option<&str>) -> PathBuf {
     root
 }
 
-fn spawn_content_server(body: String) -> String {
+fn spawn_content_server(body: String) -> (String, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
+    let launcher_hits = Arc::new(AtomicUsize::new(0));
+    let hits = launcher_hits.clone();
     std::thread::spawn(move || {
-        for stream in listener.incoming().take(8).flatten() {
+        for stream in listener.incoming().take(32).flatten() {
             let mut stream = stream;
             let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
             let mut buf = [0u8; 2048];
@@ -62,6 +67,9 @@ fn spawn_content_server(body: String) -> String {
             let req = String::from_utf8_lossy(&buf[..n]);
             let (status, payload) = if req.starts_with("GET /content.json ") {
                 ("200 OK", body.as_str())
+            } else if req.starts_with("GET /launcher.json ") {
+                hits.fetch_add(1, Ordering::SeqCst);
+                ("404 Not Found", "{}")
             } else {
                 ("404 Not Found", "{}")
             };
@@ -72,7 +80,7 @@ fn spawn_content_server(body: String) -> String {
             let _ = stream.write_all(resp.as_bytes());
         }
     });
-    format!("http://{addr}")
+    (format!("http://{addr}"), launcher_hits)
 }
 
 #[test]
@@ -94,7 +102,7 @@ fn core_boot_has_real_version_cms_no_fixture_leaks_and_resyncs_profile() {
         ]
     })
     .to_string();
-    let pack_url = spawn_content_server(cms_json);
+    let (pack_url, launcher_hits) = spawn_content_server(cms_json);
     let root = isolated_env("d1-parity", Some(&pack_url));
     let app_data_dir = runtime::app_data_dir().unwrap();
     std::fs::create_dir_all(&app_data_dir).unwrap();
@@ -112,7 +120,7 @@ fn core_boot_has_real_version_cms_no_fixture_leaks_and_resyncs_profile() {
     i_slint_backend_testing::init_integration_test_with_system_time();
     let app = AppWindow::new().unwrap();
     let rt = runtime::new().unwrap();
-    let (_host, _activity) = wire_app(&app, Backend::Core(rt.handle().clone())).unwrap();
+    let (_host, activity) = wire_app(&app, Backend::Core(rt.handle().clone())).unwrap();
 
     // F01: footer version must reflect CARGO_PKG_VERSION, never fixture v1.0.19.
     assert_eq!(
@@ -141,12 +149,16 @@ fn core_boot_has_real_version_cms_no_fixture_leaks_and_resyncs_profile() {
 
     let weak = app.as_weak();
     let stage = Rc::new(std::cell::Cell::new(0u8));
+    let hits_before_focus = Rc::new(std::cell::Cell::new(0usize));
     let session_holder: Rc<RefCell<Option<GameSession>>> = Rc::new(RefCell::new(None));
     let poll = slint::Timer::default();
     poll.start(slint::TimerMode::Repeated, Duration::from_millis(20), {
         let stage = stage.clone();
         let state = state.clone();
         let session_holder = session_holder.clone();
+        let activity = activity.clone();
+        let launcher_hits = launcher_hits.clone();
+        let hits_before_focus = hits_before_focus.clone();
         move || {
             let app = weak.upgrade().unwrap();
             match stage.get() {
@@ -156,7 +168,7 @@ fn core_boot_has_real_version_cms_no_fixture_leaks_and_resyncs_profile() {
                     {
                         return;
                     }
-                    // F06: CMS content.json fields applied to chrome, shell, update, settings.
+                    // F06: CMS content.json fields applied to chrome, shell, main, update, settings.
                     assert_eq!(app.get_chrome_title(), "CMS CHROME");
                     assert_eq!(app.get_subtitle(), "CMS SUBTITLE");
                     assert_eq!(app.get_support_label(), "CMS SUPPORT");
@@ -166,19 +178,38 @@ fn core_boot_has_real_version_cms_no_fixture_leaks_and_resyncs_profile() {
                         "Лаунчер проверяет файлы сборки и скачивает необходимые обновления."
                     );
                     assert_eq!(app.get_server_label(), "IP · play.blockfield.pro:25565");
+                    assert_eq!(app.get_main_data().server_name, "BLOCKFIELD");
+                    assert_eq!(app.get_main_features().row_count(), 1);
+                    let feat = app.get_main_features().row_data(0).unwrap();
+                    assert_eq!(feat.icon, "flag");
+                    assert_eq!(
+                        feat.description,
+                        "Выбирайте комнату, класс и точку появления через меню в игре."
+                    );
 
-                    // F16: a failed profile switch (game running) must revert `workshop` and
-                    // surface the error on `main_data.profile_error` (not only hidden SettingsForm).
+                    // F18: window focus triggers background modpack re-check when idle & checked.
                     let mut data = app.get_main_data();
+                    data.checked = true;
+                    data.checking = false;
                     data.can_workshop = true;
                     app.set_main_data(data);
+                    hits_before_focus.set(launcher_hits.load(Ordering::SeqCst));
+                    activity.event(&WinitEvent::Focused(true));
+                    stage.set(1);
+                }
+                1 => {
+                    if launcher_hits.load(Ordering::SeqCst) <= hits_before_focus.get() {
+                        return;
+                    }
+                    // F16: a failed profile switch (game running) must revert `workshop` and
+                    // surface the error on `main_data.profile_error` (not only hidden SettingsForm).
                     let session = state.game.begin().unwrap();
                     session.started();
                     *session_holder.borrow_mut() = Some(session);
                     app.set_workshop(true);
-                    stage.set(1);
+                    stage.set(2);
                 }
-                1 => {
+                2 => {
                     let form = app.global::<SettingsForm>();
                     if form.get_blocked() || app.get_main_data().profile_changing {
                         return;

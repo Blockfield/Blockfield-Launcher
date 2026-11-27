@@ -3,6 +3,7 @@ pub mod avatars;
 pub mod backend;
 pub mod bridge;
 pub mod capture;
+pub mod content;
 pub mod deep_link;
 pub mod e2e;
 pub mod fixtures;
@@ -65,7 +66,6 @@ pub fn wire_app(
     app: &AppWindow,
     backend: backend::Backend,
 ) -> std::io::Result<(Rc<PreviewHost>, Rc<window_activity::Activity>)> {
-    fixtures::apply(app);
     let weak = app.as_weak();
     app.on_minimize(move || {
         if let Some(app) = weak.upgrade() {
@@ -102,6 +102,12 @@ pub fn wire_app(
     });
     let weak = app.as_weak();
     let activity = Rc::new(window_activity::Activity::default());
+    let focus_weak = app.as_weak();
+    activity.set_on_focus(move || {
+        if let Some(app) = focus_weak.upgrade() {
+            app.invoke_window_focused();
+        }
+    });
     let skin_host = skin::attach(app, &activity)?;
     let navigate_host = skin_host.clone();
     app.on_navigate(move |index| {

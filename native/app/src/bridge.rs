@@ -60,6 +60,10 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
         LauncherEvent::AccountExpired => {
             // Tauri answers `account://expired` with the login screen; the
             // stored username stays so the user can sign straight back in.
+            app.set_role("ИГРОК".into());
+            data.can_workshop = false;
+            data.profile_blocked = false;
+            data.profile_error = "".into();
             crate::auth::show_login_expired(app);
         }
         event => {
@@ -67,7 +71,11 @@ pub fn apply(app: &AppWindow, event: LauncherEvent) {
             return;
         }
     }
+    let game_became_idle = data.phase == "idle" && retry;
     app.set_main_data(data);
+    if game_became_idle {
+        crate::backend::retry_pending_profile_if_idle(app);
+    }
     if retry {
         retry_pending_join(app);
     }

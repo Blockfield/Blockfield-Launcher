@@ -10,7 +10,7 @@ import "../assets/fonts/Inter-800.ttf";
 export { SelectSearch, MainMotion, MainText } from "main-controls.slint";
 export { SettingsForm, SettingsData } from "settings-model.slint";
 export { WindowActivity } from "controls.slint";
-import { MainScreen, MainData } from "main.slint";
+import { MainScreen, MainData, MainFeature } from "main.slint";
 import { Room } from "rooms.slint";
 import { DevData } from "dev.slint";
 import { SettingsForm } from "settings-model.slint";
@@ -44,6 +44,12 @@ export component AppWindow inherits Window {
     in property <bool> firstrun-saving: false;
     in property <string> firstrun-error;
     in property <MainData> main-data;
+    in property <[MainFeature]> main-features: [
+        { icon: "flag", title: "ЗАХВАТ ТОЧЕК", description: "Сражайтесь за контроль точек и сохраняйте билеты своей команды." },
+        { icon: "swords", title: "КЛАССЫ", description: "Штурмовик и марксман. Доступность инженера, снайпера и оператора FPV зависит от настроек и числа игроков." },
+        { icon: "crosshair", title: "СНАРЯЖЕНИЕ", description: "Выбирайте комплект оружия из вариантов, доступных вашему классу." },
+        { icon: "gamepad-2", title: "ИГРОВОЕ МЕНЮ", description: "Выбирайте режим, класс и точку высадки через планшет в игре." },
+    ];
     in property <[Room]> rooms;
     in property <[string]> room-names;
     in-out property <bool> workshop: false;
@@ -161,6 +167,7 @@ export component AppWindow inherits Window {
     callback navigate(int);
     callback launcher-update();
     callback support();
+    callback window-focused();
     title: root.chrome-title + (root.dev-build ? " DEV" : "");
     preferred-width: 1280px;
     preferred-height: 720px;
@@ -195,6 +202,7 @@ export component AppWindow inherits Window {
             support => { root.support(); }
             if root.show-main && root.active == 0: MainScreen {
                 data: root.main-data;
+                features: root.main-features;
                 rooms: root.rooms;
                 room-names: root.room-names;
                 workshop <=> root.workshop;
